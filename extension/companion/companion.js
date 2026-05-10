@@ -46,8 +46,6 @@ function renderState(state) {
   phaseBadge.className = 'badge ' + (state.phase % 2 === 1 ? 'night' : 'day');
 
   document.getElementById('session-id').textContent = state.session ? `· ${state.session}` : '';
-  document.getElementById('game-status').textContent =
-    state.isRunning ? `Running — ${new Date().toLocaleTimeString()}` : 'Not running';
 
   const alive = state.players.filter(p => !p.isDead).length;
   document.getElementById('stat-players').textContent = `${state.players.length} players`;
