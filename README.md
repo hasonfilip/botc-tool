@@ -4,6 +4,8 @@ A browser extension companion panel for [Blood on the Clocktower Online](https:/
 
 Opens a live tab showing players, roles, game timeline, nominations, and conversation logs.
 
+<img width="2488" height="1261" alt="image" src="https://github.com/user-attachments/assets/4b71b8ae-327b-4b6c-83fe-0f61128d29e1" />
+
 ## Features
 
 - **Player table** — seat, name, pronouns, role, and status tags
