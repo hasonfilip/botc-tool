@@ -312,6 +312,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (frame && typeof frame[0] === 'string') {
           if (payload.type === 'WS_RECV') {
             await handleNominationFrame(frame[0], frame[1], Date.now());
+            // Storyteller receives player votes as ["vote",[seat,value],userId]
+            if (frame[0] === 'vote' && Array.isArray(frame[1])) {
+              await handleNominationFrame('vote', frame[1], Date.now());
+            }
             if (frame[0] === 'channelChange' && frame[1] && typeof frame[1] === 'object') {
               await handleChannelChange(String(frame[1].userId), frame[1].channel ?? '', Date.now());
             }
@@ -319,9 +323,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             if (frame[0] === 'channelChange' && typeof frame[1] === 'string') {
               await handleChannelChange('me', frame[1], Date.now());
             }
-            // User's own vote is sent as ["message","vote",[seat,value]]
-            if (frame[0] === 'message' && frame[1] === 'vote' && Array.isArray(frame[2])) {
-              await handleNominationFrame('vote', frame[2], Date.now());
+            // Storyteller sends all events wrapped as ["message",eventName,eventData]
+            if (frame[0] === 'message' && typeof frame[1] === 'string') {
+              await handleNominationFrame(frame[1], frame[2], Date.now());
             }
           }
         }
