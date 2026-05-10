@@ -319,13 +319,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             if (frame[0] === 'channelChange' && typeof frame[1] === 'string') {
               await handleChannelChange('me', frame[1], Date.now());
             }
-<<<<<<< HEAD
-=======
             // User's own vote is sent as ["message","vote",[seat,value]]
             if (frame[0] === 'message' && frame[1] === 'vote' && Array.isArray(frame[2])) {
               await handleNominationFrame('vote', frame[2], Date.now());
             }
->>>>>>> d516259 (Initial commit: BOTC companion extension)
           }
         }
 
