@@ -305,10 +305,8 @@ function renderNominations() {
     const yesCount = yesNames.length;
     const needed = nom.highscore ?? '?';
 
-    const isGhostVoter = (name) => {
-      const p = currentState?.players?.find(p => p.name === name);
-      return p?.isDead ?? false;
-    };
+    const isGhostVoter = (name) =>
+      fullTimeline.some(ev => ev.type === 'ghostvote' && ev.name === name && Math.abs(ev.ts - nom.ts) < 120000);
 
     const li = document.createElement('li');
     li.className = 'nom-entry';
@@ -894,7 +892,7 @@ function getRolePopover() {
           : meta.alignment;
         playerMeta[_roleTarget] = { ...meta, roleId: role.id, roleName: role.name, roleTeam: role.team ?? '', roleIconUrl: role.iconUrl ?? null, alignment: autoAlign };
         savePlayerMeta(_roleTarget);
-        refreshMetaCells(_roleTarget);
+        refreshMetaCells(_roleTarget, { recolorPage: true });
         _rolePop.style.display = 'none';
         _roleTarget = null;
       });
@@ -908,7 +906,7 @@ function getRolePopover() {
     if (!_roleTarget) return;
     playerMeta[_roleTarget] = { ...(playerMeta[_roleTarget] ?? {}), roleId: '', roleName: '', roleTeam: '', roleIconUrl: null };
     savePlayerMeta(_roleTarget);
-    refreshMetaCells(_roleTarget);
+    refreshMetaCells(_roleTarget, { recolorPage: true });
     _rolePop.style.display = 'none';
     _roleTarget = null;
   });
@@ -968,9 +966,18 @@ function toggleAlignment(name) {
   playerMeta[name] = { ...(playerMeta[name] ?? {}), alignment: cycle[cur] };
   savePlayerMeta(name);
   refreshMetaCells(name);
+  if (colorSource === 'notes') refreshPageColors();
 }
 
-function refreshMetaCells(name) {
+function refreshPageColors() {
+  renderTimeline();
+  renderNominations();
+  renderChats();
+  renderMessages();
+}
+
+function refreshMetaCells(name, { recolorPage = false } = {}) {
+  if (recolorPage && colorSource === 'notes') refreshPageColors();
   const escaped = CSS.escape(name);
   const nameCell = document.querySelector(`#notes-table td.notes-player-name[data-player="${escaped}"]`);
   const roleCell = document.querySelector(`#notes-table td.notes-meta-role[data-player="${escaped}"]`);
