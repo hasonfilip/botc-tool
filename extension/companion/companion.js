@@ -27,6 +27,7 @@ const PREDEFINED_TAGS = [
 ];
 
 const phaseLabel = (phase) => phase % 2 === 1 ? `Night ${Math.ceil(phase / 2)}` : `Day ${Math.ceil(phase / 2)}`;
+const dn = (name) => name?.length > 20 ? name.slice(0, 20) + '…' : (name ?? '');
 
 // ── Render ────────────────────────────────────────────────────────────────
 
@@ -56,7 +57,7 @@ function renderState(state) {
   const stEl = document.getElementById('header-storytellers');
   if (stEl) {
     stEl.innerHTML = stNames.length
-      ? stNames.map(n => `<span class="chat-st header-st" data-player="${n}">${n}</span>`).join('<span class="header-st-sep">, </span>')
+      ? stNames.map(n => `<span class="chat-st header-st" data-player="${n}">${dn(n)}</span>`).join('<span class="header-st-sep">, </span>')
       : '';
   }
 
@@ -84,7 +85,7 @@ function renderState(state) {
 
     tr.innerHTML = `
       <td class="seat">${player.seat + 1}</td>
-      <td><div class="player-name" data-player="${player.name ?? player.id}">${player.name ?? player.id}</div><div class="player-pronouns">${player.pronouns ?? ''}</div></td>
+      <td><div class="player-name" data-player="${player.name ?? player.id}">${dn(player.name ?? player.id)}</div><div class="player-pronouns">${dn(player.pronouns ?? '')}</div></td>
       <td class="role-name ${team}">${roleName}</td>
       <td class="no-strike">
         <div class="status-tags">
@@ -178,7 +179,7 @@ function renderTimeline() {
         const action = d.type === 'ghostvote' ? `ghost vote${ghostTarget}` : d.type === 'revive' ? 'revived' : isExile ? 'exiled' : 'died';
         const cls = d.type === 'revive' ? 'revive' : d.type === 'ghostvote' ? 'ghostvote' : '';
         const offsetStr = d.refStart ? '' : ` <span class="tl-death-time">+${duration(d.ts - block.start)}</span>`;
-        return `<div class="tl-death ${cls}">${icon} <span class="${team ? `role-name ${team}` : ''}" data-player="${name}">${name}</span> ${action}${offsetStr}</div>`;
+        return `<div class="tl-death ${cls}">${icon} <span class="${team ? `role-name ${team}` : ''}" data-player="${name}">${dn(name)}</span> ${action}${offsetStr}</div>`;
       }).join('')}
       ${block.end_event ? `<div class="tl-game-end tl-${block.end_event.isEvilWin ? 'evil' : 'good'} spoiler"><span class="spoiler-hide">reveal result</span><span class="spoiler-show">${block.end_event.label}</span></div>` : ''}
     `;
@@ -312,13 +313,13 @@ function renderNominations() {
     li.className = 'nom-entry';
     li.innerHTML = `
       <div class="nom-header">
-        <span class="nom-nominator role-name ${playerTeamByName(nominator)}" data-player="${nominator}">${nominator}</span>
+        <span class="nom-nominator role-name ${playerTeamByName(nominator)}" data-player="${nominator}">${dn(nominator)}</span>
         <span class="nom-arrow">-></span>
-        <span class="nom-nominee role-name ${playerTeamByName(nominee)}" data-player="${nominee}">${nominee}</span>
+        <span class="nom-nominee role-name ${playerTeamByName(nominee)}" data-player="${nominee}">${dn(nominee)}</span>
         <span class="nom-count ${yesCount >= needed ? 'nom-execute' : ''}">${yesCount}/${needed}</span>
         <span class="nom-time">${fmt(nom.ts)}</span>
       </div>
-      ${yesNames.length > 0 ? `<div class="nom-voters"><span class="nom-voters-label">Voted:</span> ${yesNames.map(n => `${isGhostVoter(n) ? '👻 ' : ''}<span class="role-name ${playerTeamByName(n)}" data-player="${n}">${n}</span>`).join(', ')}</div>` : '<div class="nom-voters nom-none">no votes</div>'}
+      ${yesNames.length > 0 ? `<div class="nom-voters"><span class="nom-voters-label">Voted:</span> ${yesNames.map(n => `${isGhostVoter(n) ? '👻 ' : ''}<span class="role-name ${playerTeamByName(n)}" data-player="${n}">${dn(n)}</span>`).join(', ')}</div>` : '<div class="nom-voters nom-none">no votes</div>'}
     `;
     list.appendChild(li);
   }
@@ -367,10 +368,10 @@ function isObserver(userId, resolvedName) {
 
 function formatParticipant(userId) {
   const name = resolveParticipant(userId);
-  if (isStoryteller(userId)) return `<span class="chat-st" data-player="${name}">${name}</span>`;
-  if (isObserver(userId, name)) return `<span class="observer-name">${name}</span>`;
+  if (isStoryteller(userId)) return `<span class="chat-st" data-player="${name}">${dn(name)}</span>`;
+  if (isObserver(userId, name)) return `<span class="observer-name">${dn(name)}</span>`;
   const team = playerTeamByName(name);
-  return `<span class="role-name ${team}" data-player="${name}">${name}</span>`;
+  return `<span class="role-name ${team}" data-player="${name}">${dn(name)}</span>`;
 }
 
 function renderChats() {
@@ -433,10 +434,10 @@ function renderMessages() {
     const senderTeam = playerTeamByName(msg.senderName);
     const recipientTeam = playerTeamByName(msg.recipientName);
     const senderSpan = senderIsObs
-      ? `<span class="observer-name">${msg.senderId}</span>`
-      : `<span class="msg-sender role-name ${senderTeam}" data-player="${msg.senderName}">${msg.senderName}</span>`;
+      ? `<span class="observer-name">${dn(msg.senderId)}</span>`
+      : `<span class="msg-sender role-name ${senderTeam}" data-player="${msg.senderName}">${dn(msg.senderName)}</span>`;
     const to = isPrivate
-      ? ` → ${recipientIsObs ? `<span class="observer-name">${msg.recipientId}</span>` : `<span class="msg-recipient role-name ${recipientTeam}" data-player="${msg.recipientName}">${msg.recipientName ?? msg.recipientId}</span>`}`
+      ? ` → ${recipientIsObs ? `<span class="observer-name">${dn(msg.recipientId)}</span>` : `<span class="msg-recipient role-name ${recipientTeam}" data-player="${msg.recipientName}">${dn(msg.recipientName ?? msg.recipientId)}</span>`}`
       : '';
     const textHtml = msg.message !== null
       ? `<span class="msg-text">${msg.message}</span>`
@@ -488,12 +489,12 @@ function buildPlayerEvents(name) {
     const isNominee = nominee === name;
 
     if (isNominator) {
-      events.push({ ts: nom.ts, type: 'nom-made', label: `Nominated ${nominee} (${count})` });
+      events.push({ ts: nom.ts, type: 'nom-made', label: `Nominated ${dn(nominee)} (${count})` });
       if (wasTracked) {
         events.push({ ts: nom.ts, type: raisedHand ? 'voted-yes' : 'voted-no', label: raisedHand ? `Voted yes as nominator${ghostSuffix}` : 'Did not vote as nominator' });
       }
     } else if (isNominee) {
-      events.push({ ts: nom.ts, type: 'nom-received', label: `Nominated by ${nominator} (${count})` });
+      events.push({ ts: nom.ts, type: 'nom-received', label: `Nominated by ${dn(nominator)} (${count})` });
       const nomineeVoted = wasTracked ? raisedHand : null;
       if (nomineeVoted === true) {
         events.push({ ts: nom.ts, type: 'voted-yes', label: `Voted for own execution${ghostSuffix}` });
@@ -501,7 +502,7 @@ function buildPlayerEvents(name) {
         events.push({ ts: nom.ts, type: 'voted-no', label: 'Did not vote for own execution' });
       }
     } else if (wasTracked) {
-      events.push({ ts: nom.ts, type: raisedHand ? 'voted-yes' : 'voted-no', label: `${raisedHand ? `Voted yes${ghostSuffix}` : 'Did not vote'} on ${nominator} → ${nominee} (${count})` });
+      events.push({ ts: nom.ts, type: raisedHand ? 'voted-yes' : 'voted-no', label: `${raisedHand ? `Voted yes${ghostSuffix}` : 'Did not vote'} on ${dn(nominator)} → ${dn(nominee)} (${count})` });
     }
   }
 
@@ -544,7 +545,7 @@ function openPlayerTimeline(name) {
   openPlayerTimelineName = name;
   const panel = document.getElementById('player-timeline-panel');
   const overlay = document.getElementById('player-timeline-overlay');
-  document.getElementById('ptl-name').textContent = name;
+  document.getElementById('ptl-name').textContent = dn(name);
 
   const events = buildPlayerEvents(name);
   const list = document.getElementById('ptl-list');
@@ -1115,7 +1116,7 @@ function renderNotesGrid() {
     const alignHtml = a ? `<span class="meta-align-badge ${alignClass[a]}">${alignLabel[a]}</span>` : '';
     const tintStyle = tint ? `background:${tint}` : '';
     html += `<tr style="${tintStyle}">`;
-    html += `<td class="notes-player-name${dead}" data-player="${name}" style="${color ? `color:${color};` : ''}${tintStyle}">${name}</td>`;
+    html += `<td class="notes-player-name${dead}" data-player="${name}" style="${color ? `color:${color};` : ''}${tintStyle}">${dn(name)}</td>`;
     const roleLocked = isTraveller ? ' role-locked' : '';
     html += `<td class="notes-meta-cell notes-meta-role${roleLocked}" data-player="${name}">${roleHtml}</td>`;
     html += `<td class="notes-meta-cell notes-meta-align" data-player="${name}">${alignHtml}</td>`;
