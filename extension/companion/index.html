@@ -1,75 +1,104 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-  <meta charset="UTF-8" />
-  <title>BOTC Companion</title>
-  <link rel="stylesheet" href="style.css" />
+	<meta charset="UTF-8" />
+	<title>BOTC Companion</title>
+	<link rel="stylesheet" href="style.css" />
 </head>
+
 <body>
-  <header>
-    <h1>BOTC <span id="session-id"></span></h1>
-    <div id="phase-badge" class="badge">—</div>
-    <div id="stats-bar">
-      <span id="stat-players"></span>
-      <span id="stat-alive"></span>
-      <span id="stat-edition"></span>
-    </div>
-    <div id="ws-heartbeat" class="ws-heartbeat">
-      <span id="ws-heartbeat-timer"></span>
-      <span id="ws-heartbeat-msg"></span>
-    </div>
-  </header>
+	<header>
+		<h1>BOTC <span id="session-id"></span></h1>
+		<div id="phase-badge" class="badge">—</div>
+		<div id="stats-bar">
+			<span id="stat-players"></span>
+			<span id="stat-alive"></span>
+			<span id="stat-edition"></span>
+		</div>
+		<div id="header-storytellers"></div>
+		<div id="color-source-toggle" class="color-toggle">
+			<span class="ct-title">source of truth:</span>
+			<span class="ct-label ct-left">grimoire</span>
+			<button class="ct-switch" id="ct-switch" role="switch" aria-checked="false"></button>
+			<span class="ct-label ct-right">notes</span>
+		</div>
+		<div id="ws-heartbeat" class="ws-heartbeat">
+			<span id="ws-heartbeat-timer"></span>
+			<span id="ws-heartbeat-msg"></span>
+		</div>
+	</header>
 
-  <div id="no-data-banner">
-    Reload the <strong>botc.app</strong> tab to connect.
-  </div>
+	<div id="no-data-banner">
+		Reload the <strong>botc.app</strong> tab to connect.
+	</div>
 
-  <main>
-    <section id="notes-section">
-      <h2><span class="chevron">▾</span> Notes</h2>
-      <div class="notes-scroll">
-        <table id="notes-table"></table>
-      </div>
-    </section>
+	<main>
+		<section id="notes-section">
+			<h2><span class="chevron">▾</span> Notes</h2>
+			<div class="notes-scroll">
+				<table id="notes-table"></table>
+			</div>
+		</section>
 
-    <div class="main-grid">
-      <section id="players-section">
-        <h2><span class="chevron">▾</span> Players</h2>
-        <table id="player-table">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Name</th>
-              <th>Role</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody id="player-tbody"></tbody>
-        </table>
-      </section>
+		<div class="main-grid">
+			<section id="players-section">
+				<h2><span class="chevron">▾</span> Grimoire</h2>
+				<div id="player-table-scroll">
+					<table id="player-table">
+						<thead>
+							<tr>
+								<th>#</th>
+								<th>Name</th>
+								<th>Role</th>
+								<th>Status</th>
+								<th></th>
+							</tr>
+						</thead>
+						<tbody id="player-tbody"></tbody>
+					</table>
+				</div>
+			</section>
 
-      <section id="timeline-section">
-        <h2><span class="chevron">▾</span> Timeline</h2>
-        <ul id="timeline-log"></ul>
-      </section>
+			<section id="timeline-section">
+				<h2><span class="chevron">▾</span> Timeline</h2>
+				<ul id="timeline-log"></ul>
+			</section>
 
-      <section id="chats-section">
-        <h2><span class="chevron">▾</span> Chats <button id="toggle-night" class="toggle-btn">show night</button></h2>
-        <ul id="chats-log"></ul>
-      </section>
+			<section id="nominations-section">
+				<h2><span class="chevron">▾</span> Nominations</h2>
+				<ul id="nominations-log"></ul>
+			</section>
 
-      <section id="nominations-section">
-        <h2><span class="chevron">▾</span> Nominations</h2>
-        <ul id="nominations-log"></ul>
-      </section>
-    </div>
+			<section id="chats-section">
+				<h2><span class="chevron">▾</span> Conversations <button id="toggle-night"
+						class="toggle-btn">show nights</button></h2>
+				<ul id="chats-log"></ul>
+			</section>
 
-    <section id="ws-section">
-      <h2 id="ws-toggle">Logs <span class="ws-chevron">▸</span> <button id="clear-ws">clear</button></h2>
-      <ul id="ws-log"></ul>
-    </section>
-  </main>
+			<section id="messages-section">
+				<h2><span class="chevron">▾</span> Messages</h2>
+				<ul id="messages-log"></ul>
+			</section>
+		</div>
 
-  <script src="companion.js"></script>
+		<section id="ws-section">
+			<h2 id="ws-toggle">Logs <span class="ws-chevron">▸</span> <button id="clear-ws">clear</button>
+			</h2>
+			<ul id="ws-log"></ul>
+		</section>
+	</main>
+
+	<div id="player-timeline-panel">
+		<div id="ptl-header">
+			<span id="ptl-name"></span>
+			<button id="ptl-close">✕</button>
+		</div>
+		<ul id="ptl-list"></ul>
+	</div>
+	<div id="player-timeline-overlay"></div>
+
+	<script src="companion.js"></script>
 </body>
+
 </html>

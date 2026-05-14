@@ -5,7 +5,7 @@ let companionTabId = null;
 
 const store = {
   async get() {
-    const data = await chrome.storage.session.get(['latestState', 'timeline', 'wsEvents', 'processedIds', 'nameMap', 'currentGameId', 'nominations', 'pendingNomination', 'chatSessions', 'cellTokens']);
+    const data = await chrome.storage.session.get(['latestState', 'timeline', 'wsEvents', 'processedIds', 'nameMap', 'currentGameId', 'nominations', 'pendingNomination', 'chatSessions', 'cellTokens', 'playerMeta', 'textMessages']);
     return {
       latestState: data.latestState ?? null,
       timeline: data.timeline ?? [],
@@ -17,6 +17,8 @@ const store = {
       pendingNomination: data.pendingNomination ?? null,
       chatSessions: data.chatSessions ?? [],
       cellTokens: data.cellTokens ?? {},
+      playerMeta: data.playerMeta ?? {},
+      textMessages: data.textMessages ?? [],
     };
   },
   async set(patch) {
@@ -82,6 +84,30 @@ async function handleNominationFrame(eventName, eventData, ts) {
       .filter(([, v]) => v === 1)
       .map(([s]) => Number(s));
     await store.set({ pendingNomination: { ...pendingNomination, yesSeats } });
+  }
+}
+
+// ── Text messages ─────────────────────────────────────────────────────────
+
+const _msgDedupMap = new Map();
+function isDupMessage(key) {
+  const now = Date.now();
+  if (now - (_msgDedupMap.get(key) ?? 0) < 1500) return true;
+  _msgDedupMap.set(key, now);
+  return false;
+}
+
+async function handleTextMessage(senderId, recipientId, message, length, ts) {
+  const key = `${senderId}|${recipientId}|${message ?? length}`;
+  if (isDupMessage(key)) return;
+  const { nameMap, textMessages } = await store.get();
+  const senderName = nameMap[String(senderId)] ?? String(senderId);
+  const recipientName = recipientId ? (nameMap[String(recipientId)] ?? String(recipientId)) : null;
+  const entry = { ts, senderId: String(senderId), senderName, recipientId: recipientId || null, recipientName, message: message ?? null, length: length ?? null };
+  const updated = [...textMessages, entry];
+  await store.set({ textMessages: updated });
+  if (companionTabId !== null) {
+    chrome.tabs.sendMessage(companionTabId, { type: 'TEXT_MESSAGES_UPDATE', textMessages: updated }).catch(() => {});
   }
 }
 
@@ -199,7 +225,7 @@ function diffDeaths(prevPlayers, nextPlayers, processedIds, nameMap) {
 
 async function pushStateToCompanion() {
   if (companionTabId === null) return;
-  const { latestState, timeline, wsEvents, nominations, chatSessions, nameMap, cellTokens } = await store.get();
+  const { latestState, timeline, wsEvents, nominations, chatSessions, nameMap, cellTokens, playerMeta, textMessages } = await store.get();
   chrome.tabs.sendMessage(companionTabId, {
     type: 'FULL_REFRESH',
     state: latestState,
@@ -209,6 +235,8 @@ async function pushStateToCompanion() {
     chatSessions,
     nameMap,
     cellTokens,
+    playerMeta,
+    textMessages,
   }).catch(() => {});
 }
 
@@ -232,6 +260,10 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Restore companionTabId if service worker restarted
+  if (sender.tab?.url?.includes(chrome.runtime.getURL('companion'))) {
+    companionTabId = sender.tab.id;
+  }
   if (message.type === 'BOTC_UPDATE') {
     const payload = message.payload;
 
@@ -267,7 +299,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (startEntry && startEntry.id !== currentGameId) {
           timeline.length = 0;
           processedIds.clear();
-          await store.set({ currentGameId: startEntry.id, nominations: [], pendingNomination: null, chatSessions: [], cellTokens: {} });
+          await store.set({ currentGameId: startEntry.id, nominations: [], pendingNomination: null, chatSessions: [], cellTokens: {}, textMessages: [] });
         }
 
         // History-based deaths mark their player IDs so DOM diff won't duplicate them
@@ -319,6 +351,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             if (frame[0] === 'channelChange' && frame[1] && typeof frame[1] === 'object') {
               await handleChannelChange(String(frame[1].userId), frame[1].channel ?? '', Date.now());
             }
+            // ["textMessage", {message, recipientId}, senderUserId] — public messages (plaintext)
+            if (frame[0] === 'textMessage' && frame[1]?.message !== undefined) {
+              await handleTextMessage(frame[2] ?? 'unknown', frame[1].recipientId ?? '', frame[1].message, null, Date.now());
+            }
+            // ["textMessageIndicator", {recipientId, length}, senderUserId] — private messages (no plaintext)
+            if (frame[0] === 'textMessageIndicator' && frame[1]?.recipientId) {
+              await handleTextMessage(frame[2] ?? 'unknown', frame[1].recipientId, null, frame[1].length ?? null, Date.now());
+            }
           } else if (payload.type === 'WS_SEND') {
             if (frame[0] === 'channelChange' && typeof frame[1] === 'string') {
               await handleChannelChange('me', frame[1], Date.now());
@@ -326,6 +366,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             // Storyteller sends all events wrapped as ["message",eventName,eventData]
             if (frame[0] === 'message' && typeof frame[1] === 'string') {
               await handleNominationFrame(frame[1], frame[2], Date.now());
+            }
+            // User sending a text message: ["textMessage", {message, recipientId}]
+            if (frame[0] === 'textMessage' && frame[1]?.message !== undefined) {
+              await handleTextMessage('me', frame[1].recipientId ?? '', frame[1].message, null, Date.now());
+            }
+            // User sending a private message: ["textMessageIndicator", {recipientId, length}]
+            if (frame[0] === 'textMessageIndicator' && frame[1]?.recipientId) {
+              await handleTextMessage('me', frame[1].recipientId, null, frame[1].length ?? null, Date.now());
             }
           }
         }
@@ -357,10 +405,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return;
   }
 
+  if (message.type === 'SAVE_PLAYER_META') {
+    (async () => {
+      const { playerMeta } = await store.get();
+      const updated = { ...playerMeta, [message.name]: message.meta };
+      await store.set({ playerMeta: updated });
+    })();
+    return;
+  }
+
   if (message.type === 'GET_STATE') {
     (async () => {
-      const { latestState, timeline, wsEvents, nominations, chatSessions, nameMap, cellTokens } = await store.get();
-      sendResponse({ state: latestState, timeline, wsEvents, nominations, chatSessions, nameMap, cellTokens });
+      const { latestState, timeline, wsEvents, nominations, chatSessions, nameMap, cellTokens, playerMeta, textMessages } = await store.get();
+      sendResponse({ state: latestState, timeline, wsEvents, nominations, chatSessions, nameMap, cellTokens, playerMeta, textMessages });
       // Re-inject relay into any open botc.app tabs (handles extension reload case)
       const tabs = await chrome.tabs.query({ url: 'https://botc.app/play*' });
       for (const tab of tabs) {
@@ -368,17 +425,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           await chrome.scripting.executeScript({
             target: { tabId: tab.id },
             func: () => {
-              // Avoid duplicate listeners
-              if (window.__botcRelayActive) {
+              // page-bridge.js already runs and sets __botcBridgeActive; just trigger a state push
+              if (window.__botcBridgeActive) {
                 window.postMessage({ source: 'botc-bridge-cmd', type: 'FORCE_UPDATE' }, '*');
                 return;
               }
-              window.__botcRelayActive = true;
-              window.addEventListener('message', (event) => {
-                if (event.source !== window || event.data?.source !== 'botc-bridge') return;
-                try { chrome.runtime.sendMessage({ type: 'BOTC_UPDATE', payload: event.data.payload }); } catch {}
-              });
-              window.postMessage({ source: 'botc-bridge-cmd', type: 'FORCE_UPDATE' }, '*');
+              // Bridge not active — page was loaded before extension; prompt user to reload
+              window.__botcNeedsReload = true;
+              window.postMessage({ source: 'botc-bridge', payload: { type: 'NEEDS_RELOAD' } }, '*');
             },
           });
         } catch {}

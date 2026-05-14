@@ -6,11 +6,16 @@ let currentState = null;
 let revealedRoles = {}; // playerId → roleId, populated from end entry
 let allNominations = [];
 let allChatSessions = [];
+let allTextMessages = [];
 let nameMap = {};
 let showNightChats = false;
+let colorSource = 'grimoire'; // 'grimoire' | 'notes'
+let openPlayerTimelineName = null;
 let lastPlayersJson = '';
 let cellTokens = {};
+let playerMeta = {}; // { name: { roleId, roleName, roleTeam, roleIconUrl, alignment } }
 let lastNotesKey = '';
+let notesFixedColWidths = null; // { player, role, align } in px — set once, never shrunk
 
 const PREDEFINED_TAGS = [
   { id: 'first-night-info',     label: 'first night' },
@@ -47,6 +52,14 @@ function renderState(state) {
 
   document.getElementById('session-id').textContent = state.session ? `· ${state.session}` : '';
 
+  const stNames = state.storytellerNames ?? [];
+  const stEl = document.getElementById('header-storytellers');
+  if (stEl) {
+    stEl.innerHTML = stNames.length
+      ? stNames.map(n => `<span class="chat-st header-st" data-player="${n}">${n}</span>`).join('<span class="header-st-sep">, </span>')
+      : '';
+  }
+
   const alive = state.players.filter(p => !p.isDead).length;
   document.getElementById('stat-players').textContent = `${state.players.length} players`;
   document.getElementById('stat-alive').textContent = `${alive} alive`;
@@ -78,7 +91,12 @@ function renderState(state) {
           ${(player.status ?? []).map(s => `<span class="tag">${s}</span>`).join('')}
         </div>
       </td>
+      <td class="ptl-cell"><button class="ptl-btn" title="Player timeline">▶</button></td>
     `;
+    tr.querySelector('.ptl-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      openPlayerTimeline(player.name ?? player.id);
+    });
     tbody.appendChild(tr);
   });
   applyHighlights();
@@ -156,7 +174,8 @@ function renderTimeline() {
         const blockIsDay = block.label.startsWith('Day');
         const isExile = team === 'traveller' && blockIsDay && d.type === 'death';
         const icon = d.type === 'ghostvote' ? '👻' : d.type === 'revive' ? '✨' : isExile ? '🚪' : '💀';
-        const action = d.type === 'ghostvote' ? 'ghost vote' : d.type === 'revive' ? 'revived' : isExile ? 'exiled' : 'died';
+        const ghostTarget = d.type === 'ghostvote' ? (() => { const n = nominationAt(d.ts); return n ? ` on ${seatName(n.nomineeSeat)}` : ''; })() : '';
+        const action = d.type === 'ghostvote' ? `ghost vote${ghostTarget}` : d.type === 'revive' ? 'revived' : isExile ? 'exiled' : 'died';
         const cls = d.type === 'revive' ? 'revive' : d.type === 'ghostvote' ? 'ghostvote' : '';
         const offsetStr = d.refStart ? '' : ` <span class="tl-death-time">+${duration(d.ts - block.start)}</span>`;
         return `<div class="tl-death ${cls}">${icon} <span class="${team ? `role-name ${team}` : ''}" data-player="${name}">${name}</span> ${action}${offsetStr}</div>`;
@@ -238,6 +257,16 @@ function bindPhaseSeparators(list, collapsedPhases = new Set()) {
 
 // ── Nominations ───────────────────────────────────────────────────────────
 
+function nominationAt(ts) {
+  // Find the nomination whose vote was closest before (or at) the given ts
+  let best = null;
+  for (const nom of allNominations) {
+    if (nom.ts <= ts) best = nom;
+    else break;
+  }
+  return best;
+}
+
 function seatName(seat) {
   if (!currentState?.players) return `Seat ${seat + 1}`;
   const p = currentState.players.find(p => p.seat === seat);
@@ -291,7 +320,7 @@ function renderNominations() {
         <span class="nom-count ${yesCount >= needed ? 'nom-execute' : ''}">${yesCount}/${needed}</span>
         <span class="nom-time">${fmt(nom.ts)}</span>
       </div>
-      ${yesNames.length > 0 ? `<div class="nom-voters">${yesNames.map(n => `${isGhostVoter(n) ? '👻 ' : ''}<span class="role-name ${playerTeamByName(n)}" data-player="${n}">${n}</span>`).join(', ')}</div>` : '<div class="nom-voters nom-none">no votes</div>'}
+      ${yesNames.length > 0 ? `<div class="nom-voters"><span class="nom-voters-label">Voted:</span> ${yesNames.map(n => `${isGhostVoter(n) ? '👻 ' : ''}<span class="role-name ${playerTeamByName(n)}" data-player="${n}">${n}</span>`).join(', ')}</div>` : '<div class="nom-voters nom-none">no votes</div>'}
     `;
     list.appendChild(li);
   }
@@ -302,6 +331,12 @@ function renderNominations() {
 // ── Chats ─────────────────────────────────────────────────────────────────
 
 function playerTeamByName(name) {
+  if (colorSource === 'notes') {
+    const meta = playerMeta[name] ?? {};
+    return meta.alignment === 'evil' ? 'demon'
+         : meta.alignment === 'good' ? 'townsfolk'
+         : meta.roleTeam ?? '';
+  }
   const p = currentState?.players?.find(p => p.name === name);
   return p?.team ?? '';
 }
@@ -328,9 +363,14 @@ function resolveParticipant(userId) {
   return userId;
 }
 
+function isObserver(userId, resolvedName) {
+  return resolvedName === userId && userId !== 'me';
+}
+
 function formatParticipant(userId) {
   const name = resolveParticipant(userId);
   if (isStoryteller(userId)) return `<span class="chat-st" data-player="${name}">${name}</span>`;
+  if (isObserver(userId, name)) return `<span class="observer-name">${name}</span>`;
   const team = playerTeamByName(name);
   return `<span class="role-name ${team}" data-player="${name}">${name}</span>`;
 }
@@ -371,6 +411,192 @@ function renderChats() {
   applyHighlights();
 }
 
+// ── Text messages ────────────────────────────────────────────────────────
+
+function renderMessages() {
+  const list = document.getElementById('messages-log');
+  const collapsedPhases = new Set([...list.querySelectorAll('.nom-day-sep.collapsed')].map(el => el.textContent));
+  list.innerHTML = '';
+  let lastPhase = null;
+  for (const msg of allTextMessages) {
+    const phase = gamePhaseAt(msg.ts);
+    if (phase !== lastPhase) {
+      const sep = document.createElement('li');
+      sep.className = 'nom-day-sep';
+      sep.textContent = phase;
+      list.appendChild(sep);
+      lastPhase = phase;
+    }
+    const isPrivate = !!msg.recipientId;
+    const li = document.createElement('li');
+    li.className = `msg-entry${isPrivate ? ' msg-private' : ' msg-public'}`;
+    const senderIsObs = isObserver(msg.senderId, msg.senderName);
+    const recipientIsObs = isObserver(msg.recipientId, msg.recipientName);
+    const senderTeam = playerTeamByName(msg.senderName);
+    const recipientTeam = playerTeamByName(msg.recipientName);
+    const senderSpan = senderIsObs
+      ? `<span class="observer-name">${msg.senderId}</span>`
+      : `<span class="msg-sender role-name ${senderTeam}" data-player="${msg.senderName}">${msg.senderName}</span>`;
+    const to = isPrivate
+      ? ` → ${recipientIsObs ? `<span class="observer-name">${msg.recipientId}</span>` : `<span class="msg-recipient role-name ${recipientTeam}" data-player="${msg.recipientName}">${msg.recipientName ?? msg.recipientId}</span>`}`
+      : '';
+    const textHtml = msg.message !== null
+      ? `<span class="msg-text">${msg.message}</span>`
+      : `<span class="msg-text msg-private-hint">${msg.length ? `${msg.length} chars` : 'private message'}</span>`;
+    li.innerHTML = `
+      <span class="msg-time">${fmt(msg.ts)}</span>
+      ${senderSpan}${to}
+      ${textHtml}
+    `;
+    list.appendChild(li);
+  }
+  bindPhaseSeparators(list, collapsedPhases);
+  applyHighlights();
+}
+
+// ── Player timeline panel ────────────────────────────────────────────────
+
+function buildPlayerEvents(name) {
+  const events = [];
+  const players = currentState?.players ?? [];
+  const myId = currentState?.myUserId;
+
+  // Deaths, revives, ghost votes from timeline
+  for (const ev of fullTimeline) {
+    if (ev.type === 'death' && ev.name === name) events.push({ ts: ev.ts, type: 'death', label: 'Died' });
+    else if (ev.type === 'revive' && ev.name === name) events.push({ ts: ev.ts, type: 'revive', label: 'Revived' });
+    else if (ev.type === 'ghostvote' && ev.name === name) {
+      const nom = nominationAt(ev.ts);
+      const target = nom ? ` on ${seatName(nom.nomineeSeat)}` : '';
+      events.push({ ts: ev.ts, type: 'ghostvote', label: `Used ghost vote${target}` });
+    }
+  }
+
+  // Nominations
+  const playerSeat = players.find(p => p.name === name)?.seat ?? -1;
+  for (const nom of allNominations) {
+    const nominator = seatName(nom.nominatorSeat);
+    const nominee = seatName(nom.nomineeSeat);
+    const yesSeats = new Set(nom.yesSeats);
+    const trackedSeats = new Set(Object.keys(nom.handState ?? {}).map(Number));
+    const needed = nom.highscore ?? '?';
+    const count = `${nom.yesSeats.length}/${needed}`;
+    const raisedHand = yesSeats.has(playerSeat);
+    const wasTracked = trackedSeats.has(playerSeat);
+    const usedGhostVote = raisedHand && fullTimeline.some(ev => ev.type === 'ghostvote' && ev.name === name && Math.abs(ev.ts - nom.ts) < 120000);
+    const ghostSuffix = usedGhostVote ? ' 👻' : '';
+
+    const isNominator = nominator === name;
+    const isNominee = nominee === name;
+
+    if (isNominator) {
+      events.push({ ts: nom.ts, type: 'nom-made', label: `Nominated ${nominee} (${count})` });
+      if (wasTracked) {
+        events.push({ ts: nom.ts, type: raisedHand ? 'voted-yes' : 'voted-no', label: raisedHand ? `Voted yes as nominator${ghostSuffix}` : 'Did not vote as nominator' });
+      }
+    } else if (isNominee) {
+      events.push({ ts: nom.ts, type: 'nom-received', label: `Nominated by ${nominator} (${count})` });
+      const nomineeVoted = wasTracked ? raisedHand : null;
+      if (nomineeVoted === true) {
+        events.push({ ts: nom.ts, type: 'voted-yes', label: `Voted for own execution${ghostSuffix}` });
+      } else {
+        events.push({ ts: nom.ts, type: 'voted-no', label: 'Did not vote for own execution' });
+      }
+    } else if (wasTracked) {
+      events.push({ ts: nom.ts, type: raisedHand ? 'voted-yes' : 'voted-no', label: `${raisedHand ? `Voted yes${ghostSuffix}` : 'Did not vote'} on ${nominator} → ${nominee} (${count})` });
+    }
+  }
+
+  // Conversations
+  for (const session of allChatSessions) {
+    if (session.type === 'night' && !showNightChats) continue;
+    const inSession = session.participants.some(uid => resolveParticipant(uid) === name);
+    if (!inSession) continue;
+    const others = session.participants
+      .filter(uid => resolveParticipant(uid) !== name)
+      .map(uid => formatParticipant(uid))
+      .join(', ');
+    const dur = duration(session.end - session.ts);
+    const type = session.type === 'public' ? 'public' : session.type === 'night' ? 'night' : 'private';
+    events.push({ ts: session.ts, type: `chat-${session.type}`, label: `${type[0].toUpperCase() + type.slice(1)} chat with ${others || 'nobody'} · ${dur}` });
+  }
+
+  // Messages
+  for (const msg of allTextMessages) {
+    if (msg.senderName === name) {
+      const to = msg.recipientName ? `<span class="role-name ${playerTeamByName(msg.recipientName)}" data-player="${msg.recipientName}">${msg.recipientName}</span>` : 'public';
+      const body = msg.message ? `"${msg.message}"` : `${msg.length ?? '?'} chars`;
+      events.push({ ts: msg.ts, type: 'msg-sent', label: `Message to ${to}: <span class="ptl-msg-body">${body}</span>` });
+    } else if (msg.recipientName === name) {
+      const from = `<span class="role-name ${playerTeamByName(msg.senderName)}" data-player="${msg.senderName}">${msg.senderName}</span>`;
+      const body = msg.message ? `"${msg.message}"` : `${msg.length ?? '?'} chars`;
+      events.push({ ts: msg.ts, type: 'msg-received', label: `Message from ${from}: <span class="ptl-msg-body">${body}</span>` });
+    }
+  }
+
+  events.sort((a, b) => a.ts - b.ts);
+  return events;
+}
+
+function refreshPlayerTimeline() {
+  if (openPlayerTimelineName) openPlayerTimeline(openPlayerTimelineName);
+}
+
+function openPlayerTimeline(name) {
+  openPlayerTimelineName = name;
+  const panel = document.getElementById('player-timeline-panel');
+  const overlay = document.getElementById('player-timeline-overlay');
+  document.getElementById('ptl-name').textContent = name;
+
+  const events = buildPlayerEvents(name);
+  const list = document.getElementById('ptl-list');
+  list.innerHTML = '';
+
+  const typeIcon = {
+    'death': '💀', 'revive': '✨', 'ghostvote': '👻',
+    'nom-made': '⚖', 'nom-received': '⚖',
+    'voted-yes': '✋', 'voted-no': '✋',
+    'chat-public': '🗣', 'chat-private': '🔒', 'chat-night': '🌙',
+    'msg-sent': '✉', 'msg-received': '✉',
+  };
+
+  let lastPhase = null;
+  for (const ev of events) {
+    const phase = gamePhaseAt(ev.ts);
+    if (phase !== lastPhase) {
+      const sep = document.createElement('li');
+      sep.className = 'nom-day-sep';
+      sep.textContent = phase;
+      list.appendChild(sep);
+      lastPhase = phase;
+    }
+    const li = document.createElement('li');
+    li.className = `ptl-event ptl-${ev.type}`;
+    li.innerHTML = `<span class="ptl-icon">${typeIcon[ev.type] ?? '·'}</span><span class="ptl-time">${fmt(ev.ts)}</span><span class="ptl-label">${ev.label}</span>`;
+    list.appendChild(li);
+  }
+
+  if (events.length === 0) {
+    const li = document.createElement('li');
+    li.className = 'ptl-empty';
+    li.textContent = 'No events recorded for this player.';
+    list.appendChild(li);
+  }
+
+  bindPhaseSeparators(list);
+  panel.classList.add('open');
+  overlay.classList.add('open');
+  applyHighlights();
+}
+
+function closePlayerTimeline() {
+  openPlayerTimelineName = null;
+  document.getElementById('player-timeline-panel').classList.remove('open');
+  document.getElementById('player-timeline-overlay').classList.remove('open');
+}
+document.getElementById('ptl-close').addEventListener('click', closePlayerTimeline);
+document.getElementById('player-timeline-overlay').addEventListener('click', closePlayerTimeline);
+
 // ── Notes grid ───────────────────────────────────────────────────────────
 
 function getPhaseColumns() {
@@ -398,8 +624,7 @@ function chipsHtml(player, phase) {
       return `<span class="token-chip tag-chip ${impCls}" ${attrs}>${chip.label}</span>`;
     }
     if (chip.type === 'note') {
-      const t = chip.text.length > 40 ? chip.text.slice(0, 40) + '…' : chip.text;
-      return `<span class="token-chip note-chip ${impCls}" ${attrs} title="${chip.text.replace(/"/g,'&quot;')}">${t}</span>`;
+      return `<span class="token-chip note-chip ${impCls}" ${attrs}>${chip.text}</span>`;
     }
     return '';
   }).join('');
@@ -439,9 +664,10 @@ function getPopover() {
       <option value="">tag</option>
       ${PREDEFINED_TAGS.map(t => `<option value="${t.id}">${t.label}</option>`).join('')}
     </select>
-    <select class="tp-role-select">
-      <option value="">role</option>
-    </select>
+    <div class="tp-role-dd">
+      <button class="tp-role-trigger" type="button">role</button>
+      <div class="tp-role-list" style="display:none"></div>
+    </div>
     <div class="tp-importance">
       <button class="tp-imp-btn" data-imp="3" title="high">•••</button>
       <button class="tp-imp-btn" data-imp="2" title="medium">••</button>
@@ -453,9 +679,50 @@ function getPopover() {
 
   const noteInput = _popover.querySelector('.tp-note-input');
   const tagsSelect = _popover.querySelector('.tp-tags-select');
-  const roleSelect = _popover.querySelector('.tp-role-select');
+  const roleTrigger = _popover.querySelector('.tp-role-trigger');
+  const roleList = _popover.querySelector('.tp-role-list');
   const xBtn = _popover.querySelector('.tp-x-btn');
   const impBtns = [..._popover.querySelectorAll('.tp-imp-btn')];
+
+  let _selectedRoleId = null;
+
+  function buildRoleList() {
+    const roles = currentState?.roles ?? [];
+    roleList.innerHTML = roles.map(r => {
+      const icon = r.iconUrl ? `<img class="tp-role-icon" src="${r.iconUrl}" />` : '';
+      return `<div class="tp-role-item role-name ${r.team ?? ''}" data-id="${r.id}">${icon}${r.name}</div>`;
+    }).join('');
+    roleList.querySelectorAll('.tp-role-item').forEach(item => {
+      item.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        const id = item.dataset.id;
+        const role = (currentState?.roles ?? []).find(r => r.id === id);
+        if (role) {
+          _selectedRoleId = role.id;
+          const icon = role.iconUrl ? `<img class="tp-role-icon" src="${role.iconUrl}" />` : '';
+          roleTrigger.innerHTML = `${icon}${role.name}`;
+          commit({ type: 'role', id: role.id, name: role.name, team: role.team ?? '', iconUrl: role.iconUrl ?? null });
+        }
+        roleList.style.display = 'none';
+      });
+    });
+  }
+
+  roleTrigger.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    if (roleList.style.display === 'none') {
+      buildRoleList();
+      roleList.style.display = 'block';
+    } else {
+      roleList.style.display = 'none';
+    }
+  });
+
+  document.addEventListener('mousedown', (e) => {
+    if (!_popover.querySelector('.tp-role-dd').contains(e.target)) {
+      roleList.style.display = 'none';
+    }
+  }, true);
 
   impBtns.forEach(btn => btn.addEventListener('click', () => {
     impBtns.forEach(b => b.classList.remove('active'));
@@ -495,12 +762,6 @@ function getPopover() {
     if (tag) commit({ type: 'tag', id: tag.id, label: tag.label });
   });
 
-  roleSelect.addEventListener('change', () => {
-    const id = roleSelect.value;
-    if (!id) return;
-    const role = (currentState?.roles ?? []).find(r => r.id === id);
-    if (role) commit({ type: 'role', id: role.id, name: role.name, team: role.team ?? '', iconUrl: role.iconUrl ?? null });
-  });
 
   xBtn.addEventListener('click', () => {
     if (!_popoverTarget) return;
@@ -535,7 +796,7 @@ function openPopover(player, phase, anchorEl, chipIdx = null) {
   const chip = chipIdx !== null ? (cellTokens[`${player}|${phase}`] ?? [])[chipIdx] : null;
   const noteInput = pop.querySelector('.tp-note-input');
   const tagsSelect = pop.querySelector('.tp-tags-select');
-  const roleSelect = pop.querySelector('.tp-role-select');
+
 
   // Pre-fill based on chip type
   noteInput.value = chip?.type === 'note' ? chip.text : '';
@@ -543,11 +804,16 @@ function openPopover(player, phase, anchorEl, chipIdx = null) {
   // Importance
   const imp = chip?.importance ?? 1;
   pop.querySelectorAll('.tp-imp-btn').forEach(b => b.classList.toggle('active', Number(b.dataset.imp) === imp));
-  // Rebuild role options from current state
-  const roles = currentState?.roles ?? [];
-  roleSelect.innerHTML = `<option value="">role</option>` +
-    roles.map(r => `<option value="${r.id}">${r.name}</option>`).join('');
-  roleSelect.value = chip?.type === 'role' ? chip.id : '';
+  // Role trigger label
+  const roleTrigger = pop.querySelector('.tp-role-trigger');
+  const roleList = pop.querySelector('.tp-role-list');
+  roleList.style.display = 'none';
+  if (chip?.type === 'role') {
+    const icon = chip.iconUrl ? `<img class="tp-role-icon" src="${chip.iconUrl}" />` : '';
+    roleTrigger.innerHTML = `${icon}${chip.name}`;
+  } else {
+    roleTrigger.textContent = 'role';
+  }
 
   // Position
   pop.style.display = 'flex';
@@ -560,11 +826,211 @@ function openPopover(player, phase, anchorEl, chipIdx = null) {
   noteInput.focus();
 }
 
+function savePlayerMeta(name) {
+  chrome.runtime.sendMessage({ type: 'SAVE_PLAYER_META', name, meta: playerMeta[name] ?? {} });
+}
+
+function metaNameColor(name) {
+  const meta = playerMeta[name] ?? {};
+  if (meta.alignment === 'evil') return 'var(--demon)';
+  if (meta.alignment === 'good') return 'var(--townsfolk)';
+  if (meta.roleTeam === 'demon' || meta.roleTeam === 'minion') return 'var(--demon)';
+  if (meta.roleTeam === 'townsfolk') return 'var(--townsfolk)';
+  if (meta.roleTeam === 'outsider') return 'var(--outsider)';
+  if (meta.roleTeam === 'traveller') return 'var(--traveller)';
+  return '';
+}
+
+function metaRowTint(name) {
+  const meta = playerMeta[name] ?? {};
+  const team = meta.alignment === 'evil' ? 'demon'
+             : meta.alignment === 'good' ? 'townsfolk'
+             : meta.roleTeam ?? '';
+  if (team === 'demon' || team === 'minion') return 'rgba(220,50,50,0.06)';
+  if (team === 'townsfolk') return 'rgba(99,179,237,0.06)';
+  if (team === 'outsider') return 'rgba(129,140,248,0.06)';
+  if (team === 'traveller') return 'rgba(192,132,252,0.06)';
+  return '';
+}
+
+// ── Player meta popover ───────────────────────────────────────────────────
+
+let _rolePop = null;
+let _roleTarget = null;
+
+function getRolePopover() {
+  if (_rolePop) return _rolePop;
+  _rolePop = document.createElement('div');
+  _rolePop.id = 'meta-role-popover';
+  _rolePop.innerHTML = `
+    <input class="mrp-search" type="text" placeholder="Search…" />
+    <div class="mrp-list"></div>
+    <button class="mrp-clear">clear role</button>
+  `;
+  document.body.appendChild(_rolePop);
+
+  const search = _rolePop.querySelector('.mrp-search');
+  const list = _rolePop.querySelector('.mrp-list');
+  const clearBtn = _rolePop.querySelector('.mrp-clear');
+
+  const renderList = (filter) => {
+    const roles = (currentState?.roles ?? []).filter(r =>
+      !filter || r.name.toLowerCase().includes(filter.toLowerCase()));
+    list.innerHTML = roles.map(r => {
+      const icon = r.iconUrl ? `<img class="tp-role-icon" src="${r.iconUrl}" />` : '';
+      const active = playerMeta[_roleTarget]?.roleId === r.id ? ' active' : '';
+      return `<div class="mrp-item role-name ${r.team ?? ''}${active}" data-id="${r.id}">${icon}${r.name}</div>`;
+    }).join('');
+    list.querySelectorAll('.mrp-item').forEach(item => {
+      item.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        if (!_roleTarget) return;
+        const role = (currentState?.roles ?? []).find(r => r.id === item.dataset.id);
+        if (!role) return;
+        const meta = playerMeta[_roleTarget] ?? {};
+        const autoAlign = !meta.alignment
+          ? (role.team === 'townsfolk' ? 'good'
+           : role.team === 'minion' || role.team === 'demon' ? 'evil' : '')
+          : meta.alignment;
+        playerMeta[_roleTarget] = { ...meta, roleId: role.id, roleName: role.name, roleTeam: role.team ?? '', roleIconUrl: role.iconUrl ?? null, alignment: autoAlign };
+        savePlayerMeta(_roleTarget);
+        refreshMetaCells(_roleTarget);
+        _rolePop.style.display = 'none';
+        _roleTarget = null;
+      });
+    });
+  };
+
+  search.addEventListener('input', () => renderList(search.value));
+
+  clearBtn.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    if (!_roleTarget) return;
+    playerMeta[_roleTarget] = { ...(playerMeta[_roleTarget] ?? {}), roleId: '', roleName: '', roleTeam: '', roleIconUrl: null };
+    savePlayerMeta(_roleTarget);
+    refreshMetaCells(_roleTarget);
+    _rolePop.style.display = 'none';
+    _roleTarget = null;
+  });
+
+  document.addEventListener('mousedown', (e) => {
+    if (_rolePop.style.display !== 'none' && !_rolePop.contains(e.target) && !e.target.closest('.notes-meta-role')) {
+      _rolePop.style.display = 'none';
+      _roleTarget = null;
+    }
+  });
+  return _rolePop;
+}
+
+function openRolePopover(name, anchorEl) {
+  const pop = getRolePopover();
+  _roleTarget = name;
+  const search = pop.querySelector('.mrp-search');
+  search.value = '';
+  pop.querySelector('.mrp-list').innerHTML = '';
+  pop.style.display = 'flex';
+  const rect = anchorEl.getBoundingClientRect();
+  const spaceBelow = window.innerHeight - rect.bottom;
+  pop.style.top = spaceBelow > 200
+    ? `${rect.bottom + window.scrollY + 2}px`
+    : `${rect.top + window.scrollY - pop.offsetHeight - 2}px`;
+  pop.style.left = `${Math.min(rect.left + window.scrollX, window.innerWidth - pop.offsetWidth - 8)}px`;
+  // Render after positioning so offsetHeight is valid
+  const roles = currentState?.roles ?? [];
+  pop.querySelector('.mrp-list').innerHTML = roles.map(r => {
+    const icon = r.iconUrl ? `<img class="tp-role-icon" src="${r.iconUrl}" />` : '';
+    const active = playerMeta[name]?.roleId === r.id ? ' active' : '';
+    return `<div class="mrp-item role-name ${r.team ?? ''}${active}" data-id="${r.id}">${icon}${r.name}</div>`;
+  }).join('');
+  pop.querySelectorAll('.mrp-item').forEach(item => {
+    item.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const role = (currentState?.roles ?? []).find(r => r.id === item.dataset.id);
+      if (!role || !_roleTarget) return;
+      const meta = playerMeta[_roleTarget] ?? {};
+      const autoAlign = !meta.alignment
+        ? (role.team === 'townsfolk' || role.team === 'outsider' ? 'good'
+         : role.team === 'minion'    || role.team === 'demon'    ? 'evil' : '')
+        : meta.alignment;
+      playerMeta[_roleTarget] = { ...meta, roleId: role.id, roleName: role.name, roleTeam: role.team ?? '', roleIconUrl: role.iconUrl ?? null, alignment: autoAlign };
+      savePlayerMeta(_roleTarget);
+      refreshMetaCells(_roleTarget);
+      _rolePop.style.display = 'none';
+      _roleTarget = null;
+    });
+  });
+  search.focus();
+}
+
+function toggleAlignment(name) {
+  const cycle = { '': 'good', 'good': 'evil', 'evil': '' };
+  const cur = playerMeta[name]?.alignment ?? '';
+  playerMeta[name] = { ...(playerMeta[name] ?? {}), alignment: cycle[cur] };
+  savePlayerMeta(name);
+  refreshMetaCells(name);
+}
+
+function refreshMetaCells(name) {
+  const escaped = CSS.escape(name);
+  const nameCell = document.querySelector(`#notes-table td.notes-player-name[data-player="${escaped}"]`);
+  const roleCell = document.querySelector(`#notes-table td.notes-meta-role[data-player="${escaped}"]`);
+  const alignCell = document.querySelector(`#notes-table td.notes-meta-align[data-player="${escaped}"]`);
+  const row = nameCell?.closest('tr');
+  if (!nameCell) return;
+  const color = metaNameColor(name);
+  const tint = metaRowTint(name);
+  nameCell.style.color = color;
+  nameCell.style.background = tint;
+  if (row) row.style.background = tint;
+  const meta = playerMeta[name] ?? {};
+  if (roleCell) {
+    const icon = meta.roleIconUrl ? `<img class="tp-role-icon" src="${meta.roleIconUrl}" />` : '';
+    const roleColorClass = meta.alignment === 'evil' ? 'demon'
+                         : meta.alignment === 'good' ? 'townsfolk'
+                         : meta.roleTeam ?? '';
+    roleCell.innerHTML = meta.roleName
+      ? `<span class="meta-role-chip role-name ${roleColorClass}">${icon}${meta.roleName}</span>`
+      : '';
+  }
+  if (alignCell) {
+    const alignLabel = { good: 'G', evil: 'E' };
+    const alignClass = { good: 'meta-good', evil: 'meta-evil' };
+    const a = meta.alignment ?? '';
+    alignCell.innerHTML = a ? `<span class="meta-align-badge ${alignClass[a]}">${alignLabel[a]}</span>` : '';
+  }
+}
+
+function measureMaxRoleChipWidth() {
+  const roles = currentState?.roles ?? [];
+  if (!roles.length) return 0;
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'position:absolute;visibility:hidden;left:-9999px;top:0;white-space:nowrap;';
+  document.body.appendChild(wrap);
+  let max = 0;
+  for (const role of roles) {
+    const chip = document.createElement('span');
+    chip.className = 'meta-role-chip';
+    if (role.iconUrl) {
+      const img = document.createElement('img');
+      img.className = 'tp-role-icon';
+      img.style.cssText = 'width:14px;height:14px;';
+      chip.appendChild(img);
+    }
+    chip.appendChild(document.createTextNode(role.name ?? ''));
+    wrap.appendChild(chip);
+    max = Math.max(max, chip.offsetWidth);
+    wrap.innerHTML = '';
+  }
+  document.body.removeChild(wrap);
+  return max + 8; // 4px cell padding each side
+}
+
 function renderNotesGrid() {
   if (!currentState?.players?.length) return;
 
   // Skip rebuild if popover note textarea is focused
   if (document.activeElement?.classList.contains('tp-note-input')) return;
+  if (document.activeElement?.dataset?.player) return;
 
   const phases = getPhaseColumns();
   const players = currentState.players;
@@ -575,21 +1041,81 @@ function renderNotesGrid() {
 
   const table = document.getElementById('notes-table');
 
-  let html = '<thead><tr>';
+  const phaseColWidth = 110;
+  const w = notesFixedColWidths;
+  const minPhaseWidth = 90;
+
+  let html = '';
+  if (w) {
+    const fixedTotal = w.player + w.role + w.align;
+    table.style.tableLayout = 'fixed';
+    table.style.width = '100%';
+    table.style.minWidth = (fixedTotal + phases.length * minPhaseWidth) + 'px';
+    html += '<colgroup>';
+    html += `<col style="width:${w.player}px">`;
+    html += `<col style="width:${w.role}px">`;
+    html += `<col style="width:${w.align}px">`;
+    for (let i = 0; i < phases.length; i++) html += '<col>';
+    html += '</colgroup>';
+  } else {
+    table.style.tableLayout = '';
+    table.style.width = 'auto';
+    table.style.minWidth = '';
+  }
+
+  html += '<thead><tr>';
   html += `<th class="notes-player-col">Player</th>`;
-  for (const ph of phases) {
+  html += `<th class="notes-meta-col">Role</th>`;
+  html += `<th class="notes-meta-col notes-align-col">Align</th>`;
+  for (let i = 0; i < phases.length; i++) {
+    const ph = phases[i];
     const cls = ph.startsWith('Night') ? 'notes-night' : 'notes-day';
-    html += `<th class="notes-phase-col ${cls}">${ph}</th>`;
+    const epoch = i % 2 === 0 ? ' epoch-start' : '';
+    html += `<th class="notes-phase-col ${cls}${epoch}">${ph}</th>`;
   }
   html += '</tr></thead><tbody>';
 
   for (const player of players) {
     const name = player.name ?? `Seat ${player.seat + 1}`;
-    const dead = player.isDead ? ' class="dead"' : '';
-    html += `<tr>`;
-    html += `<td class="notes-player-name"${dead} data-player="${name}">${name}</td>`;
-    for (const ph of phases) {
-      html += `<td class="notes-cell" data-player="${name}" data-phase="${ph}">
+    const isTraveller = player.team === 'traveller';
+
+    // Auto-fill traveller role from game state if not already set
+    if (isTraveller && player.roleId && !playerMeta[name]?.roleId) {
+      const roleObj = roles.find(r => r.id === player.roleId);
+      playerMeta[name] = {
+        ...(playerMeta[name] ?? {}),
+        roleId: player.roleId,
+        roleName: player.roleName || roleObj?.name || player.roleId,
+        roleTeam: 'traveller',
+        roleIconUrl: roleObj?.iconUrl ?? null,
+      };
+    }
+
+    const meta = playerMeta[name] ?? {};
+    const color = metaNameColor(name);
+    const tint = metaRowTint(name);
+    const dead = player.isDead ? ' dead' : '';
+    const icon = meta.roleIconUrl ? `<img class="tp-role-icon" src="${meta.roleIconUrl}" />` : '';
+    const roleColorClass = meta.alignment === 'evil' ? 'demon'
+                         : meta.alignment === 'good' ? 'townsfolk'
+                         : meta.roleTeam ?? '';
+    const roleHtml = meta.roleName
+      ? `<span class="meta-role-chip role-name ${roleColorClass}">${icon}${meta.roleName}</span>`
+      : '';
+    const alignLabel = { good: 'G', evil: 'E' };
+    const alignClass = { good: 'meta-good', evil: 'meta-evil' };
+    const a = meta.alignment ?? '';
+    const alignHtml = a ? `<span class="meta-align-badge ${alignClass[a]}">${alignLabel[a]}</span>` : '';
+    const tintStyle = tint ? `background:${tint}` : '';
+    html += `<tr style="${tintStyle}">`;
+    html += `<td class="notes-player-name${dead}" data-player="${name}" style="${color ? `color:${color};` : ''}${tintStyle}">${name}</td>`;
+    const roleLocked = isTraveller ? ' role-locked' : '';
+    html += `<td class="notes-meta-cell notes-meta-role${roleLocked}" data-player="${name}">${roleHtml}</td>`;
+    html += `<td class="notes-meta-cell notes-meta-align" data-player="${name}">${alignHtml}</td>`;
+    for (let i = 0; i < phases.length; i++) {
+      const ph = phases[i];
+      const epoch = i % 2 === 0 ? ' epoch-start' : '';
+      html += `<td class="notes-cell${epoch}" data-player="${name}" data-phase="${ph}">
         <div class="cell-chips">${chipsHtml(name, ph)}</div>
       </td>`;
     }
@@ -597,6 +1123,29 @@ function renderNotesGrid() {
   }
   html += '</tbody>';
   table.innerHTML = html;
+
+  if (!w) {
+    requestAnimationFrame(() => {
+      const ths = table.querySelectorAll('thead tr th');
+      if (ths.length < 3) return;
+      notesFixedColWidths = {
+        player: ths[0].offsetWidth,
+        role: Math.max(ths[1].offsetWidth, measureMaxRoleChipWidth()),
+        align: ths[2].offsetWidth,
+      };
+      lastNotesKey = null;
+      renderNotesGrid();
+    });
+  }
+
+  table.querySelectorAll('.notes-meta-role:not(.role-locked)').forEach(cell => {
+    cell.addEventListener('click', () => openRolePopover(cell.dataset.player, cell));
+  });
+
+  table.querySelectorAll('.notes-meta-align').forEach(cell => {
+    cell.addEventListener('click', () => toggleAlignment(cell.dataset.player));
+  });
+
 
   table.querySelectorAll('.notes-cell').forEach(cell => {
     cell.addEventListener('click', (e) => {
@@ -673,6 +1222,18 @@ document.querySelectorAll('section:not(#ws-section) h2').forEach(h2 => {
   });
 });
 
+document.getElementById('color-source-toggle').addEventListener('click', () => {
+  colorSource = colorSource === 'grimoire' ? 'notes' : 'grimoire';
+  const isNotes = colorSource === 'notes';
+  document.getElementById('ct-switch').setAttribute('aria-checked', String(isNotes));
+  document.getElementById('color-source-toggle').classList.toggle('ct-active', isNotes);
+  renderState(currentState);
+  renderTimeline();
+  renderNominations();
+  renderChats();
+  renderMessages();
+});
+
 document.getElementById('toggle-night').addEventListener('click', (e) => {
   showNightChats = !showNightChats;
   e.target.textContent = showNightChats ? 'hide night' : 'show night';
@@ -720,6 +1281,20 @@ document.addEventListener('mouseout', e => {
   if (leaving && !entering) { hoveredPlayer = null; applyHighlights(); }
 });
 
+function showReloadPrompt() {
+  setTimeout(() => {
+    if (currentState) return;
+    const banner = document.getElementById('no-data-banner') ?? (() => {
+      const el = document.createElement('div');
+      el.id = 'no-data-banner';
+      document.body.insertBefore(el, document.querySelector('main'));
+      return el;
+    })();
+    banner.innerHTML = 'The botc.app tab was open before the extension loaded. <strong>Please reload the botc.app tab</strong> to connect.';
+    banner.style.display = '';
+  }, 300);
+}
+
 chrome.runtime.sendMessage({ type: 'GET_STATE' }, (response) => {
   if (!response) return;
   applyFullRefresh(response);
@@ -735,12 +1310,15 @@ function applyFullRefresh(response) {
   nameMap = response.nameMap ?? {};
   document.getElementById('timeline-log').innerHTML = '';
   cellTokens = response.cellTokens ?? {};
+  playerMeta = response.playerMeta ?? {};
   renderState(response.state);
   if (response.timeline?.length) addTimelineEvents(response.timeline);
   allNominations = response.nominations ?? [];
   renderNominations();
   allChatSessions = response.chatSessions ?? [];
   renderChats();
+  allTextMessages = response.textMessages ?? [];
+  renderMessages();
   renderNotesGrid();
 }
 
@@ -751,20 +1329,29 @@ chrome.runtime.onMessage.addListener((message) => {
   }
   if (message.type === 'BOTC_UPDATE') {
     const payload = message.payload;
-    if (payload.type === 'STATE') { renderState(payload.data); patchTimelineNames(); renderTimeline(); renderNotesGrid(); }
+    if (payload.type === 'STATE') { renderState(payload.data); patchTimelineNames(); renderTimeline(); renderNotesGrid(); refreshPlayerTimeline(); }
     else if (payload.type === 'WS_RECV' || payload.type === 'WS_SEND') { touchWsHeartbeat(); appendWsEvent(payload); }
+    else if (payload.type === 'NEEDS_RELOAD') { showReloadPrompt(); }
     return;
   }
   if (message.type === 'TIMELINE_EVENTS') {
     addTimelineEvents(message.events ?? []);
     renderNotesGrid();
+    refreshPlayerTimeline();
   }
   if (message.type === 'NOMINATIONS_UPDATE') {
     allNominations = message.nominations ?? [];
     renderNominations();
+    refreshPlayerTimeline();
   }
   if (message.type === 'CHAT_SESSIONS_UPDATE') {
     allChatSessions = message.sessions ?? [];
     renderChats();
+    refreshPlayerTimeline();
+  }
+  if (message.type === 'TEXT_MESSAGES_UPDATE') {
+    allTextMessages = message.textMessages ?? [];
+    renderMessages();
+    refreshPlayerTimeline();
   }
 });
