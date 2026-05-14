@@ -391,7 +391,11 @@ function renderChats() {
       lastPhase = phase;
     }
 
-    const names = session.participants.map(formatParticipant);
+    const sortedParticipants = [...session.participants].sort((a, b) => {
+      const rank = id => isStoryteller(id) ? 1 : isObserver(id, resolveParticipant(id)) ? 2 : 0;
+      return rank(a) - rank(b);
+    });
+    const names = sortedParticipants.map(formatParticipant);
     const dur = duration(session.end - session.ts);
     const typeLabel = session.type === 'public' ? 'public' : session.type === 'night' ? 'night' : 'private';
 
@@ -513,6 +517,10 @@ function buildPlayerEvents(name) {
     if (!inSession) continue;
     const others = session.participants
       .filter(uid => resolveParticipant(uid) !== name)
+      .sort((a, b) => {
+        const rank = id => isStoryteller(id) ? 1 : isObserver(id, resolveParticipant(id)) ? 2 : 0;
+        return rank(a) - rank(b);
+      })
       .map(uid => formatParticipant(uid))
       .join(', ');
     const dur = duration(session.end - session.ts);
