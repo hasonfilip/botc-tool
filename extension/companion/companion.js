@@ -1,5 +1,15 @@
 'use strict';
 
+// ── Chrome shim (allows opening index.html directly in browser for dummy mode) ──
+if (typeof chrome === 'undefined' || !chrome.runtime) {
+  window.chrome = {
+    runtime: {
+      sendMessage: () => {},
+      onMessage: { addListener: () => {} },
+    },
+  };
+}
+
 // Full sorted timeline kept locally so we can re-render intervals
 let fullTimeline = [];
 let currentState = null;
@@ -316,17 +326,23 @@ function renderNominations() {
     const isGhostVoter = (name) =>
       fullTimeline.some(ev => ev.type === 'ghostvote' && ev.name === name && Math.abs(ev.ts - nom.ts) < 120000);
 
+    const executed = typeof needed === 'number' && yesCount >= needed;
     const li = document.createElement('li');
-    li.className = 'nom-entry';
+    li.className = `nom-entry${executed ? ' nom-executed' : ''}`;
     li.innerHTML = `
       <div class="nom-header">
         <span class="nom-nominator role-name ${playerTeamByName(nominator)}" data-player="${nominator}">${dn(nominator)}</span>
-        <span class="nom-arrow">-></span>
+        <span class="nom-arrow">→</span>
         <span class="nom-nominee role-name ${playerTeamByName(nominee)}" data-player="${nominee}">${dn(nominee)}</span>
-        <span class="nom-count ${yesCount >= needed ? 'nom-execute' : ''}">${yesCount}/${needed}</span>
-        <span class="nom-time">${fmt(nom.ts)}</span>
+        <span class="nom-meta">
+          <span class="nom-count ${executed ? 'nom-execute' : ''}">${yesCount}/${needed}</span>
+          <span class="nom-time">${fmt(nom.ts)}</span>
+        </span>
       </div>
-      ${yesNames.length > 0 ? `<div class="nom-voters"><span class="nom-voters-label">Voted:</span> ${yesNames.map(n => `${isGhostVoter(n) ? '👻 ' : ''}<span class="role-name ${playerTeamByName(n)}" data-player="${n}">${dn(n)}</span>`).join(', ')}</div>` : '<div class="nom-voters nom-none">no votes</div>'}
+      <div class="nom-voters${yesNames.length === 0 ? ' nom-none' : ''}">
+        <span class="nom-voters-label">${yesNames.length > 0 ? 'Voted' : 'No votes'}</span>
+        ${yesNames.length > 0 ? yesNames.map(n => `${isGhostVoter(n) ? '👻 ' : ''}<span class="role-name ${playerTeamByName(n)}" data-player="${n}">${dn(n)}</span>`).join('<span class="nom-voter-sep">,</span> ') : ''}
+      </div>
     `;
     list.appendChild(li);
   }
@@ -370,14 +386,18 @@ function resolveParticipant(userId) {
   return userId;
 }
 
-function isObserver(userId, resolvedName) {
-  return resolvedName === userId && userId !== 'me';
+function isObserver(userId) {
+  if (!userId || userId === 'me') return false;
+  const id = String(userId);
+  if (currentState?.players?.some(p => String(p.id) === id)) return false;
+  if (currentState?.storytellers?.some(s => String(s.id) === id)) return false;
+  return true;
 }
 
 function formatParticipant(userId) {
   const name = resolveParticipant(userId);
   if (isStoryteller(userId)) return `<span class="chat-st" data-player="${name}">${dn(name)}</span>`;
-  if (isObserver(userId, name)) return `<span class="observer-name">${dn(name)}</span>`;
+  if (isObserver(userId)) return `<span class="observer-name"><span class="observer-eye">👁</span>${dn(name)}</span>`;
   const team = playerTeamByName(name);
   return `<span class="role-name ${team}" data-player="${name}">${dn(name)}</span>`;
 }
@@ -402,7 +422,7 @@ function renderChats() {
     }
 
     const sortedParticipants = [...session.participants].sort((a, b) => {
-      const rank = id => isStoryteller(id) ? 1 : isObserver(id, resolveParticipant(id)) ? 2 : 0;
+      const rank = id => isStoryteller(id) ? 1 : isObserver(id) ? 2 : 0;
       return rank(a) - rank(b);
     });
     const names = sortedParticipants.map(formatParticipant);
@@ -448,15 +468,16 @@ function renderMessages() {
     li.className = `msg-entry${isPrivate ? ' msg-private' : ' msg-public'}`;
     const senderSpan = formatParticipant(msg.senderId);
     const recipientSpan = msg.recipientId ? formatParticipant(msg.recipientId) : null;
-    const to = isPrivate && recipientSpan ? ` → ${recipientSpan}`
-      : '';
-    const textHtml = msg.message !== null
-      ? `<span class="msg-text">${esc(msg.message)}</span>`
-      : `<span class="msg-text msg-private-hint">${msg.length ? `${msg.length} chars` : 'private message'}</span>`;
+    const bodyHtml = msg.message !== null
+      ? `<div class="msg-body">${esc(msg.message)}</div>`
+      : `<div class="msg-body msg-private-hint">${msg.length ? `${msg.length} chars` : 'private message'}</div>`;
     li.innerHTML = `
-      <span class="msg-time">${fmt(msg.ts)}</span>
-      ${senderSpan}${to}
-      ${textHtml}
+      <div class="msg-header">
+        <span class="msg-badge ${isPrivate ? 'msg-badge-private' : 'msg-badge-public'}">${isPrivate ? '🔒' : '📢'}</span>
+        <span class="msg-parties">${senderSpan}${recipientSpan ? `<span class="msg-arrow">→</span>${recipientSpan}` : ''}</span>
+        <span class="msg-time">${fmt(msg.ts)}</span>
+      </div>
+      ${bodyHtml}
     `;
     list.appendChild(li);
   }
@@ -526,7 +547,7 @@ function buildPlayerEvents(name) {
     const others = session.participants
       .filter(uid => resolveParticipant(uid) !== name)
       .sort((a, b) => {
-        const rank = id => isStoryteller(id) ? 1 : isObserver(id, resolveParticipant(id)) ? 2 : 0;
+        const rank = id => isStoryteller(id) ? 1 : isObserver(id) ? 2 : 0;
         return rank(a) - rank(b);
       })
       .map(uid => formatParticipant(uid))
@@ -538,14 +559,16 @@ function buildPlayerEvents(name) {
 
   // Messages
   for (const msg of allTextMessages) {
+    const isPrivate = !!msg.recipientId;
+    const badge = isPrivate ? '🔒' : '📢';
     if (msg.senderName === name) {
-      const to = msg.recipientId ? formatParticipant(msg.recipientId) : 'public';
-      const body = msg.message ? `"${esc(msg.message)}"` : `${msg.length ?? '?'} chars`;
-      events.push({ ts: msg.ts, type: 'msg-sent', label: `Message to ${to}: <span class="ptl-msg-body">${body}</span>` });
+      const to = msg.recipientId ? formatParticipant(msg.recipientId) : '<span class="ptl-msg-public">public</span>';
+      const body = msg.message ? `<span class="ptl-msg-body">${esc(msg.message)}</span>` : `<span class="ptl-msg-body">${msg.length ?? '?'} chars</span>`;
+      events.push({ ts: msg.ts, type: 'msg-sent', label: `${badge} → ${to} ${body}` });
     } else if (msg.recipientName === name) {
       const from = formatParticipant(msg.senderId);
-      const body = msg.message ? `"${esc(msg.message)}"` : `${msg.length ?? '?'} chars`;
-      events.push({ ts: msg.ts, type: 'msg-received', label: `Message from ${from}: <span class="ptl-msg-body">${body}</span>` });
+      const body = msg.message ? `<span class="ptl-msg-body">${esc(msg.message)}</span>` : `<span class="ptl-msg-body">${msg.length ?? '?'} chars</span>`;
+      events.push({ ts: msg.ts, type: 'msg-received', label: `${badge} ${from} ${body}` });
     }
   }
 
@@ -1190,7 +1213,7 @@ function renderNotesGrid() {
 
 // ── WS heartbeat ──────────────────────────────────────────────────────────
 
-let lastWsTs = null;
+let lastWsTs = Date.now(); // start counting from page load so timer is always visible
 
 function touchWsHeartbeat() {
   lastWsTs = Date.now();
@@ -1284,6 +1307,7 @@ document.getElementById('clear-ws').addEventListener('click', () => {
 
 window.__botc = { get state() { return currentState; }, get timeline() { return fullTimeline; }, get roles() { return revealedRoles; } };
 
+
 // ── Name highlight on hover ───────────────────────────────────────────────
 
 let hoveredPlayer = null;
@@ -1327,7 +1351,7 @@ function showReloadPrompt() {
 }
 
 chrome.runtime.sendMessage({ type: 'GET_STATE' }, (response) => {
-  if (!response) return;
+  if (!response) { showReloadPrompt(); return; }
   applyFullRefresh(response);
   const wsEvents = response.wsEvents ?? [];
   wsEvents.forEach(appendWsEvent);
@@ -1351,6 +1375,7 @@ function applyFullRefresh(response) {
   allTextMessages = response.textMessages ?? [];
   renderMessages();
   renderNotesGrid();
+  renderObserversDebug();
 }
 
 chrome.runtime.onMessage.addListener((message) => {
@@ -1360,7 +1385,17 @@ chrome.runtime.onMessage.addListener((message) => {
   }
   if (message.type === 'BOTC_UPDATE') {
     const payload = message.payload;
-    if (payload.type === 'STATE') { renderState(payload.data); patchTimelineNames(); renderTimeline(); renderNotesGrid(); refreshPlayerTimeline(); }
+    if (payload.type === 'STATE') {
+      let nameMapGrew = false;
+      if (message.nameMap) {
+        for (const [id, name] of Object.entries(message.nameMap)) {
+          if (!nameMap[id]) nameMapGrew = true;
+          nameMap[id] = name;
+        }
+      }
+      renderState(payload.data); patchTimelineNames(); renderTimeline(); renderNotesGrid(); refreshPlayerTimeline();
+      if (nameMapGrew) { renderNominations(); renderChats(); renderMessages(); refreshPlayerTimeline(); }
+    }
     else if (payload.type === 'WS_RECV' || payload.type === 'WS_SEND') { touchWsHeartbeat(); appendWsEvent(payload); }
     else if (payload.type === 'NEEDS_RELOAD') { showReloadPrompt(); }
     return;

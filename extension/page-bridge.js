@@ -38,6 +38,18 @@
       .filter(Boolean);
   };
 
+  // Returns [{id, name}] for spectators/observers visible in the users panel
+  const scrapeSpectators = () => {
+    return [...document.querySelectorAll('li.spectator')]
+      .map(el => {
+        const idCls = [...el.classList].find(c => c.startsWith('id-'));
+        const id = idCls ? idCls.replace('id-', '') : null;
+        const name = el.querySelector('.name')?.textContent?.trim() ?? null;
+        return id && name ? { id, name } : null;
+      })
+      .filter(Boolean);
+  };
+
   // Returns [{id, name, team}] from the script sheet in the DOM
   const scrapeScriptRoles = () => {
     return [...document.querySelectorAll('li[class*="team-"][class*="role-"]')]
@@ -122,6 +134,7 @@
       }),
       storytellers: storage.storytellers ?? [],
       storytellerNames,
+      spectators: scrapeSpectators(),
       roles: scrapeScriptRoles(),
       edition: storage.edition ?? null,
       bluffs: storage.bluffs ?? [],

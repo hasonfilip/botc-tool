@@ -268,6 +268,7 @@ tr.dead td { color: var(--dead); }
   border-left: 3px solid var(--border);
   padding: 5px 8px;
   border-radius: 0 4px 4px 0;
+  flex-shrink: 0;
 }
 
 .tl-block.tl-start  { border-color: var(--accent2); }
@@ -308,40 +309,101 @@ tr.dead td { color: var(--dead); }
 .nom-entry {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 5px;
-  padding: 6px 10px;
+  border-left: 3px solid var(--border);
+  border-radius: 0 6px 6px 0;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.nom-entry.nom-executed {
+  border-left-color: var(--minion);
 }
 
 .nom-header {
   display: flex;
-  align-items: baseline;
-  gap: 5px;
+  align-items: center;
+  gap: 6px;
   flex-wrap: wrap;
+  padding: 7px 10px 6px;
+  background: rgba(255,255,255,0.03);
+  border-bottom: 1px solid var(--border);
 }
 
-.nom-nominator { font-weight: bold; }
-.nom-arrow     { color: var(--muted); font-size: 11px; }
-.nom-nominee   { font-weight: bold; }
-.nom-count     { margin-left: auto; font-size: 11px; font-weight: bold; color: var(--muted); font-family: monospace; }
-.nom-count.nom-execute { color: var(--minion); }
-.nom-time      { font-size: 10px; color: var(--muted); font-family: monospace; }
-.nom-voters    { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--border); font-size: 11px; color: var(--text); }
-.nom-voters-label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; margin-right: 2px; }
+.nom-nominator { font-weight: 700; font-size: 13px; }
+.nom-arrow     { color: var(--muted); font-size: 13px; flex-shrink: 0; }
+.nom-nominee   { font-weight: 700; font-size: 13px; }
+
+.nom-meta {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.nom-count {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  font-family: monospace;
+  background: var(--border);
+  padding: 1px 6px;
+  border-radius: 8px;
+}
+.nom-count.nom-execute {
+  color: #1a1a2e;
+  background: var(--minion);
+}
+
+.nom-time { font-size: 10px; color: var(--muted); font-family: monospace; }
+
+.nom-voters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 4px;
+  padding: 5px 10px 6px;
+  font-size: 11px;
+  color: var(--text);
+  background: rgba(0,0,0,0.12);
+}
+.nom-voters-label {
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-right: 3px;
+  flex-shrink: 0;
+}
+.nom-voter-sep { color: var(--muted); }
 .nom-voters.nom-none { color: var(--muted); font-style: italic; }
 
 .nom-day-sep {
-  font-size: 10px;
+  font-size: 11px;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 1px;
-  color: var(--muted);
-  padding: 2px 0;
+  letter-spacing: 1.5px;
+  color: var(--text);
+  padding: 7px 10px;
+  margin: 4px -1px 0;
   cursor: pointer;
   user-select: none;
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+  border-top: 2px solid var(--accent);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.nom-day-sep:hover { color: var(--text); }
-.nom-day-sep::before { content: '▾ '; transition: transform 0.15s; display: inline-block; }
+.nom-day-sep::before { content: '▾'; font-size: 9px; color: var(--muted); transition: transform 0.15s; display: inline-block; flex-shrink: 0; }
 .nom-day-sep.collapsed::before { transform: rotate(-90deg); }
+.nom-day-sep:hover { color: var(--accent); }
+.nom-day-sep:hover::before { color: var(--accent); }
 
 /* ── Chats ── */
 
@@ -359,6 +421,7 @@ tr.dead td { color: var(--dead); }
   border-left-width: 3px;
   border-radius: 0 5px 5px 0;
   padding: 5px 10px;
+  flex-shrink: 0;
 }
 
 .chat-entry.chat-private { border-left-color: #7b68ee; }
@@ -382,26 +445,43 @@ tr.dead td { color: var(--dead); }
 .header-st { font-weight: 600; font-style: normal; border-radius: 3px; padding: 1px 3px; }
 .header-st-sep { color: var(--muted); }
 .chat-sep { color: var(--muted); }
-.observer-name { color: var(--muted); font-size: 10px; font-style: italic; }
+.observer-name { color: var(--muted); font-size: 11px; font-style: italic; display: inline-flex; align-items: baseline; gap: 3px; }
+.observer-eye { font-style: normal; font-size: 10px; opacity: 0.7; }
 
 .msg-entry {
-  background: var(--surface);
   border: 1px solid var(--border);
-  border-left-width: 3px;
-  border-radius: 0 5px 5px 0;
-  padding: 5px 10px;
+  border-left: 3px solid var(--border);
+  border-radius: 0 6px 6px 0;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.msg-entry.msg-public  { border-left-color: #ffd700; background: rgba(255,215,0,0.04); }
+.msg-entry.msg-private { border-left-color: #7b68ee; background: rgba(123,104,238,0.06); }
+
+.msg-header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 6px;
+  padding: 5px 10px 4px;
+  background: rgba(255,255,255,0.03);
+  border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
 }
-.msg-entry.msg-private { border-left-color: #7b68ee; }
-.msg-entry.msg-public  { border-left-color: #ffd700; }
-.msg-time   { font-size: 10px; color: var(--muted); white-space: nowrap; }
-.msg-sender { font-weight: 600; }
-.msg-recipient { font-weight: 600; }
-.msg-text   { color: var(--text); flex: 1; min-width: 0; word-break: break-word; }
+
+.msg-badge { font-size: 11px; flex-shrink: 0; }
+.msg-parties { display: flex; align-items: baseline; gap: 5px; flex: 1; flex-wrap: wrap; font-weight: 600; font-size: 13px; }
+.msg-arrow { color: var(--muted); font-size: 12px; }
+.msg-time  { font-size: 10px; color: var(--muted); font-family: monospace; white-space: nowrap; margin-left: auto; }
+
+.msg-body {
+  padding: 5px 10px 6px;
+  font-size: 12px;
+  color: var(--text);
+  word-break: break-word;
+  line-height: 1.5;
+}
 .msg-private-hint { color: var(--muted); font-style: italic; }
+.ptl-msg-public { color: var(--muted); font-style: italic; }
 
 [data-player] { cursor: default; border-radius: 3px; }
 [data-player].player-hl { background: rgba(255, 220, 80, 0.15); outline: 1px solid rgba(255, 220, 80, 0.25); }

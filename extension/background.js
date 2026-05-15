@@ -283,6 +283,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           }
         }
 
+        // Spectator names scraped from the users panel (only present when panel is open)
+        for (const s of payload.data.spectators ?? []) {
+          if (s.id && s.name) nameMap[String(s.id)] = s.name;
+        }
+
         // Match storyteller IDs (localStorage) to names (DOM) by position
         const storytellers = payload.data.storytellers ?? [];
         const storytellerNames = payload.data.storytellerNames ?? [];
@@ -325,7 +330,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         });
 
         if (companionTabId !== null) {
-          chrome.tabs.sendMessage(companionTabId, { type: 'BOTC_UPDATE', payload }).catch(() => {});
+          chrome.tabs.sendMessage(companionTabId, { type: 'BOTC_UPDATE', payload, nameMap }).catch(() => {});
           if (newEvents.length > 0) {
             chrome.tabs.sendMessage(companionTabId, { type: 'TIMELINE_EVENTS', events: newEvents }).catch(() => {});
           }
