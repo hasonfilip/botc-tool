@@ -36,25 +36,22 @@ function parseSocketIO(raw) {
 }
 
 // In-memory dedup: server sends each WS message 4x
-let _lastNomKey = '';
-let _lastNomTs = 0;
+const _nomDedupMap = new Map();
 function isDupNomEvent(key) {
   const now = Date.now();
-  if (key === _lastNomKey && now - _lastNomTs < 1500) return true;
-  _lastNomKey = key;
-  _lastNomTs = now;
+  if (now - (_nomDedupMap.get(key) ?? 0) < 1500) return true;
+  _nomDedupMap.set(key, now);
   return false;
 }
 
 async function handleNominationFrame(eventName, eventData, ts) {
   if (isDupNomEvent(eventName + JSON.stringify(eventData))) return;
 
-  const { nominations, pendingNomination } = await store.get();
+  const { nominations, pendingNomination, latestState } = await store.get();
 
   if (eventName === 'nomination') {
     if (Array.isArray(eventData.nomination)) {
       const [nominatorSeat, nomineeSeat] = eventData.nomination;
-      const { latestState } = await store.get();
       const alive = (latestState?.players ?? []).filter(p => !p.isDead).length;
       const highscore = Math.max(eventData.highscore, Math.ceil(alive / 2));
       const entry = { ts, nominatorSeat, nomineeSeat, highscore, handState: {}, yesSeats: [] };

@@ -28,6 +28,8 @@ const PREDEFINED_TAGS = [
 
 const phaseLabel = (phase) => phase % 2 === 1 ? `Night ${Math.ceil(phase / 2)}` : `Day ${Math.ceil(phase / 2)}`;
 const dn = (name) => name?.length > 20 ? name.slice(0, 20) + '…' : (name ?? '');
+const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
 
 // ── Render ────────────────────────────────────────────────────────────────
 
@@ -117,6 +119,8 @@ function duration(ms) {
 
 function renderTimeline() {
   const list = document.getElementById('timeline-log');
+  const savedTop = list.scrollTop;
+  const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
 
   // Save collapse/reveal state keyed by block label
   const collapsedBlocks = new Set();
@@ -197,6 +201,7 @@ function renderTimeline() {
   list.querySelectorAll('.tl-game-end.spoiler').forEach(el => {
     el.addEventListener('click', () => el.classList.toggle('revealed'));
   });
+  list.scrollTop = atBottom ? list.scrollHeight : savedTop;
   applyHighlights();
 }
 
@@ -286,6 +291,8 @@ function gamePhaseAt(ts) {
 
 function renderNominations() {
   const list = document.getElementById('nominations-log');
+  const savedTop = list.scrollTop;
+  const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
   const collapsedPhases = new Set([...list.querySelectorAll('.nom-day-sep.collapsed')].map(el => el.textContent));
   list.innerHTML = '';
 
@@ -324,6 +331,7 @@ function renderNominations() {
     list.appendChild(li);
   }
   bindPhaseSeparators(list, collapsedPhases);
+  list.scrollTop = atBottom ? list.scrollHeight : savedTop;
   applyHighlights();
 }
 
@@ -376,6 +384,8 @@ function formatParticipant(userId) {
 
 function renderChats() {
   const list = document.getElementById('chats-log');
+  const savedTop = list.scrollTop;
+  const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
   const collapsedPhases = new Set([...list.querySelectorAll('.nom-day-sep.collapsed')].map(el => el.textContent));
   list.innerHTML = '';
 
@@ -411,6 +421,7 @@ function renderChats() {
     list.appendChild(li);
   }
   bindPhaseSeparators(list, collapsedPhases);
+  list.scrollTop = atBottom ? list.scrollHeight : savedTop;
   applyHighlights();
 }
 
@@ -418,6 +429,8 @@ function renderChats() {
 
 function renderMessages() {
   const list = document.getElementById('messages-log');
+  const savedTop = list.scrollTop;
+  const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
   const collapsedPhases = new Set([...list.querySelectorAll('.nom-day-sep.collapsed')].map(el => el.textContent));
   list.innerHTML = '';
   let lastPhase = null;
@@ -433,18 +446,12 @@ function renderMessages() {
     const isPrivate = !!msg.recipientId;
     const li = document.createElement('li');
     li.className = `msg-entry${isPrivate ? ' msg-private' : ' msg-public'}`;
-    const senderIsObs = isObserver(msg.senderId, msg.senderName);
-    const recipientIsObs = isObserver(msg.recipientId, msg.recipientName);
-    const senderTeam = playerTeamByName(msg.senderName);
-    const recipientTeam = playerTeamByName(msg.recipientName);
-    const senderSpan = senderIsObs
-      ? `<span class="observer-name">${dn(msg.senderId)}</span>`
-      : `<span class="msg-sender role-name ${senderTeam}" data-player="${msg.senderName}">${dn(msg.senderName)}</span>`;
-    const to = isPrivate
-      ? ` → ${recipientIsObs ? `<span class="observer-name">${dn(msg.recipientId)}</span>` : `<span class="msg-recipient role-name ${recipientTeam}" data-player="${msg.recipientName}">${dn(msg.recipientName ?? msg.recipientId)}</span>`}`
+    const senderSpan = formatParticipant(msg.senderId);
+    const recipientSpan = msg.recipientId ? formatParticipant(msg.recipientId) : null;
+    const to = isPrivate && recipientSpan ? ` → ${recipientSpan}`
       : '';
     const textHtml = msg.message !== null
-      ? `<span class="msg-text">${msg.message}</span>`
+      ? `<span class="msg-text">${esc(msg.message)}</span>`
       : `<span class="msg-text msg-private-hint">${msg.length ? `${msg.length} chars` : 'private message'}</span>`;
     li.innerHTML = `
       <span class="msg-time">${fmt(msg.ts)}</span>
@@ -454,6 +461,7 @@ function renderMessages() {
     list.appendChild(li);
   }
   bindPhaseSeparators(list, collapsedPhases);
+  list.scrollTop = atBottom ? list.scrollHeight : savedTop;
   applyHighlights();
 }
 
@@ -531,12 +539,12 @@ function buildPlayerEvents(name) {
   // Messages
   for (const msg of allTextMessages) {
     if (msg.senderName === name) {
-      const to = msg.recipientName ? `<span class="role-name ${playerTeamByName(msg.recipientName)}" data-player="${msg.recipientName}">${msg.recipientName}</span>` : 'public';
-      const body = msg.message ? `"${msg.message}"` : `${msg.length ?? '?'} chars`;
+      const to = msg.recipientId ? formatParticipant(msg.recipientId) : 'public';
+      const body = msg.message ? `"${esc(msg.message)}"` : `${msg.length ?? '?'} chars`;
       events.push({ ts: msg.ts, type: 'msg-sent', label: `Message to ${to}: <span class="ptl-msg-body">${body}</span>` });
     } else if (msg.recipientName === name) {
-      const from = `<span class="role-name ${playerTeamByName(msg.senderName)}" data-player="${msg.senderName}">${msg.senderName}</span>`;
-      const body = msg.message ? `"${msg.message}"` : `${msg.length ?? '?'} chars`;
+      const from = formatParticipant(msg.senderId);
+      const body = msg.message ? `"${esc(msg.message)}"` : `${msg.length ?? '?'} chars`;
       events.push({ ts: msg.ts, type: 'msg-received', label: `Message from ${from}: <span class="ptl-msg-body">${body}</span>` });
     }
   }
@@ -591,15 +599,18 @@ function openPlayerTimeline(name) {
   }
 
   bindPhaseSeparators(list);
-  panel.classList.add('open');
   overlay.classList.add('open');
+  panel.classList.add('open');
+  requestAnimationFrame(() => overlay.classList.add('visible'));
   applyHighlights();
 }
 
 function closePlayerTimeline() {
   openPlayerTimelineName = null;
   document.getElementById('player-timeline-panel').classList.remove('open');
-  document.getElementById('player-timeline-overlay').classList.remove('open');
+  const overlay = document.getElementById('player-timeline-overlay');
+  overlay.classList.remove('visible');
+  overlay.addEventListener('transitionend', () => overlay.classList.remove('open'), { once: true });
 }
 document.getElementById('ptl-close').addEventListener('click', closePlayerTimeline);
 document.getElementById('player-timeline-overlay').addEventListener('click', closePlayerTimeline);
@@ -961,7 +972,7 @@ function openRolePopover(name, anchorEl) {
         : meta.alignment;
       playerMeta[_roleTarget] = { ...meta, roleId: role.id, roleName: role.name, roleTeam: role.team ?? '', roleIconUrl: role.iconUrl ?? null, alignment: autoAlign };
       savePlayerMeta(_roleTarget);
-      refreshMetaCells(_roleTarget);
+      refreshMetaCells(_roleTarget, { recolorPage: true });
       _rolePop.style.display = 'none';
       _roleTarget = null;
     });
@@ -1097,7 +1108,7 @@ function renderNotesGrid() {
 
     // Auto-fill traveller role from game state if not already set
     if (isTraveller && player.roleId && !playerMeta[name]?.roleId) {
-      const roleObj = roles.find(r => r.id === player.roleId);
+      const roleObj = (currentState.roles ?? []).find(r => r.id === player.roleId);
       playerMeta[name] = {
         ...(playerMeta[name] ?? {}),
         roleId: player.roleId,
@@ -1278,8 +1289,9 @@ window.__botc = { get state() { return currentState; }, get timeline() { return 
 let hoveredPlayer = null;
 
 const applyHighlights = () => {
+  if (hoveredPlayer === null) return;
   document.querySelectorAll('[data-player]').forEach(el => {
-    el.classList.toggle('player-hl', el.dataset.player === hoveredPlayer && hoveredPlayer !== null);
+    el.classList.toggle('player-hl', el.dataset.player === hoveredPlayer);
   });
 };
 
@@ -1294,7 +1306,10 @@ document.addEventListener('mouseover', e => {
 document.addEventListener('mouseout', e => {
   const leaving = e.target.closest('[data-player]');
   const entering = e.relatedTarget?.closest('[data-player]');
-  if (leaving && !entering) { hoveredPlayer = null; applyHighlights(); }
+  if (leaving && !entering) {
+    hoveredPlayer = null;
+    document.querySelectorAll('[data-player].player-hl').forEach(el => el.classList.remove('player-hl'));
+  }
 });
 
 function showReloadPrompt() {

@@ -9,7 +9,7 @@
   --townsfolk: #4a9eff;
   --outsider: #a0c4ff;
   --minion: #ff6b6b;
-  --demon: #ff0000;
+  --demon: #ff4444;
   --traveller: #c084fc;
   --border: #2a2a4a;
 }
@@ -31,7 +31,8 @@ header {
   padding: 10px 20px;
   display: flex;
   align-items: center;
-  gap: 14px;
+  flex-wrap: wrap;
+  gap: 10px 14px;
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
@@ -789,11 +790,14 @@ tr[data-player].player-hl td { background: rgba(255, 220, 80, 0.08); }
   inset: 0;
   background: rgba(0,0,0,0.45);
   z-index: 200;
+  opacity: 0;
+  transition: opacity 0.2s;
 }
 #player-timeline-overlay.open { display: block; }
+#player-timeline-overlay.open.visible { opacity: 1; }
 
 #player-timeline-panel {
-  display: none;
+  display: flex;
   flex-direction: column;
   position: fixed;
   top: 0;
@@ -805,8 +809,10 @@ tr[data-player].player-hl td { background: rgba(255, 220, 80, 0.08); }
   border-left: 2px solid var(--border);
   z-index: 201;
   overflow: hidden;
+  transform: translateX(100%);
+  transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
 }
-#player-timeline-panel.open { display: flex; }
+#player-timeline-panel.open { transform: translateX(0); }
 
 #ptl-header {
   display: flex;
