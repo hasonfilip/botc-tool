@@ -3,6 +3,21 @@
 
 let companionTabId = null;
 
+async function resolveCompanionTabId() {
+  if (companionTabId !== null) {
+    try { await chrome.tabs.get(companionTabId); return companionTabId; } catch { companionTabId = null; }
+  }
+  const url = chrome.runtime.getURL('companion/index.html');
+  const tabs = await chrome.tabs.query({ url });
+  if (tabs.length > 0) { companionTabId = tabs[0].id; return companionTabId; }
+  return null;
+}
+
+async function sendToCompanion(msg) {
+  const tabId = await resolveCompanionTabId();
+  if (tabId !== null) chrome.tabs.sendMessage(tabId, msg).catch(() => {});
+}
+
 const store = {
   async get() {
     const data = await chrome.storage.session.get(['latestState', 'timeline', 'wsEvents', 'processedIds', 'nameMap', 'currentGameId', 'nominations', 'pendingNomination', 'chatSessions', 'cellTokens', 'playerMeta', 'textMessages']);
@@ -58,9 +73,7 @@ async function handleNominationFrame(eventName, eventData, ts) {
       await store.set({ pendingNomination: entry });
     } else if (eventData.nomination === false && pendingNomination) {
       await store.set({ nominations: [...nominations, pendingNomination], pendingNomination: null });
-      if (companionTabId !== null) {
-        chrome.tabs.sendMessage(companionTabId, { type: 'NOMINATIONS_UPDATE', nominations: [...nominations, pendingNomination] }).catch(() => {});
-      }
+      await sendToCompanion({ type: 'NOMINATIONS_UPDATE', nominations: [...nominations, pendingNomination] });
     }
     return;
   }
@@ -103,9 +116,7 @@ async function handleTextMessage(senderId, recipientId, message, length, ts) {
   const entry = { ts, senderId: String(senderId), senderName, recipientId: recipientId || null, recipientName, message: message ?? null, length: length ?? null };
   const updated = [...textMessages, entry];
   await store.set({ textMessages: updated });
-  if (companionTabId !== null) {
-    chrome.tabs.sendMessage(companionTabId, { type: 'TEXT_MESSAGES_UPDATE', textMessages: updated }).catch(() => {});
-  }
+  await sendToCompanion({ type: 'TEXT_MESSAGES_UPDATE', textMessages: updated });
 }
 
 // ── Channel / chat tracking ───────────────────────────────────────────────
@@ -131,9 +142,7 @@ async function saveSession(channelId, start, end, participants) {
   const session = { ts: start, end, channel: channelId, type, participants };
   const updated = [...chatSessions, session];
   await store.set({ chatSessions: updated });
-  if (companionTabId !== null) {
-    chrome.tabs.sendMessage(companionTabId, { type: 'CHAT_SESSIONS_UPDATE', sessions: updated }).catch(() => {});
-  }
+  await sendToCompanion({ type: 'CHAT_SESSIONS_UPDATE', sessions: updated });
 }
 
 async function handleChannelChange(userId, newChannel, ts) {
@@ -221,9 +230,10 @@ function diffDeaths(prevPlayers, nextPlayers, processedIds, nameMap) {
 }
 
 async function pushStateToCompanion() {
-  if (companionTabId === null) return;
+  const tabId = await resolveCompanionTabId();
+  if (tabId === null) return;
   const { latestState, timeline, wsEvents, nominations, chatSessions, nameMap, cellTokens, playerMeta, textMessages } = await store.get();
-  chrome.tabs.sendMessage(companionTabId, {
+  chrome.tabs.sendMessage(tabId, {
     type: 'FULL_REFRESH',
     state: latestState,
     timeline,
@@ -329,12 +339,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           nameMap,
         });
 
-        if (companionTabId !== null) {
-          chrome.tabs.sendMessage(companionTabId, { type: 'BOTC_UPDATE', payload, nameMap }).catch(() => {});
-          if (newEvents.length > 0) {
-            chrome.tabs.sendMessage(companionTabId, { type: 'TIMELINE_EVENTS', events: newEvents }).catch(() => {});
-          }
-        }
+        await sendToCompanion({ type: 'BOTC_UPDATE', payload, nameMap });
+        if (newEvents.length > 0) await sendToCompanion({ type: 'TIMELINE_EVENTS', events: newEvents });
       })();
       return;
     }
@@ -384,16 +390,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const updated = [...wsEvents, { ...payload, ts: Date.now() }];
         if (updated.length > 100) updated.shift();
         await store.set({ wsEvents: updated });
-        if (companionTabId !== null) {
-          chrome.tabs.sendMessage(companionTabId, { type: 'BOTC_UPDATE', payload }).catch(() => {});
-        }
+        await sendToCompanion({ type: 'BOTC_UPDATE', payload });
       })();
       return;
     }
 
-    if (companionTabId !== null) {
-      chrome.tabs.sendMessage(companionTabId, { type: 'BOTC_UPDATE', payload }).catch(() => {});
-    }
+    sendToCompanion({ type: 'BOTC_UPDATE', payload });
     return;
   }
 

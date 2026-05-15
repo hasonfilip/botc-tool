@@ -104,12 +104,7 @@ function renderState(state) {
           ${(player.status ?? []).map(s => `<span class="tag">${s}</span>`).join('')}
         </div>
       </td>
-      <td class="ptl-cell"><button class="ptl-btn" title="Player timeline">▶</button></td>
     `;
-    tr.querySelector('.ptl-btn').addEventListener('click', (e) => {
-      e.stopPropagation();
-      openPlayerTimeline(player.name ?? player.id);
-    });
     tbody.appendChild(tr);
   });
   applyHighlights();
@@ -157,7 +152,7 @@ function renderTimeline() {
       current = { label: ev.label, start: ev.ts, end: null, deaths: [] };
       blocks.push(current);
     } else if ((ev.type === 'death' || ev.type === 'ghostvote' || ev.type === 'revive') && current) {
-      const isEarlyDay = current.label.startsWith('Day') && (ev.ts - current.start) < 60000;
+      const isEarlyDay = current.label.startsWith('Day') && (ev.ts - current.start) < 120000;
       const target = isEarlyDay && blocks.length >= 2 ? blocks[blocks.length - 2] : current;
       target.deaths.push(isEarlyDay ? { ...ev, refStart: current.start } : ev);
     } else if (ev.type === 'end' && current) {
@@ -1336,6 +1331,12 @@ document.addEventListener('mouseout', e => {
   }
 });
 
+document.addEventListener('click', e => {
+  if (e.target.closest('#notes-table')) return;
+  const el = e.target.closest('[data-player]');
+  if (el) openPlayerTimeline(el.dataset.player);
+});
+
 function showReloadPrompt() {
   setTimeout(() => {
     if (currentState) return;
@@ -1375,7 +1376,6 @@ function applyFullRefresh(response) {
   allTextMessages = response.textMessages ?? [];
   renderMessages();
   renderNotesGrid();
-  renderObserversDebug();
 }
 
 chrome.runtime.onMessage.addListener((message) => {
