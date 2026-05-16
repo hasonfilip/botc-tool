@@ -26,6 +26,7 @@ let cellTokens = {};
 let playerMeta = {}; // { name: { roleId, roleName, roleTeam, roleIconUrl, alignment } }
 let lastNotesKey = '';
 let notesFixedColWidths = null; // { player, role, align } in px — set once, never shrunk
+let pinnedPlayers = new Set();
 
 const PREDEFINED_TAGS = [
   { id: 'first-night-info',     label: 'first night' },
@@ -107,7 +108,7 @@ function renderState(state) {
     `;
     tbody.appendChild(tr);
   });
-  applyHighlights();
+  applyHighlights(); applyPinnedHighlights();
 }
 
 // ── Timeline ──────────────────────────────────────────────────────────────
@@ -207,7 +208,7 @@ function renderTimeline() {
     el.addEventListener('click', () => el.classList.toggle('revealed'));
   });
   list.scrollTop = atBottom ? list.scrollHeight : savedTop;
-  applyHighlights();
+  applyHighlights(); applyPinnedHighlights();
 }
 
 function patchTimelineNames() {
@@ -343,7 +344,7 @@ function renderNominations() {
   }
   bindPhaseSeparators(list, collapsedPhases);
   list.scrollTop = atBottom ? list.scrollHeight : savedTop;
-  applyHighlights();
+  applyHighlights(); applyPinnedHighlights();
 }
 
 // ── Chats ─────────────────────────────────────────────────────────────────
@@ -437,7 +438,7 @@ function renderChats() {
   }
   bindPhaseSeparators(list, collapsedPhases);
   list.scrollTop = atBottom ? list.scrollHeight : savedTop;
-  applyHighlights();
+  applyHighlights(); applyPinnedHighlights();
 }
 
 // ── Text messages ────────────────────────────────────────────────────────
@@ -478,7 +479,7 @@ function renderMessages() {
   }
   bindPhaseSeparators(list, collapsedPhases);
   list.scrollTop = atBottom ? list.scrollHeight : savedTop;
-  applyHighlights();
+  applyHighlights(); applyPinnedHighlights();
 }
 
 // ── Player timeline panel ────────────────────────────────────────────────
@@ -620,7 +621,7 @@ function openPlayerTimeline(name) {
   overlay.classList.add('open');
   panel.classList.add('open');
   requestAnimationFrame(() => overlay.classList.add('visible'));
-  applyHighlights();
+  applyHighlights(); applyPinnedHighlights();
 }
 
 function closePlayerTimeline() {
@@ -1145,7 +1146,8 @@ function renderNotesGrid() {
     const alignHtml = a ? `<span class="meta-align-badge ${alignClass[a]}">${alignLabel[a]}</span>` : '';
     const tintStyle = tint ? `background:${tint}` : '';
     html += `<tr style="${tintStyle}">`;
-    html += `<td class="notes-player-name${dead}" data-player="${name}" style="${color ? `color:${color};` : ''}${tintStyle}">${dn(name)}</td>`;
+    const pinned = pinnedPlayers.has(name);
+    html += `<td class="notes-player-name${dead}" data-player="${name}" style="${color ? `color:${color};` : ''}${tintStyle}"><button class="pin-hl-btn${pinned ? ' pinned' : ''}" data-pin="${esc(name)}" title="Pin highlight">☀</button>${dn(name)}</td>`;
     const roleLocked = isTraveller ? ' role-locked' : '';
     html += `<td class="notes-meta-cell notes-meta-role${roleLocked}" data-player="${name}">${roleHtml}</td>`;
     html += `<td class="notes-meta-cell notes-meta-align" data-player="${name}">${alignHtml}</td>`;
@@ -1183,6 +1185,17 @@ function renderNotesGrid() {
     cell.addEventListener('click', () => toggleAlignment(cell.dataset.player));
   });
 
+  table.querySelectorAll('.pin-hl-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const name = btn.dataset.pin;
+      if (pinnedPlayers.has(name)) pinnedPlayers.delete(name);
+      else pinnedPlayers.add(name);
+      btn.classList.toggle('pinned', pinnedPlayers.has(name));
+      applyPinnedHighlights();
+    });
+  });
+
 
   table.querySelectorAll('.notes-cell').forEach(cell => {
     cell.addEventListener('click', (e) => {
@@ -1195,7 +1208,7 @@ function renderNotesGrid() {
     });
   });
 
-  applyHighlights();
+  applyHighlights(); applyPinnedHighlights();
 }
 
 // ── WS heartbeat ──────────────────────────────────────────────────────────
@@ -1299,6 +1312,12 @@ window.__botc = { get state() { return currentState; }, get timeline() { return 
 
 let hoveredPlayer = null;
 
+const applyPinnedHighlights = () => {
+  document.querySelectorAll('[data-player]').forEach(el => {
+    el.classList.toggle('player-pinned', pinnedPlayers.has(el.dataset.player));
+  });
+};
+
 const applyHighlights = () => {
   if (hoveredPlayer === null) return;
   document.querySelectorAll('[data-player]').forEach(el => {
@@ -1311,7 +1330,7 @@ document.addEventListener('mouseover', e => {
   const leaving = e.relatedTarget?.closest('[data-player]');
   if (entering === leaving) return;
   hoveredPlayer = entering?.dataset.player ?? null;
-  applyHighlights();
+  applyHighlights(); applyPinnedHighlights();
 });
 
 document.addEventListener('mouseout', e => {
