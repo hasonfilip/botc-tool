@@ -924,11 +924,7 @@ function getRolePopover() {
         const role = (currentState?.roles ?? []).find(r => r.id === item.dataset.id);
         if (!role) return;
         const meta = playerMeta[_roleTarget] ?? {};
-        const autoAlign = !meta.alignment
-          ? (role.team === 'townsfolk' ? 'good'
-           : role.team === 'minion' || role.team === 'demon' ? 'evil' : '')
-          : meta.alignment;
-        playerMeta[_roleTarget] = { ...meta, roleId: role.id, roleName: role.name, roleTeam: role.team ?? '', roleIconUrl: role.iconUrl ?? null, alignment: autoAlign };
+        playerMeta[_roleTarget] = { ...meta, roleId: role.id, roleName: role.name, roleTeam: role.team ?? '', roleIconUrl: role.iconUrl ?? null };
         savePlayerMeta(_roleTarget);
         refreshMetaCells(_roleTarget, { recolorPage: true });
         _rolePop.style.display = 'none';
@@ -984,11 +980,7 @@ function openRolePopover(name, anchorEl) {
       const role = (currentState?.roles ?? []).find(r => r.id === item.dataset.id);
       if (!role || !_roleTarget) return;
       const meta = playerMeta[_roleTarget] ?? {};
-      const autoAlign = !meta.alignment
-        ? (role.team === 'townsfolk' || role.team === 'outsider' ? 'good'
-         : role.team === 'minion'    || role.team === 'demon'    ? 'evil' : '')
-        : meta.alignment;
-      playerMeta[_roleTarget] = { ...meta, roleId: role.id, roleName: role.name, roleTeam: role.team ?? '', roleIconUrl: role.iconUrl ?? null, alignment: autoAlign };
+      playerMeta[_roleTarget] = { ...meta, roleId: role.id, roleName: role.name, roleTeam: role.team ?? '', roleIconUrl: role.iconUrl ?? null };
       savePlayerMeta(_roleTarget);
       refreshMetaCells(_roleTarget, { recolorPage: true });
       _rolePop.style.display = 'none';
@@ -1124,14 +1116,14 @@ function renderNotesGrid() {
     const name = player.name ?? `Seat ${player.seat + 1}`;
     const isTraveller = player.team === 'traveller';
 
-    // Auto-fill traveller role from game state if not already set
-    if (isTraveller && player.roleId && !playerMeta[name]?.roleId) {
+    // Sync role from grimoire: always in grimoire mode, only when empty in notes mode
+    if (player.roleId && (colorSource === 'grimoire' || !playerMeta[name]?.roleId)) {
       const roleObj = (currentState.roles ?? []).find(r => r.id === player.roleId);
       playerMeta[name] = {
         ...(playerMeta[name] ?? {}),
         roleId: player.roleId,
         roleName: player.roleName || roleObj?.name || player.roleId,
-        roleTeam: 'traveller',
+        roleTeam: player.team || roleObj?.team || '',
         roleIconUrl: roleObj?.iconUrl ?? null,
       };
     }
