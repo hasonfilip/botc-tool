@@ -16,6 +16,11 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
 body {
   background: var(--bg);
   color: var(--text);
@@ -176,6 +181,7 @@ main { padding: 14px 20px; display: flex; flex-direction: column; gap: 14px; }
 #chats-section #chats-log,
 #messages-section #messages-log {
   overflow-y: auto;
+  overflow-x: hidden;
   flex: 1;
   min-height: 0;
 }
