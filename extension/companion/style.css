@@ -695,6 +695,8 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 .role-chip { background: var(--border); }
 .tag-chip  { background: rgba(255,255,255,0.06); color: var(--muted); }
 .note-chip { background: rgba(255,255,255,0.06); color: var(--text); font-style: italic; }
+.ability-chip { background: rgba(99,102,241,0.15); border: 1px solid rgba(99,102,241,0.3); }
+.confirmed-chip { background: rgba(52,211,153,0.15); border: 1px solid rgba(52,211,153,0.35); color: var(--text); }
 
 /* ── Token popover ── */
 
@@ -707,10 +709,17 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
   border-radius: 8px;
   padding: 8px;
   box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+  flex-direction: column;
+  gap: 6px;
+  white-space: nowrap;
+  min-width: 240px;
+}
+
+.tp-main-row {
+  display: flex;
   flex-direction: row;
   align-items: center;
   gap: 6px;
-  white-space: nowrap;
 }
 
 .tp-note-input {
@@ -823,6 +832,93 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 .token-chip.imp-1 { font-size: 11px; font-weight: 400; opacity: 0.9; }
 .token-chip.imp-2 { font-size: 13px; font-weight: 600; opacity: 1; padding: 2px 8px; }
 .token-chip.imp-3 { font-size: 15px; font-weight: 800; opacity: 1; padding: 3px 10px; box-shadow: 0 0 0 1px currentColor; }
+
+/* ── Ability chip section in popover ── */
+
+.tp-ability-section {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  border-top: 1px solid var(--border);
+  padding-top: 5px;
+  margin-top: 1px;
+}
+
+.tp-ability-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.tp-ab-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  background: rgba(255,255,255,0.05);
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.1s, border-color 0.1s;
+}
+
+.tp-ab-tab:hover { opacity: 1; border-color: var(--border); }
+.tp-ab-tab.active { opacity: 1; border-color: var(--accent); background: rgba(99,102,241,0.15); }
+.tp-ab-tab .tp-role-icon { width: 18px; height: 18px; object-fit: contain; }
+
+.tp-ability-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tp-ab-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tp-ab-label {
+  font-size: 11px;
+  color: var(--muted);
+  min-width: 56px;
+  flex-shrink: 0;
+}
+
+.tp-ab-select {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 3px 5px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.tp-ab-select:focus { border-color: var(--accent); outline: none; }
+
+.tp-ab-number, .tp-ab-text {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 3px 5px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: inherit;
+  outline: none;
+  min-width: 0;
+}
+
+.tp-ab-number:focus, .tp-ab-text:focus { border-color: var(--accent); }
+
+.tp-ab-confirmed-row { border-top: 1px solid var(--border); padding-top: 4px; margin-top: 2px; }
 
 #notes-table th.notes-player-col { position: sticky; left: 0; background: var(--surface); z-index: 2; }
 
