@@ -409,6 +409,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return;
   }
 
+  if (message.type === 'CLEAR_TOKENS') {
+    store.set({ cellTokens: {} });
+    return;
+  }
+
   if (message.type === 'SAVE_PLAYER_META') {
     (async () => {
       const { playerMeta } = await store.get();

@@ -601,4 +601,100 @@ const BOTC_CHIP_SPECS = {
       { type: 'text', label: 'Secret phrase' },
     ],
   },
+
+  // ── Travellers ────────────────────────────────────────────────────────────
+
+  thief: {
+    inputs: [
+      { type: 'player', label: 'Negative vote' },
+    ],
+    confirmedLabel: 'negative vote',
+  },
+  bureaucrat: {
+    inputs: [
+      { type: 'player', label: '3-vote player' },
+    ],
+    confirmedLabel: '3 votes',
+  },
+  barista: {
+    inputs: [
+      { type: 'player', label: 'Affected' },
+      { type: 'yn', label: 'True info (vs sober)?' },
+    ],
+  },
+  harlot: {
+    inputs: [
+      { type: 'player', label: 'Chosen' },
+      { type: 'yn', label: 'They agreed?' },
+      { type: 'role', label: 'Their role' },
+    ],
+  },
+  butcher: {
+    inputs: [
+      { type: 'player?', label: 'Extra nominee' },
+    ],
+  },
+  cacklejack: {
+    inputs: [
+      { type: 'player', label: 'Chosen' },
+    ],
+  },
+  gunslinger: {
+    inputs: [
+      { type: 'player', label: 'Shot' },
+    ],
+    confirmedLabel: 'shot by Gunslinger',
+  },
+  matron: {
+    inputs: [
+      { type: 'text', label: 'Swaps (a↔b, …)' },
+    ],
+  },
+  gangster: {
+    inputs: [
+      { type: 'player', label: 'Killed' },
+    ],
+    confirmedLabel: 'gangster-killed',
+  },
+  bonecollector: {
+    inputs: [
+      { type: 'player', label: 'Dead player' },
+    ],
+    confirmedLabel: 'ability restored',
+  },
+  judge: {
+    inputs: [
+      { type: 'yn', label: 'Forced execution?' },
+    ],
+  },
+  apprentice: {
+    inputs: [
+      { type: 'role', label: 'Gained ability' },
+    ],
+  },
+  beggar: {
+    inputs: [
+      { type: 'player', label: 'Gave vote token' },
+      { type: 'alignment', label: 'Their alignment' },
+    ],
+  },
+  deviant: {
+    inputs: [],
+  },
+  scapegoat: {
+    inputs: [],
+  },
+  gnome: {
+    inputs: [
+      { type: 'player?', label: 'Killed' },
+    ],
+  },
+  bishop: {
+    inputs: [
+      { type: 'player', label: 'Nominated' },
+    ],
+  },
+  voudon: {
+    inputs: [],
+  },
 };

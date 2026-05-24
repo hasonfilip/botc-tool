@@ -44,6 +44,8 @@ const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').
 // Bundled data from extension/data/ scripts (guarded in case scripts fail to load)
 const _roles = () => (typeof BOTC_ROLES !== 'undefined' ? BOTC_ROLES : []);
 const _specs = () => (typeof BOTC_CHIP_SPECS !== 'undefined' ? BOTC_CHIP_SPECS : {});
+// Role IDs may have a 'traveller_' prefix in some contexts — strip it for spec/icon lookups
+const _normalizeId = (id) => id?.replace(/^traveller_/, '') ?? id;
 // Base URL for local icons — set by ICONS_BASE global from each page, or derived from chrome.runtime
 const _iconBase = () => {
   if (typeof ICONS_BASE !== 'undefined') return ICONS_BASE;
@@ -52,7 +54,7 @@ const _iconBase = () => {
 };
 const _iconUrl = (role) => {
   if (!role) return null;
-  const path = role.iconPath ?? _roles().find(r => r.id === role.id)?.iconPath;
+  const path = role.iconPath ?? _roles().find(r => r.id === _normalizeId(role.id))?.iconPath;
   return path ? _iconBase() + path : (role.iconUrl ?? null);
 };
 
@@ -684,28 +686,27 @@ function chipsHtml(player, phase) {
   const chips = cellTokens[`${player}|${phase}`] ?? [];
   return chips.map((chip, idx) => {
     const attrs = `data-player="${player}" data-phase="${phase}" data-idx="${idx}"`;
-    const impCls = `imp-${chip.importance ?? 1}`;
     if (chip.type === 'role') {
       const icon = chip.iconUrl ? `<img class="tp-role-icon" src="${chip.iconUrl}" />` : '';
-      return `<span class="token-chip role-chip role-name ${chip.team ?? ''} ${impCls}" ${attrs}>${icon}${chip.name}</span>`;
+      return `<span class="token-chip role-chip role-name ${chip.team ?? ''}" ${attrs}>${icon}${chip.name}</span>`;
     }
     if (chip.type === 'tag') {
-      return `<span class="token-chip tag-chip ${impCls}" ${attrs}>${chip.label}</span>`;
+      const content = chip.icon ? `${chip.icon} ${esc(chip.name ?? chip.label ?? '')}` : esc(chip.label ?? '');
+      return `<span class="token-chip tag-chip" ${attrs}>${content}</span>`;
     }
     if (chip.type === 'note') {
-      return `<span class="token-chip note-chip ${impCls}" ${attrs}>${chip.text}</span>`;
+      return `<span class="token-chip note-chip" ${attrs}>${chip.text}</span>`;
     }
     if (chip.type === 'ability') {
       const resolvedUrl = _iconUrl({ id: chip.roleId, iconUrl: chip.iconUrl });
       const icon = resolvedUrl ? `<img class="tp-role-icon" src="${resolvedUrl}" />` : '';
       const summary = abilityInputSummary(chip);
-      const label = summary ? `${esc(chip.roleName)}: ${esc(summary)}` : esc(chip.roleName);
-      return `<span class="token-chip ability-chip role-name ${chip.roleTeam ?? ''} ${impCls}" ${attrs}>${icon}${label}</span>`;
+      return `<span class="token-chip ability-chip role-name ${chip.roleTeam ?? ''}" title="${esc(chip.roleName)}" ${attrs}>${icon}${esc(summary)}</span>`;
     }
     if (chip.type === 'confirmed') {
       const resolvedUrl = _iconUrl({ id: chip.sourceRoleId, iconUrl: chip.iconUrl });
       const icon = resolvedUrl ? `<img class="tp-role-icon" src="${resolvedUrl}" />` : '';
-      return `<span class="token-chip confirmed-chip ${impCls}" title="${esc(chip.label ?? '')}" ${attrs}>${icon}✓</span>`;
+      return `<span class="token-chip confirmed-chip" title="${esc(chip.label ?? '')}" ${attrs}>${icon}✓</span>`;
     }
     return '';
   }).join('');
@@ -742,18 +743,11 @@ function getPopover() {
   _popover.innerHTML = `
     <div class="tp-main-row">
       <input type="text" class="tp-note-input" placeholder="note" />
-      <select class="tp-tags-select">
-        <option value="">tag</option>
-        ${PREDEFINED_TAGS.map(t => `<option value="${t.id}">${t.label}</option>`).join('')}
-      </select>
-      <div class="tp-role-dd">
-        <button class="tp-role-trigger" type="button">role</button>
-        <div class="tp-role-list" style="display:none"></div>
-      </div>
-      <div class="tp-importance">
-        <button class="tp-imp-btn" data-imp="3" title="high">•••</button>
-        <button class="tp-imp-btn" data-imp="2" title="medium">••</button>
-        <button class="tp-imp-btn active" data-imp="1" title="low">•</button>
+      <div class="tp-status-tags">
+        <button class="tp-tag-btn" data-tag-id="dead"      data-tag-icon="💀" data-tag-name="Died"               title="Dead">💀</button>
+        <button class="tp-tag-btn" data-tag-id="executed"  data-tag-icon="⚖️" data-tag-name="Executed"           title="Executed">⚖️</button>
+        <button class="tp-tag-btn" data-tag-id="revived"   data-tag-icon="✨" data-tag-name="Revived"            title="Revived">✨</button>
+        <button class="tp-tag-btn" data-tag-id="survived"  data-tag-icon="🛡️" data-tag-name="Survived"          title="Survived execution">🛡️</button>
       </div>
       <button class="tp-x-btn" type="button" title="Remove / cancel">✕</button>
     </div>
@@ -765,93 +759,41 @@ function getPopover() {
   document.body.appendChild(_popover);
 
   const noteInput = _popover.querySelector('.tp-note-input');
-  const tagsSelect = _popover.querySelector('.tp-tags-select');
-  const roleTrigger = _popover.querySelector('.tp-role-trigger');
-  const roleList = _popover.querySelector('.tp-role-list');
   const xBtn = _popover.querySelector('.tp-x-btn');
-  const impBtns = [..._popover.querySelectorAll('.tp-imp-btn')];
   const abilityTabs = _popover.querySelector('.tp-ability-tabs');
   const abilityForm = _popover.querySelector('.tp-ability-form');
 
   let _activeAbilityRoleId = null;
 
-  // ── Role dropdown (existing "role" chip type) ──────────────────────────────
-
-  function buildRoleList() {
-    const roles = currentState?.roles ?? [];
-    roleList.innerHTML = roles.map(r => {
-      const icon = _iconUrl(r) ? `<img class="tp-role-icon" src="${_iconUrl(r)}" />` : '';
-      return `<div class="tp-role-item role-name ${r.team ?? ''}" data-id="${r.id}">${icon}${r.name}</div>`;
-    }).join('');
-    roleList.querySelectorAll('.tp-role-item').forEach(item => {
-      item.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        const id = item.dataset.id;
-        const role = (currentState?.roles ?? []).find(r => r.id === id);
-        if (role) {
-          const icon = _iconUrl(role) ? `<img class="tp-role-icon" src="${_iconUrl(role)}" />` : '';
-          roleTrigger.innerHTML = `${icon}${role.name}`;
-          commit({ type: 'role', id: role.id, name: role.name, team: role.team ?? '', iconUrl: _iconUrl(role) });
-        }
-        roleList.style.display = 'none';
-      });
-    });
-  }
-
-  roleTrigger.addEventListener('mousedown', (e) => {
-    e.preventDefault();
-    if (roleList.style.display === 'none') {
-      buildRoleList();
-      roleList.style.display = 'block';
-    } else {
-      roleList.style.display = 'none';
-    }
-  });
-
-  document.addEventListener('mousedown', (e) => {
-    if (!_popover.querySelector('.tp-role-dd').contains(e.target)) {
-      roleList.style.display = 'none';
-    }
-  }, true);
-
-  // ── Importance ──────────────────────────────────────────────────────────────
-
-  impBtns.forEach(btn => btn.addEventListener('click', () => {
-    impBtns.forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    if (_popoverTarget?.chipIdx !== null && _popoverTarget?.chipIdx !== undefined) {
-      const { player, phase, chipIdx } = _popoverTarget;
-      const chips = cellTokens[`${player}|${phase}`] ?? [];
-      if (chips[chipIdx]) {
-        chips[chipIdx] = { ...chips[chipIdx], importance: Number(btn.dataset.imp) };
-        saveTokens(player, phase);
-        refreshCellChips(player, phase);
-      }
-    }
-  }));
-
-  const getImportance = () => Number(_popover.querySelector('.tp-imp-btn.active')?.dataset.imp ?? 1);
+  // ── Commit helper ───────────────────────────────────────────────────────────
 
   const commit = (chip) => {
     if (!_popoverTarget) return;
     const { player, phase, chipIdx } = _popoverTarget;
-    setChip(player, phase, { ...chip, importance: getImportance() }, chipIdx);
+    setChip(player, phase, chip, chipIdx);
     const newIdx = chipIdx !== null ? chipIdx : (cellTokens[`${player}|${phase}`]?.length ?? 1) - 1;
     _popoverTarget = { player, phase, chipIdx: newIdx };
   };
 
-  // ── Note / tag commit ───────────────────────────────────────────────────────
+  // ── Note input ──────────────────────────────────────────────────────────────
 
   noteInput.addEventListener('input', () => {
     const val = noteInput.value.trim();
     if (val) commit({ type: 'note', text: val });
+    const q = val.toLowerCase();
+    abilityTabs.querySelectorAll('.tp-ab-tab').forEach(btn => {
+      btn.style.display = (!q || btn.title.toLowerCase().includes(q)) ? '' : 'none';
+    });
   });
 
-  tagsSelect.addEventListener('change', () => {
-    const id = tagsSelect.value;
-    if (!id) return;
-    const tag = PREDEFINED_TAGS.find(t => t.id === id);
-    if (tag) commit({ type: 'tag', id: tag.id, label: tag.label });
+  // ── Status tag buttons ──────────────────────────────────────────────────────
+
+  _popover.querySelectorAll('.tp-tag-btn').forEach(btn => {
+    btn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      commit({ type: 'tag', id: btn.dataset.tagId, icon: btn.dataset.tagIcon, name: btn.dataset.tagName });
+      closePopover();
+    });
   });
 
   // ── Remove ──────────────────────────────────────────────────────────────────
@@ -969,7 +911,7 @@ function getPopover() {
   }
 
   function readAbilityInputs(roleId) {
-    const spec = _specs()[roleId];
+    const spec = _specs()[_normalizeId(roleId)];
     if (!spec) return {};
     const inputs = {};
     abilityForm.querySelectorAll('[data-input-idx]').forEach(el => {
@@ -984,8 +926,17 @@ function getPopover() {
     return inputs;
   }
 
+  function resolveInPlayRole(roleId) {
+    const normId = _normalizeId(roleId);
+    return (currentState?.roles ?? []).find(r => _normalizeId(r.id) === normId)
+      ?? (() => {
+        const p = (currentState?.players ?? []).find(p => p.team === 'traveller' && _normalizeId(p.roleId) === normId);
+        return p ? { id: p.roleId, name: p.roleName ?? p.roleId, team: 'traveller' } : null;
+      })();
+  }
+
   function commitAbility(roleId) {
-    const inPlayRole = (currentState?.roles ?? []).find(r => r.id === roleId);
+    const inPlayRole = resolveInPlayRole(roleId);
     const botcRole = _roles().find(r => r.id === roleId);
     const role = inPlayRole ?? botcRole;
     if (!role) return;
@@ -1001,7 +952,7 @@ function getPopover() {
   }
 
   function buildAbilityForm(roleId, existingInputs) {
-    const spec = _specs()[roleId];
+    const spec = _specs()[_normalizeId(roleId)];
     abilityForm.innerHTML = '';
     if (!spec) return;
 
@@ -1019,53 +970,17 @@ function getPopover() {
       abilityForm.appendChild(row);
     });
 
-    if (spec.confirmedLabel) {
-      const row = document.createElement('div');
-      row.className = 'tp-ab-row tp-ab-confirmed-row';
-      const lbl = document.createElement('span');
-      lbl.className = 'tp-ab-label';
-      lbl.textContent = '→ confirm';
-      const sel = document.createElement('select');
-      sel.className = 'tp-ab-select';
-      const blank = document.createElement('option');
-      blank.value = '';
-      blank.textContent = 'player…';
-      sel.appendChild(blank);
-      (currentState?.players?.map(p => p.name) ?? []).forEach(name => {
-        const opt = document.createElement('option');
-        opt.value = name;
-        opt.textContent = name;
-        sel.appendChild(opt);
-      });
-      sel.addEventListener('change', () => {
-        const targetPlayer = sel.value;
-        if (!targetPlayer) return;
-        const inPlayRole = (currentState?.roles ?? []).find(r => r.id === roleId);
-        const botcRole = _roles().find(r => r.id === roleId);
-        const role = inPlayRole ?? botcRole;
-        const confirmedChip = {
-          type: 'confirmed',
-          sourceRoleId: roleId,
-          sourceRoleName: role?.name ?? roleId,
-          iconUrl: _iconUrl(role),
-          label: spec.confirmedLabel,
-          importance: getImportance(),
-        };
-        if (!cellTokens[`${targetPlayer}|${_popoverTarget?.phase}`]) cellTokens[`${targetPlayer}|${_popoverTarget?.phase}`] = [];
-        cellTokens[`${targetPlayer}|${_popoverTarget?.phase}`].push(confirmedChip);
-        saveTokens(targetPlayer, _popoverTarget?.phase);
-        refreshCellChips(targetPlayer, _popoverTarget?.phase);
-        sel.value = '';
-      });
-      row.appendChild(lbl);
-      row.appendChild(sel);
-      abilityForm.appendChild(row);
-    }
   }
 
   function buildAbilityTabs(existingAbilityRoleId, existingInputs) {
     const roles = currentState?.roles ?? [];
-    const specRoles = roles.filter(r => _specs()[r.id]);
+    // Travellers don't appear in the script list — pull them from players
+    const seen = new Set(roles.map(r => r.id));
+    const travellers = (currentState?.players ?? [])
+      .filter(p => p.team === 'traveller' && p.roleId && !seen.has(p.roleId))
+      .map(p => ({ id: p.roleId, name: p.roleName ?? p.roleId, team: 'traveller' }));
+    const allRoles = [...roles, ...travellers];
+    const specRoles = allRoles.filter(r => _specs()[_normalizeId(r.id)]);
     abilityTabs.innerHTML = '';
     abilityForm.innerHTML = '';
     _activeAbilityRoleId = null;
@@ -1073,16 +988,17 @@ function getPopover() {
     if (!specRoles.length) { section.style.display = 'none'; return; }
     section.style.display = '';
 
-    specRoles.forEach(role => {
+    const makeBtn = (role) => {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = `tp-ab-tab role-name ${role.team ?? ''}`;
       btn.dataset.roleId = role.id;
       btn.title = role.name;
-      if (_iconUrl(role)) {
+      const url = _iconUrl(role);
+      if (url) {
         const img = document.createElement('img');
         img.className = 'tp-role-icon';
-        img.src = _iconUrl(role);
+        img.src = url;
         btn.appendChild(img);
       } else {
         btn.textContent = role.name.slice(0, 3);
@@ -1106,8 +1022,10 @@ function getPopover() {
           commitAbility(role.id);
         }
       });
-      abilityTabs.appendChild(btn);
-    });
+      return btn;
+    };
+
+    specRoles.forEach(role => abilityTabs.appendChild(makeBtn(role)));
   }
 
   _popover._buildAbilityTabs = buildAbilityTabs;
@@ -1126,28 +1044,15 @@ function openPopover(player, phase, anchorEl, chipIdx = null) {
 
   const chip = chipIdx !== null ? (cellTokens[`${player}|${phase}`] ?? [])[chipIdx] : null;
   const noteInput = pop.querySelector('.tp-note-input');
-  const tagsSelect = pop.querySelector('.tp-tags-select');
 
-  // Pre-fill based on chip type
+  // Pre-fill note text if editing a note chip
   noteInput.value = chip?.type === 'note' ? chip.text : '';
-  tagsSelect.value = chip?.type === 'tag' ? chip.id : '';
-  // Importance
-  const imp = chip?.importance ?? 1;
-  pop.querySelectorAll('.tp-imp-btn').forEach(b => b.classList.toggle('active', Number(b.dataset.imp) === imp));
-  // Role trigger label
-  const roleTrigger = pop.querySelector('.tp-role-trigger');
-  const roleList = pop.querySelector('.tp-role-list');
-  roleList.style.display = 'none';
-  if (chip?.type === 'role') {
-    const icon = chip.iconUrl ? `<img class="tp-role-icon" src="${chip.iconUrl}" />` : '';
-    roleTrigger.innerHTML = `${icon}${chip.name}`;
-  } else {
-    roleTrigger.textContent = 'role';
-  }
 
-  // Ability tabs — pre-select if editing an ability/confirmed chip
+  // Ability tabs — pre-select: editing chip > player's assigned role > none
   const existingAbilityRoleId = chip?.type === 'ability' ? chip.roleId
-    : chip?.type === 'confirmed' ? chip.sourceRoleId : null;
+    : chip?.type === 'confirmed' ? chip.sourceRoleId
+    : (playerMeta[player]?.roleId ?? null);
+  pop.querySelector('.tp-ability-tabs').querySelectorAll('.tp-ab-tab').forEach(btn => { btn.style.display = ''; });
   try {
     pop._buildAbilityTabs(existingAbilityRoleId, chip?.type === 'ability' ? chip.inputs : null);
   } catch (e) {
@@ -1161,7 +1066,7 @@ function openPopover(player, phase, anchorEl, chipIdx = null) {
   pop.style.top = spaceBelow > 80
     ? `${rect.bottom + window.scrollY + 2}px`
     : `${rect.top + window.scrollY - pop.offsetHeight - 2}px`;
-  pop.style.left = `${Math.min(rect.left + window.scrollX, window.innerWidth - pop.offsetWidth - 8)}px`;
+  pop.style.left = `${Math.max(8, Math.min(rect.left + window.scrollX, window.innerWidth - pop.offsetWidth - 8))}px`;
   noteInput.focus();
 }
 
@@ -1269,7 +1174,7 @@ function openRolePopover(name, anchorEl) {
   pop.style.top = spaceBelow > 200
     ? `${rect.bottom + window.scrollY + 2}px`
     : `${rect.top + window.scrollY - pop.offsetHeight - 2}px`;
-  pop.style.left = `${Math.min(rect.left + window.scrollX, window.innerWidth - pop.offsetWidth - 8)}px`;
+  pop.style.left = `${Math.max(8, Math.min(rect.left + window.scrollX, window.innerWidth - pop.offsetWidth - 8))}px`;
   // Render after positioning so offsetHeight is valid
   const roles = currentState?.roles ?? [];
   pop.querySelector('.mrp-list').innerHTML = roles.map(r => {
@@ -1606,6 +1511,15 @@ document.getElementById('ws-toggle').addEventListener('click', (e) => {
 
 document.getElementById('clear-ws').addEventListener('click', () => {
   document.getElementById('ws-log').innerHTML = '';
+});
+
+document.getElementById('clear-notes').addEventListener('click', () => {
+  if (!confirm('Clear all notes?')) return;
+  cellTokens = {};
+  if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+    chrome.runtime.sendMessage({ type: 'CLEAR_TOKENS' });
+  }
+  document.querySelectorAll('#notes-table .cell-chips').forEach(el => { el.innerHTML = ''; });
 });
 
 window.__botc = { get state() { return currentState; }, get timeline() { return fullTimeline; }, get roles() { return revealedRoles; } };

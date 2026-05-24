@@ -442,7 +442,7 @@ tr.dead td { color: var(--dead); }
 }
 
 .chat-participants { font-weight: 500; flex: 1; }
-.chat-st  { color: #ffd700; font-style: italic; }
+.chat-st  { color: #4ade80; font-style: italic; }
 
 #header-storytellers { display: flex; align-items: center; gap: 4px; font-size: 13px; }
 .header-st { font-weight: 600; font-style: normal; border-radius: 3px; padding: 1px 3px; }
@@ -639,7 +639,7 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 .mrp-clear:hover { color: #e74c3c; }
 
 .notes-player-name {
-  padding: 5px 8px;
+  padding: 8px 8px;
   font-weight: 500;
   white-space: nowrap;
   font-size: 12px;
@@ -664,8 +664,8 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
   display: flex;
   flex-wrap: wrap;
   gap: 3px;
-  padding: 4px 4px 18px;
-  min-height: 36px;
+  padding: 4px;
+  min-height: 28px;
   width: 100%;
   overflow: hidden;
 }
@@ -673,9 +673,10 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 .notes-cell { cursor: pointer; }
 
 .token-chip {
-  font-size: 10px;
-  padding: 1px 5px;
+  font-size: 12px;
+  padding: 2px 7px;
   border-radius: 8px;
+  line-height: 1.2;
   white-space: normal;
   word-break: break-word;
   cursor: pointer;
@@ -683,13 +684,14 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
   align-items: center;
   gap: 4px;
   max-width: 100%;
+  line-height: 1.3;
 }
 
 .token-chip:hover { opacity: 0.75; }
 
 .token-chip .tp-role-icon {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
 }
 
 .role-chip { background: var(--border); }
@@ -711,8 +713,8 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
   box-shadow: 0 6px 24px rgba(0,0,0,0.5);
   flex-direction: column;
   gap: 6px;
-  white-space: nowrap;
-  min-width: 240px;
+  min-width: 320px;
+  max-width: min(680px, calc(100vw - 24px));
 }
 
 .tp-main-row {
@@ -736,54 +738,23 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 
 .tp-note-input:focus { border-color: var(--accent); }
 
-.tp-tags-select,
-.tp-role-dd { position: relative; }
-
-.tp-role-trigger {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  color: var(--text);
-  padding: 4px 6px;
-  border-radius: 5px;
-  font-size: 12px;
-  font-family: inherit;
-  cursor: pointer;
-  outline: none;
-  max-width: 120px;
-  white-space: nowrap;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.tp-role-trigger:focus { border-color: var(--accent); }
-.tp-role-trigger .tp-role-icon { width: 14px; height: 14px; object-fit: contain; }
-
-.tp-role-list {
-  position: absolute;
-  top: calc(100% + 2px);
-  left: 0;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  max-height: 200px;
-  overflow-y: auto;
-  z-index: 9999;
-  min-width: 160px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
-}
-
-.tp-role-item {
+.tp-status-tags {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 8px;
-  font-size: 12px;
-  cursor: pointer;
+  gap: 2px;
 }
-.tp-role-item:hover { background: rgba(255,255,255,0.06); }
-.tp-role-item .tp-role-icon { width: 14px; height: 14px; object-fit: contain; flex-shrink: 0; }
 
-.tp-tags-select:focus { border-color: var(--accent); }
+.tp-tag-btn {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: 2px 4px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.1s, border-color 0.1s;
+}
+.tp-tag-btn:hover { opacity: 1; border-color: var(--border); }
 
 .tp-x-btn {
   width: 24px;
@@ -803,35 +774,6 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 
 .tp-x-btn:hover { background: #e74c3c; }
 
-.tp-importance {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  align-self: stretch;
-  justify-content: space-between;
-}
-
-.tp-imp-btn {
-  background: none;
-  border: none;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 8px;
-  line-height: 1;
-  padding: 0 8px;
-  border-radius: 3px;
-  letter-spacing: 1px;
-  white-space: nowrap;
-  flex: 1;
-}
-
-.tp-imp-btn:hover { color: var(--text); }
-.tp-imp-btn.active { color: var(--accent); background: rgba(99,102,241,0.1); }
-
-/* chip importance levels */
-.token-chip.imp-1 { font-size: 11px; font-weight: 400; opacity: 0.9; }
-.token-chip.imp-2 { font-size: 13px; font-weight: 600; opacity: 1; padding: 2px 8px; }
-.token-chip.imp-3 { font-size: 15px; font-weight: 800; opacity: 1; padding: 3px 10px; box-shadow: 0 0 0 1px currentColor; }
 
 /* ── Ability chip section in popover ── */
 
@@ -848,26 +790,37 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
   display: flex;
   flex-wrap: wrap;
   gap: 3px;
+  align-items: center;
+}
+
+.tp-ab-group-sep {
+  width: 1px;
+  height: 24px;
+  background: var(--border);
+  align-self: center;
+  flex-shrink: 0;
+  margin: 0 2px;
 }
 
 .tp-ab-tab {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 32px;
+  height: 32px;
   padding: 0;
-  border-radius: 5px;
+  border-radius: 6px;
   border: 1px solid transparent;
   background: rgba(255,255,255,0.05);
   cursor: pointer;
   opacity: 0.7;
   transition: opacity 0.1s, border-color 0.1s;
+  font-size: 11px;
 }
 
 .tp-ab-tab:hover { opacity: 1; border-color: var(--border); }
 .tp-ab-tab.active { opacity: 1; border-color: var(--accent); background: rgba(99,102,241,0.15); }
-.tp-ab-tab .tp-role-icon { width: 18px; height: 18px; object-fit: contain; }
+.tp-ab-tab .tp-role-icon { width: 24px; height: 24px; object-fit: contain; }
 
 .tp-ability-form {
   display: flex;
@@ -918,7 +871,6 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 
 .tp-ab-number:focus, .tp-ab-text:focus { border-color: var(--accent); }
 
-.tp-ab-confirmed-row { border-top: 1px solid var(--border); padding-top: 4px; margin-top: 2px; }
 
 #notes-table th.notes-player-col { position: sticky; left: 0; background: var(--surface); z-index: 2; }
 
