@@ -1,7 +1,8 @@
 // Defines the input fields for each role's ability chip.
-// inputs: array of { type, label, filter? }
-//   type: 'player' | 'player?' | 'role' | 'number' | 'yn' | 'alignment' | 'direction' | 'text'
+// inputs: array of { type, label, filter?, options? }
+//   type: 'player' | 'player?' | 'role' | 'number' | 'yn' | 'alignment' | 'direction' | 'text' | 'options'
 //   filter (for role type): 'townsfolk'|'outsider'|'minion'|'demon'|'good'|'evil' — leave out for any role in play
+//   options (for options type): string[] of selectable values
 // confirmedLabel: what "confirmed" means for this role (placed on another player's cell)
 
 const BOTC_CHIP_SPECS = {
@@ -619,7 +620,7 @@ const BOTC_CHIP_SPECS = {
   barista: {
     inputs: [
       { type: 'player', label: 'Affected' },
-      { type: 'yn', label: 'True info (vs sober)?' },
+      { type: 'options', label: 'Effect', options: ['true info', 'sober/double'] },
     ],
   },
   harlot: {

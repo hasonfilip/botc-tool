@@ -21,7 +21,6 @@ let nameMap = {};
 let showNightChats = false;
 let colorSource = 'grimoire'; // 'grimoire' | 'notes'
 let openPlayerTimelineName = null;
-let lastPlayersJson = '';
 let cellTokens = {};
 let playerMeta = {}; // { name: { roleId, roleName, roleTeam, roleIconUrl, alignment } }
 let lastNotesKey = '';
@@ -96,35 +95,6 @@ function renderState(state) {
   document.getElementById('stat-alive').textContent = `${alive} alive`;
   document.getElementById('stat-edition').textContent = state.edition?.edition?.name ?? '';
 
-  const playersJson = JSON.stringify(state.players.map(p => [p.id, p.name, p.roleId, p.team, p.isDead, p.status, p.pronouns, revealedRoles[p.id]]));
-  const tbody = document.getElementById('player-tbody');
-  if (playersJson === lastPlayersJson) return;
-  lastPlayersJson = playersJson;
-  tbody.innerHTML = '';
-
-  state.players.forEach((player) => {
-    const isDead = player.isDead || player.status?.includes('dead');
-    const tr = document.createElement('tr');
-    if (isDead) tr.classList.add('dead');
-    if (player.name) tr.dataset.player = player.name;
-
-    const revealedRole = revealedRoles[player.id];
-    const roleId = player.roleId || revealedRole || '';
-    const roleName = player.roleName || (revealedRole ? roleNameFromId(revealedRole, currentState) : '') || roleId || '?';
-    const team = player.team || '';
-
-    tr.innerHTML = `
-      <td class="seat">${player.seat + 1}</td>
-      <td><div class="player-name" data-player="${player.name ?? player.id}">${dn(player.name ?? player.id)}</div><div class="player-pronouns">${dn(player.pronouns ?? '')}</div></td>
-      <td class="role-name ${team}">${roleName}</td>
-      <td class="no-strike">
-        <div class="status-tags">
-          ${(player.status ?? []).map(s => `<span class="tag">${s}</span>`).join('')}
-        </div>
-      </td>
-    `;
-    tbody.appendChild(tr);
-  });
   applyHighlights(); applyPinnedHighlights();
 }
 
@@ -665,21 +635,40 @@ function getPhaseColumns() {
   return phases;
 }
 
-function abilityInputSummary(chip) {
+function abilityValBadges(chip) {
   const inputs = chip.inputs ?? {};
-  const parts = [];
-  Object.entries(inputs).forEach(([k, v]) => {
-    if (v === null || v === undefined || v === '') return;
-    if (k.startsWith('role')) {
+  const spec = _specs()[_normalizeId(chip.roleId)];
+  const badges = [];
+  const pushBadge = (cls, text) => badges.push(`<span class="ab-val ${cls}">${esc(String(text))}</span>`);
+
+  if (spec) {
+    spec.inputs.forEach((inputSpec, idx) => {
+      const v = inputs[`i${idx}`];
+      if (v === null || v === undefined || v === '') return;
+      if (inputSpec.type === 'player' || inputSpec.type === 'player?') {
+        pushBadge('ab-val-player', v);
+      } else if (inputSpec.type === 'role') {
+        const r = _roles().find(x => x.id === v);
+        const team = r?.team ?? '';
+        badges.push(`<span class="ab-val ab-val-role role-name ${team}">${esc(r ? r.name : String(v))}</span>`);
+      } else if (inputSpec.type === 'yn' || inputSpec.type === 'options' || inputSpec.type === 'alignment' || inputSpec.type === 'direction') {
+        pushBadge('ab-val-option', typeof v === 'boolean' ? (v ? 'yes' : 'no') : v);
+      } else if (inputSpec.type === 'number') {
+        pushBadge('ab-val-number', v);
+      } else {
+        pushBadge('ab-val-text', v);
+      }
+    });
+  } else {
+    // fallback for chips with no spec
+    Object.values(inputs).forEach(v => {
+      if (v === null || v === undefined || v === '') return;
+      if (typeof v === 'boolean') { pushBadge('ab-val-option', v ? 'yes' : 'no'); return; }
       const r = _roles().find(x => x.id === v);
-      parts.push(r ? r.name : v);
-    } else if (typeof v === 'boolean') {
-      parts.push(v ? 'yes' : 'no');
-    } else {
-      parts.push(String(v));
-    }
-  });
-  return parts.slice(0, 3).join(' · ');
+      pushBadge(r ? 'ab-val-role' : 'ab-val-text', r ? r.name : String(v));
+    });
+  }
+  return badges.slice(0, 4).join('');
 }
 
 function chipsHtml(player, phase) {
@@ -700,8 +689,8 @@ function chipsHtml(player, phase) {
     if (chip.type === 'ability') {
       const resolvedUrl = _iconUrl({ id: chip.roleId, iconUrl: chip.iconUrl });
       const icon = resolvedUrl ? `<img class="tp-role-icon" src="${resolvedUrl}" />` : '';
-      const summary = abilityInputSummary(chip);
-      return `<span class="token-chip ability-chip role-name ${chip.roleTeam ?? ''}" title="${esc(chip.roleName)}" ${attrs}>${icon}${esc(summary)}</span>`;
+      const badges = abilityValBadges(chip);
+      return `<span class="token-chip ability-chip role-name ${chip.roleTeam ?? ''}" title="${esc(chip.roleName)}" ${attrs}>${icon}${badges}</span>`;
     }
     if (chip.type === 'confirmed') {
       const resolvedUrl = _iconUrl({ id: chip.sourceRoleId, iconUrl: chip.iconUrl });
@@ -749,7 +738,7 @@ function getPopover() {
         <button class="tp-tag-btn" data-tag-id="revived"   data-tag-icon="✨" data-tag-name="Revived"            title="Revived">✨</button>
         <button class="tp-tag-btn" data-tag-id="survived"  data-tag-icon="🛡️" data-tag-name="Survived"          title="Survived execution">🛡️</button>
       </div>
-      <button class="tp-x-btn" type="button" title="Remove / cancel">✕</button>
+      <button class="tp-x-btn" type="button" title="Remove / cancel">🗑</button>
     </div>
     <div class="tp-ability-section" style="display:none">
       <div class="tp-ability-tabs"></div>
@@ -764,6 +753,7 @@ function getPopover() {
   const abilityForm = _popover.querySelector('.tp-ability-form');
 
   let _activeAbilityRoleId = null;
+  let _lockedAbilityRoleId = null;
 
   // ── Commit helper ───────────────────────────────────────────────────────────
 
@@ -812,93 +802,189 @@ function getPopover() {
   });
 
   document.addEventListener('mousedown', (e) => {
-    if (_popover.style.display !== 'none' && !_popover.contains(e.target) && !e.target.closest('.notes-cell')) {
+    if (_popover.style.display !== 'none' && !_popover.contains(e.target)) {
       closePopover();
+      document.addEventListener('click', e => e.stopPropagation(), { capture: true, once: true });
     }
   });
 
   // ── Ability chip section ────────────────────────────────────────────────────
 
+  function buildHoverSelect(placeholder, items, currentVal, idx, itemClass) {
+    // items: [{ value, label, cls? }]
+    const wrap = document.createElement('div');
+    wrap.className = 'tp-ab-hsel';
+
+    const hidden = document.createElement('input');
+    hidden.type = 'hidden';
+    hidden.dataset.inputIdx = idx;
+    hidden.value = currentVal ?? '';
+    wrap.appendChild(hidden);
+
+    const curItem = items.find(i => i.value === currentVal);
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'tp-ab-hsel-trigger' + (curItem?.cls ? ` ${curItem.cls}` : '');
+    trigger.textContent = (curItem && curItem.value !== '') ? curItem.label : placeholder;
+    wrap.appendChild(trigger);
+
+    const list = document.createElement('div');
+    list.className = 'tp-ab-hsel-list';
+    items.forEach(item => {
+      const row = document.createElement('div');
+      row.className = 'tp-ab-hsel-item' + (item.cls ? ` ${item.cls}` : '') + (item.value === currentVal ? ' active' : '');
+      row.textContent = item.label;
+      row.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        trigger.textContent = item.value !== '' ? item.label : placeholder;
+        trigger.className = 'tp-ab-hsel-trigger' + (item.cls ? ` ${item.cls}` : '');
+        hidden.value = item.value;
+        list.classList.remove('open');
+        hidden.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      list.appendChild(row);
+    });
+    wrap.appendChild(list);
+
+    let closeTimer = null;
+    let locked = false;
+    let outsideHandler = null;
+
+    const open = () => { clearTimeout(closeTimer); list.classList.add('open'); };
+    const scheduleClose = () => { if (locked) return; closeTimer = setTimeout(() => list.classList.remove('open'), 120); };
+    const unlock = () => {
+      locked = false;
+      list.classList.remove('open');
+      trigger.classList.remove('locked');
+      if (outsideHandler) { document.removeEventListener('mousedown', outsideHandler); outsideHandler = null; }
+    };
+
+    trigger.addEventListener('mouseenter', open);
+    wrap.addEventListener('mouseleave', scheduleClose);
+    list.addEventListener('mouseenter', () => clearTimeout(closeTimer));
+    trigger.addEventListener('click', () => {
+      if (locked) { unlock(); return; }
+      locked = true;
+      trigger.classList.add('locked');
+      open();
+      outsideHandler = (e) => {
+        if (!wrap.contains(e.target) && !list.contains(e.target)) unlock();
+      };
+      document.addEventListener('mousedown', outsideHandler);
+    });
+
+    return wrap;
+  }
+
+  function buildPills(options, currentVal, idx) {
+    // options: [{ value, label }]  — select on hover, commit immediately
+    const wrap = document.createElement('div');
+    wrap.className = 'tp-ab-opt-wrap';
+    const hidden = document.createElement('input');
+    hidden.type = 'hidden';
+    hidden.dataset.inputIdx = idx;
+    hidden.value = currentVal ?? '';
+    wrap.appendChild(hidden);
+    options.forEach(({ value, label: lbl }) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'tp-ab-opt-btn';
+      btn.textContent = lbl;
+      if (value === currentVal) btn.classList.add('active');
+      btn.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        wrap.querySelectorAll('.tp-ab-opt-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        hidden.value = value;
+        hidden.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      wrap.appendChild(btn);
+    });
+    return wrap;
+  }
+
   function buildAbilityInputEl(spec, idx, currentVal) {
-    const { type, label, filter, min, max } = spec;
+    const { type, label, filter, min, max, yesLabel, noLabel } = spec;
     const players = currentState?.players?.map(p => p.name) ?? [];
 
     let el;
     if (type === 'player' || type === 'player?') {
-      el = document.createElement('select');
-      el.className = 'tp-ab-select';
-      const blank = document.createElement('option');
-      blank.value = '';
-      blank.textContent = type === 'player?' ? '(none)' : label;
-      el.appendChild(blank);
-      players.forEach(name => {
-        const opt = document.createElement('option');
-        opt.value = name;
-        opt.textContent = name;
-        if (name === currentVal) opt.selected = true;
-        el.appendChild(opt);
-      });
+      const items = players.map(n => ({ value: n, label: n }));
+      el = buildHoverSelect(label, items, currentVal ?? '', idx);
     } else if (type === 'role') {
-      el = document.createElement('select');
-      el.className = 'tp-ab-select';
-      const blank = document.createElement('option');
-      blank.value = '';
-      blank.textContent = label;
-      el.appendChild(blank);
       const goodTeams = new Set(['townsfolk', 'outsider']);
       const evilTeams = new Set(['minion', 'demon']);
       const inPlay = currentState?.roles ?? [];
-      inPlay.forEach(r => {
-        if (filter === 'townsfolk' && r.team !== 'townsfolk') return;
-        if (filter === 'outsider' && r.team !== 'outsider') return;
-        if (filter === 'minion' && r.team !== 'minion') return;
-        if (filter === 'demon' && r.team !== 'demon') return;
-        if (filter === 'good' && !goodTeams.has(r.team)) return;
-        if (filter === 'evil' && !evilTeams.has(r.team)) return;
-        const opt = document.createElement('option');
-        opt.value = r.id;
-        opt.textContent = r.name;
-        if (r.id === currentVal) opt.selected = true;
-        el.appendChild(opt);
-      });
+      const items = inPlay
+        .filter(r => {
+          if (filter === 'townsfolk' && r.team !== 'townsfolk') return false;
+          if (filter === 'outsider' && r.team !== 'outsider') return false;
+          if (filter === 'minion' && r.team !== 'minion') return false;
+          if (filter === 'demon' && r.team !== 'demon') return false;
+          if (filter === 'good' && !goodTeams.has(r.team)) return false;
+          if (filter === 'evil' && !evilTeams.has(r.team)) return false;
+          return true;
+        })
+        .map(r => ({ value: r.id, label: r.name, cls: `role-name ${r.team ?? ''}` }));
+      el = buildHoverSelect(label, items, currentVal ?? '', idx);
     } else if (type === 'number') {
-      el = document.createElement('input');
-      el.type = 'number';
-      el.className = 'tp-ab-number';
-      el.min = min ?? 0;
-      el.max = max ?? 99;
-      el.placeholder = label;
-      if (currentVal !== undefined) el.value = currentVal;
+      const lo = min ?? 0;
+      const hi = max ?? 99;
+      if (hi - lo <= 10) {
+        const wrap = document.createElement('div');
+        wrap.className = 'tp-ab-num-wrap';
+        const lbl2 = document.createElement('span');
+        lbl2.className = 'tp-ab-num-label';
+        lbl2.textContent = label;
+        wrap.appendChild(lbl2);
+        const hidden = document.createElement('input');
+        hidden.type = 'hidden';
+        hidden.dataset.inputIdx = idx;
+        hidden.value = currentVal !== undefined ? String(currentVal) : '';
+        wrap.appendChild(hidden);
+        for (let v = lo; v <= hi; v++) {
+          const nbtn = document.createElement('button');
+          nbtn.type = 'button';
+          nbtn.className = 'tp-ab-num-btn';
+          nbtn.textContent = String(v);
+          if (String(v) === String(currentVal)) nbtn.classList.add('active');
+          nbtn.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            wrap.querySelectorAll('.tp-ab-num-btn').forEach(b => b.classList.remove('active'));
+            nbtn.classList.add('active');
+            hidden.value = String(v);
+            hidden.dispatchEvent(new Event('change', { bubbles: true }));
+          });
+          wrap.appendChild(nbtn);
+        }
+        el = wrap;
+      } else {
+        el = document.createElement('input');
+        el.type = 'number';
+        el.className = 'tp-ab-number';
+        el.min = lo;
+        el.max = hi;
+        el.placeholder = label;
+        if (currentVal !== undefined) el.value = currentVal;
+      }
     } else if (type === 'yn') {
-      el = document.createElement('select');
-      el.className = 'tp-ab-select';
-      [['', label], ['yes', 'yes'], ['no', 'no']].forEach(([v, t]) => {
-        const opt = document.createElement('option');
-        opt.value = v;
-        opt.textContent = t;
-        if ((v === 'yes' && currentVal === true) || (v === 'no' && currentVal === false)) opt.selected = true;
-        el.appendChild(opt);
-      });
+      const yLbl = yesLabel ?? 'yes';
+      const nLbl = noLabel ?? 'no';
+      // normalize old boolean storage
+      const normVal = currentVal === true ? yLbl : currentVal === false ? nLbl : currentVal;
+      el = buildPills([{ value: yLbl, label: yLbl }, { value: nLbl, label: nLbl }], normVal, idx);
     } else if (type === 'alignment') {
-      el = document.createElement('select');
-      el.className = 'tp-ab-select';
-      [['', label], ['good', 'good'], ['evil', 'evil'], ['neither', 'neither']].forEach(([v, t]) => {
-        const opt = document.createElement('option');
-        opt.value = v;
-        opt.textContent = t;
-        if (v === currentVal) opt.selected = true;
-        el.appendChild(opt);
-      });
+      el = buildPills(
+        [{ value: 'good', label: 'good' }, { value: 'evil', label: 'evil' }, { value: 'neither', label: 'neither' }],
+        currentVal, idx,
+      );
     } else if (type === 'direction') {
-      el = document.createElement('select');
-      el.className = 'tp-ab-select';
-      [['', label], ['clockwise', 'clockwise'], ['anti', 'anti-clockwise']].forEach(([v, t]) => {
-        const opt = document.createElement('option');
-        opt.value = v;
-        opt.textContent = t;
-        if (v === currentVal) opt.selected = true;
-        el.appendChild(opt);
-      });
+      el = buildPills(
+        [{ value: 'clockwise', label: 'clockwise' }, { value: 'anti-clockwise', label: 'anti-clockwise' }],
+        currentVal === 'anti' ? 'anti-clockwise' : currentVal, idx,
+      );
+    } else if (type === 'options') {
+      el = buildPills((spec.options ?? []).map(o => ({ value: o, label: o })), currentVal, idx);
     } else {
       el = document.createElement('input');
       el.type = 'text';
@@ -906,7 +992,7 @@ function getPopover() {
       el.placeholder = label;
       if (currentVal !== undefined) el.value = currentVal;
     }
-    el.dataset.inputIdx = idx;
+    if (!el.querySelector?.('[data-input-idx]')) el.dataset.inputIdx = idx;
     return el;
   }
 
@@ -919,8 +1005,7 @@ function getPopover() {
       const inputSpec = spec.inputs[idx];
       if (!inputSpec) return;
       let val = el.value;
-      if (inputSpec.type === 'yn') val = val === 'yes' ? true : val === 'no' ? false : undefined;
-      else if (inputSpec.type === 'number') val = val !== '' ? Number(val) : undefined;
+      if (inputSpec.type === 'number') val = val !== '' ? Number(val) : undefined;
       if (val !== undefined && val !== '') inputs[`i${idx}`] = val;
     });
     return inputs;
@@ -955,21 +1040,12 @@ function getPopover() {
     const spec = _specs()[_normalizeId(roleId)];
     abilityForm.innerHTML = '';
     if (!spec) return;
-
     spec.inputs.forEach((inputSpec, idx) => {
-      const row = document.createElement('div');
-      row.className = 'tp-ab-row';
-      const lbl = document.createElement('span');
-      lbl.className = 'tp-ab-label';
-      lbl.textContent = inputSpec.label;
       const el = buildAbilityInputEl(inputSpec, idx, existingInputs?.[`i${idx}`]);
       el.addEventListener('change', () => commitAbility(roleId));
       el.addEventListener('input', () => commitAbility(roleId));
-      row.appendChild(lbl);
-      row.appendChild(el);
-      abilityForm.appendChild(row);
+      abilityForm.appendChild(el);
     });
-
   }
 
   function buildAbilityTabs(existingAbilityRoleId, existingInputs) {
@@ -984,6 +1060,7 @@ function getPopover() {
     abilityTabs.innerHTML = '';
     abilityForm.innerHTML = '';
     _activeAbilityRoleId = null;
+    _lockedAbilityRoleId = null;
     const section = _popover.querySelector('.tp-ability-section');
     if (!specRoles.length) { section.style.display = 'none'; return; }
     section.style.display = '';
@@ -1004,20 +1081,38 @@ function getPopover() {
         btn.textContent = role.name.slice(0, 3);
       }
       if (role.id === existingAbilityRoleId) {
-        btn.classList.add('active');
+        btn.classList.add('active', 'locked');
         _activeAbilityRoleId = role.id;
+        _lockedAbilityRoleId = role.id;
         buildAbilityForm(role.id, existingInputs);
       }
-      btn.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        if (_activeAbilityRoleId === role.id) {
-          btn.classList.remove('active');
-          _activeAbilityRoleId = null;
-          abilityForm.innerHTML = '';
-        } else {
+      let _hoverTimer = null;
+      btn.addEventListener('mouseenter', () => {
+        if (_lockedAbilityRoleId) return;
+        if (_activeAbilityRoleId === role.id) return;
+        _hoverTimer = setTimeout(() => {
+          if (_lockedAbilityRoleId) return;
           abilityTabs.querySelectorAll('.tp-ab-tab').forEach(b => b.classList.remove('active'));
           btn.classList.add('active');
           _activeAbilityRoleId = role.id;
+          buildAbilityForm(role.id, null);
+        }, 200);
+      });
+      btn.addEventListener('mouseleave', () => clearTimeout(_hoverTimer));
+      btn.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        if (_lockedAbilityRoleId === role.id) {
+          // click locked tab → unlock and deselect
+          btn.classList.remove('active', 'locked');
+          _activeAbilityRoleId = null;
+          _lockedAbilityRoleId = null;
+          abilityForm.innerHTML = '';
+        } else {
+          // click any other tab → lock to it and commit immediately
+          abilityTabs.querySelectorAll('.tp-ab-tab').forEach(b => b.classList.remove('active', 'locked'));
+          btn.classList.add('active', 'locked');
+          _activeAbilityRoleId = role.id;
+          _lockedAbilityRoleId = role.id;
           buildAbilityForm(role.id, null);
           commitAbility(role.id);
         }
@@ -1341,6 +1436,9 @@ function renderNotesGrid() {
     const color = metaNameColor(name);
     const tint = metaRowTint(name);
     const dead = player.isDead ? ' dead' : '';
+    const usedGhostVote = player.isDead && fullTimeline.some(ev => ev.type === 'ghostvote' && ev.name === name);
+    const statusIcons = (player.isDead ? '<span class="pn-status-icon pn-dead" title="Dead">💀</span>' : '')
+                      + (usedGhostVote ? '<span class="pn-status-icon pn-voteless" title="Used ghost vote">👻</span>' : '');
     const icon = meta.roleIconUrl ? `<img class="tp-role-icon" src="${meta.roleIconUrl}" />` : '';
     const roleColorClass = meta.alignment === 'evil' ? 'demon'
                          : meta.alignment === 'good' ? 'townsfolk'
@@ -1355,7 +1453,7 @@ function renderNotesGrid() {
     const tintStyle = tint ? `background:${tint}` : '';
     html += `<tr style="${tintStyle}">`;
     const pinned = pinnedPlayers.has(name);
-    html += `<td class="notes-player-name${dead}" data-player="${name}" style="${color ? `color:${color};` : ''}${tintStyle}"><button class="pin-hl-btn${pinned ? ' pinned' : ''}" data-pin="${esc(name)}" title="Pin highlight">☀</button>${dn(name)}</td>`;
+    html += `<td class="notes-player-name${dead}" data-player="${name}" style="${color ? `color:${color};` : ''}${tintStyle}"><button class="pin-hl-btn${pinned ? ' pinned' : ''}" data-pin="${esc(name)}" title="Pin highlight">☀</button>${dn(name)}${statusIcons}</td>`;
     const roleLocked = isTraveller ? ' role-locked' : '';
     html += `<td class="notes-meta-cell notes-meta-role${roleLocked}" data-player="${name}">${roleHtml}</td>`;
     html += `<td class="notes-meta-cell notes-meta-align" data-player="${name}">${alignHtml}</td>`;
