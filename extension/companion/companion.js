@@ -646,7 +646,7 @@ function abilityValBadges(chip) {
       const v = inputs[`i${idx}`];
       if (v === null || v === undefined || v === '') return;
       if (inputSpec.type === 'player' || inputSpec.type === 'player?') {
-        pushBadge('ab-val-player', v);
+        badges.push(`<span class="ab-val ab-val-player" data-player="${esc(String(v))}">${esc(String(v))}</span>`);
       } else if (inputSpec.type === 'role') {
         const r = _roles().find(x => x.id === v);
         const team = r?.team ?? '';
@@ -1471,7 +1471,7 @@ function renderNotesGrid() {
     const tintStyle = tint ? `background:${tint}` : '';
     html += `<tr style="${tintStyle}">`;
     const pinned = pinnedPlayers.has(name);
-    html += `<td class="notes-player-name${dead}" data-player="${name}" style="${color ? `color:${color};` : ''}${tintStyle}"><button class="pin-hl-btn${pinned ? ' pinned' : ''}" data-pin="${esc(name)}" title="Pin highlight">☀</button>${dn(name)}${statusIcons}</td>`;
+    html += `<td class="notes-player-name${dead}" data-player="${name}" style="${color ? `color:${color};` : ''}${tintStyle}"><button class="pin-hl-btn${pinned ? ' pinned' : ''}" data-pin="${esc(name)}" title="Pin highlight">☀</button><span class="notes-player-name-text">${dn(name)}</span>${statusIcons}</td>`;
     const roleLocked = isTraveller ? ' role-locked' : '';
     html += `<td class="notes-meta-cell notes-meta-role${roleLocked}" data-player="${name}">${roleHtml}</td>`;
     html += `<td class="notes-meta-cell notes-meta-align" data-player="${name}">${alignHtml}</td>`;
@@ -1676,7 +1676,7 @@ document.addEventListener('mouseout', e => {
 });
 
 document.addEventListener('click', e => {
-  if (e.target.closest('#notes-table')) return;
+  if (e.target.closest('#notes-table') && !e.target.closest('.notes-player-name-text')) return;
   const el = e.target.closest('[data-player]');
   if (el) openPlayerTimeline(el.dataset.player);
 });

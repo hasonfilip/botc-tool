@@ -650,6 +650,8 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.notes-player-name-text { cursor: pointer; }
+.notes-player-name-text:hover { text-decoration: underline; }
 .pn-status-icon {
   font-size: 10px;
   margin-left: 3px;
