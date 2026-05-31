@@ -1212,31 +1212,67 @@ function getRolePopover() {
   const list = _rolePop.querySelector('.mrp-list');
   const clearBtn = _rolePop.querySelector('.mrp-clear');
 
+  const closePopover = () => {
+    _rolePop.style.display = 'none';
+    _roleTarget = null;
+  };
+
+  const selectRole = (roleId) => {
+    if (!_roleTarget) return;
+    const role = (currentState?.roles ?? []).find(r => r.id === roleId);
+    if (!role) return;
+    playerMeta[_roleTarget] = { ...(playerMeta[_roleTarget] ?? {}), roleId: role.id, roleName: role.name, roleTeam: role.team ?? '', roleIconUrl: _iconUrl(role) };
+    savePlayerMeta(_roleTarget);
+    refreshMetaCells(_roleTarget, { recolorPage: true });
+    closePopover();
+  };
+
   const renderList = (filter) => {
     const roles = (currentState?.roles ?? []).filter(r =>
       !filter || r.name.toLowerCase().includes(filter.toLowerCase()));
     list.innerHTML = roles.map(r => {
       const icon = _iconUrl(r) ? `<img class="tp-role-icon" src="${_iconUrl(r)}" />` : '';
       const active = playerMeta[_roleTarget]?.roleId === r.id ? ' active' : '';
-      return `<div class="mrp-item role-name ${r.team ?? ''}${active}" data-id="${r.id}">${icon}${r.name}</div>`;
+      return `<div class="mrp-item role-name ${r.team ?? ''}${active}" data-id="${r.id}" tabindex="-1">${icon}${r.name}</div>`;
     }).join('');
     list.querySelectorAll('.mrp-item').forEach(item => {
-      item.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        if (!_roleTarget) return;
-        const role = (currentState?.roles ?? []).find(r => r.id === item.dataset.id);
-        if (!role) return;
-        const meta = playerMeta[_roleTarget] ?? {};
-        playerMeta[_roleTarget] = { ...meta, roleId: role.id, roleName: role.name, roleTeam: role.team ?? '', roleIconUrl: _iconUrl(role) };
-        savePlayerMeta(_roleTarget);
-        refreshMetaCells(_roleTarget, { recolorPage: true });
-        _rolePop.style.display = 'none';
-        _roleTarget = null;
-      });
+      item.addEventListener('mousedown', (e) => { e.preventDefault(); selectRole(item.dataset.id); });
     });
   };
 
+  _rolePop._renderList = renderList;
+
   search.addEventListener('input', () => renderList(search.value));
+
+  search.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      list.querySelector('.mrp-item')?.focus();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const first = list.querySelector('.mrp-item');
+      if (first) selectRole(first.dataset.id);
+    } else if (e.key === 'Escape') {
+      closePopover();
+    }
+  });
+
+  list.addEventListener('keydown', (e) => {
+    const items = [...list.querySelectorAll('.mrp-item')];
+    const idx = items.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      items[idx + 1]?.focus();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (idx > 0) items[idx - 1].focus(); else search.focus();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (idx >= 0) selectRole(items[idx].dataset.id);
+    } else if (e.key === 'Escape') {
+      closePopover();
+    }
+  });
 
   clearBtn.addEventListener('mousedown', (e) => {
     e.preventDefault();
@@ -1244,14 +1280,12 @@ function getRolePopover() {
     playerMeta[_roleTarget] = { ...(playerMeta[_roleTarget] ?? {}), roleId: '', roleName: '', roleTeam: '', roleIconUrl: null };
     savePlayerMeta(_roleTarget);
     refreshMetaCells(_roleTarget, { recolorPage: true });
-    _rolePop.style.display = 'none';
-    _roleTarget = null;
+    closePopover();
   });
 
   document.addEventListener('mousedown', (e) => {
     if (_rolePop.style.display !== 'none' && !_rolePop.contains(e.target) && !e.target.closest('.notes-meta-role')) {
-      _rolePop.style.display = 'none';
-      _roleTarget = null;
+      closePopover();
     }
   });
   return _rolePop;
@@ -1261,35 +1295,19 @@ function openRolePopover(name, anchorEl) {
   const pop = getRolePopover();
   _roleTarget = name;
   const search = pop.querySelector('.mrp-search');
+  const list = pop.querySelector('.mrp-list');
   search.value = '';
-  pop.querySelector('.mrp-list').innerHTML = '';
+  pop._renderList('');
   pop.style.display = 'flex';
+
   const rect = anchorEl.getBoundingClientRect();
   const spaceBelow = window.innerHeight - rect.bottom;
   pop.style.top = spaceBelow > 200
     ? `${rect.bottom + window.scrollY + 2}px`
     : `${rect.top + window.scrollY - pop.offsetHeight - 2}px`;
   pop.style.left = `${Math.max(8, Math.min(rect.left + window.scrollX, window.innerWidth - pop.offsetWidth - 8))}px`;
-  // Render after positioning so offsetHeight is valid
-  const roles = currentState?.roles ?? [];
-  pop.querySelector('.mrp-list').innerHTML = roles.map(r => {
-    const icon = _iconUrl(r) ? `<img class="tp-role-icon" src="${_iconUrl(r)}" />` : '';
-    const active = playerMeta[name]?.roleId === r.id ? ' active' : '';
-    return `<div class="mrp-item role-name ${r.team ?? ''}${active}" data-id="${r.id}">${icon}${r.name}</div>`;
-  }).join('');
-  pop.querySelectorAll('.mrp-item').forEach(item => {
-    item.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      const role = (currentState?.roles ?? []).find(r => r.id === item.dataset.id);
-      if (!role || !_roleTarget) return;
-      const meta = playerMeta[_roleTarget] ?? {};
-      playerMeta[_roleTarget] = { ...meta, roleId: role.id, roleName: role.name, roleTeam: role.team ?? '', roleIconUrl: _iconUrl(role) };
-      savePlayerMeta(_roleTarget);
-      refreshMetaCells(_roleTarget, { recolorPage: true });
-      _rolePop.style.display = 'none';
-      _roleTarget = null;
-    });
-  });
+
+  list.querySelector('.mrp-item.active')?.scrollIntoView({ block: 'nearest' });
   search.focus();
 }
 
