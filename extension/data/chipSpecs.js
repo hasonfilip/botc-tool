@@ -343,6 +343,53 @@ const BOTC_CHIP_SPECS = {
       { type: 'role', label: 'Their role' },
     ],
   },
+  fisherman: {
+    inputs: [
+      { type: 'text', label: 'ST advice' },
+    ],
+  },
+  princess: {
+    inputs: [
+      { type: 'player', label: 'Nominated' },
+    ],
+    confirmedLabel: 'nominated by Princess',
+  },
+  farmer: {
+    inputs: [
+      { type: 'player', label: 'New Farmer' },
+    ],
+    confirmedLabel: 'became a Farmer',
+  },
+  minstrel: {
+    inputs: [],
+  },
+  choirboy: {
+    inputs: [
+      { type: 'player', label: 'Demon' },
+    ],
+    confirmedLabel: 'is the Demon',
+  },
+  banshee: {
+    inputs: [],
+  },
+  tealady: {
+    inputs: [],
+  },
+  fool: {
+    inputs: [],
+  },
+  magician: {
+    inputs: [],
+  },
+  poppygrower: {
+    inputs: [],
+  },
+  pacifist: {
+    inputs: [],
+  },
+  atheist: {
+    inputs: [],
+  },
 
   // ── Outsiders ─────────────────────────────────────────────────────────────
 
@@ -362,6 +409,85 @@ const BOTC_CHIP_SPECS = {
     inputs: [
       { type: 'player', label: 'Drunk guess' },
     ],
+  },
+  hermit: {
+    inputs: [],
+  },
+  goon: {
+    inputs: [
+      { type: 'player', label: 'Drunk player' },
+      { type: 'alignment', label: 'Your alignment' },
+    ],
+    confirmedLabel: 'drunk by Goon',
+  },
+  lunatic: {
+    inputs: [
+      { type: 'player', label: 'Kill target' },
+    ],
+    confirmedLabel: 'lunatic-targeted',
+  },
+  drunk: {
+    inputs: [],
+  },
+  tinker: {
+    inputs: [],
+  },
+  recluse: {
+    inputs: [],
+  },
+  golem: {
+    inputs: [
+      { type: 'player', label: 'Nominated' },
+    ],
+    confirmedLabel: 'nominated by Golem',
+  },
+  sweetheart: {
+    inputs: [
+      { type: 'player', label: 'Drunk player' },
+    ],
+    confirmedLabel: 'drunk by Sweetheart',
+  },
+  plaguedoctor: {
+    inputs: [],
+  },
+  klutz: {
+    inputs: [
+      { type: 'player', label: 'Chosen player' },
+    ],
+    confirmedLabel: 'chosen by Klutz',
+  },
+  moonchild: {
+    inputs: [
+      { type: 'player', label: 'Chosen player' },
+    ],
+    confirmedLabel: 'chosen by Moonchild',
+  },
+  saint: {
+    inputs: [],
+  },
+  barber: {
+    inputs: [],
+  },
+  hatter: {
+    inputs: [],
+  },
+  mutant: {
+    inputs: [],
+  },
+  politician: {
+    inputs: [],
+  },
+  zealot: {
+    inputs: [],
+  },
+  damsel: {
+    inputs: [],
+  },
+  snitch: {
+    inputs: [],
+  },
+  heretic: {
+    inputs: [],
   },
 
   // ── Minions ───────────────────────────────────────────────────────────────
