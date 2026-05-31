@@ -1402,7 +1402,7 @@ function renderNotesGrid() {
 
   const phaseColWidth = 110;
   const w = notesFixedColWidths;
-  const minPhaseWidth = 90;
+  const minPhaseWidth = 200;
 
   let html = '';
   if (w) {
