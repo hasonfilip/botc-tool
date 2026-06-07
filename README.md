@@ -9,11 +9,12 @@ Opens a live tab showing players, roles, game timeline, nominations, and convers
 
 ## Features
 
-- **Player table** — seat, name, pronouns, role, and status tags
-- **Notes grid** — per-player per-phase cells with token chips: custom notes, predefined tags, and claimed roles, each with an importance level
-- **Timeline** — phase blocks (Night/Day) with deaths, exiles, ghost votes, and game result (spoiler-hidden)
-- **Nominations log** — who nominated who, vote count, and individual voters
+- **Notes grid** — per-player per-phase cells with role chips: ability inputs, predefined tags, and claimed roles, each with an importance level; supports a player timeline drawer (click a player to see their full game history)
+- **Player table** — seat, name, pronouns, role, and status tags; highlight toggle per player or all at once
+- **Timeline** — phase blocks (Night/Day) with deaths, exiles, ghost votes, and (spoiler-hidden) game result
+- **Nominations log** — who nominated who, vote count, and individual voters; tracks hands raised in real time
 - **Conversation log** — private, public, and night channel visits with duration and participants
+- **Text messages** — captured direct messages
 - **Connection indicator** — seconds since last signal, with a warning and reload prompt if the connection goes stale
 - **Live WS events** — raw WebSocket stream for debugging
 
@@ -50,9 +51,22 @@ If you loaded the extension as unpacked:
 
 ## How it works
 
-The extension injects a script into the botc.app page that hooks the WebSocket connection and watches localStorage and DOM changes. All data is relayed to a background service worker, which processes it and pushes it to the companion panel tab.
+The extension injects a script into the botc.app page that hooks the WebSocket connection and watches localStorage and DOM changes. All data is relayed to a background service worker, which processes it and pushes updates to the companion panel tab.
 
-No data leaves your browser. Nothing is sent to any external server.
+### Architecture
+
+```
+botc.app page
+  └─ page-bridge.js   (page context — hooks WebSocket, watches localStorage & DOM)
+       │ window.postMessage
+  └─ injector.js      (content script — relays messages to background)
+       │ chrome.runtime.sendMessage
+  └─ background.js    (service worker — deduplicates events, maintains state)
+       │ chrome.runtime.sendMessage
+  └─ companion/       (panel tab — renders everything the user sees)
+```
+
+Role data and ability chip specs are bundled locally in `data/` — no network requests are made to any external server. No data leaves your browser.
 
 ## Permissions used
 
