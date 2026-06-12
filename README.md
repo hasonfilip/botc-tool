@@ -30,7 +30,9 @@ The extension is not on any store. Load it as an unpacked extension:
 4. Click **Load unpacked**
 5. Select the `extension/` folder inside this repo
 6. Click the extension icon in the toolbar to open the companion panel
-7. If the botc.app tab was already open, reload it — the companion will show a prompt if no data is detected
+7. If the botc.app tab was already open, the extension connects to it automatically — game state works right away, but live events (nominations, chats, messages) need a one-time reload of the botc.app tab (the companion shows a notice when this applies)
+
+Requires Chrome/Chromium 111+.
 
 ### Firefox
 
@@ -38,6 +40,8 @@ The extension is not on any store. Load it as an unpacked extension:
 2. Click **Load Temporary Add-on**
 3. Select any file inside the `extension/` folder (e.g. `manifest.json`)
 4. Click the extension icon to open the companion panel, then reload the botc.app tab if prompted
+
+Requires Firefox 128+.
 
 > Firefox temporary add-ons are removed on browser restart. For a persistent install, the extension would need to be signed by Mozilla.
 
@@ -57,7 +61,8 @@ The extension injects a script into the botc.app page that hooks the WebSocket c
 
 ```
 botc.app page
-  └─ page-bridge.js   (page context — hooks WebSocket, watches localStorage & DOM)
+  └─ page-bridge.js   (MAIN-world content script — hooks WebSocket before the
+       │                page connects, watches localStorage & DOM)
        │ window.postMessage
   └─ injector.js      (content script — relays messages to background)
        │ chrome.runtime.sendMessage

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "BOTC Tool",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Companion panel for Blood on the Clocktower Online",
 
   "permissions": ["storage", "tabs", "scripting"],
@@ -15,6 +15,13 @@
   "content_scripts": [
     {
       "matches": ["https://botc.app/play*"],
+      "js": ["page-bridge.js"],
+      "run_at": "document_start",
+      "all_frames": false,
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://botc.app/play*"],
       "js": ["injector.js"],
       "run_at": "document_start",
       "all_frames": false
@@ -25,17 +32,10 @@
     "default_title": "Open BOTC Companion"
   },
 
-  "web_accessible_resources": [
-    {
-      "resources": ["page-bridge.js"],
-      "matches": ["https://botc.app/*"]
-    }
-  ],
-
   "browser_specific_settings": {
     "gecko": {
       "id": "botc-tool@local",
-      "strict_min_version": "109.0"
+      "strict_min_version": "128.0"
     }
   }
 }

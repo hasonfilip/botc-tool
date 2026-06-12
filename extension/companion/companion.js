@@ -37,7 +37,10 @@ const PREDEFINED_TAGS = [
 ];
 
 const phaseLabel = (phase) => phase % 2 === 1 ? `Night ${Math.ceil(phase / 2)}` : `Day ${Math.ceil(phase / 2)}`;
-const dn = (name) => name?.length > 20 ? name.slice(0, 20) + '…' : (name ?? '');
+const dn = (name) => {
+  const chars = [...(name ?? '')]; // code points, so truncation can't split an emoji
+  return chars.length > 20 ? chars.slice(0, 20).join('') + '…' : (name ?? '');
+};
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 // Bundled data from extension/data/ scripts (guarded in case scripts fail to load)
@@ -86,7 +89,7 @@ function renderState(state) {
   const stEl = document.getElementById('header-storytellers');
   if (stEl) {
     stEl.innerHTML = stNames.length
-      ? stNames.map(n => `<span class="chat-st header-st" data-player="${n}">${dn(n)}</span>`).join('<span class="header-st-sep">, </span>')
+      ? stNames.map(n => `<span class="chat-st header-st" data-player="${esc(n)}">${esc(dn(n))}</span>`).join('<span class="header-st-sep">, </span>')
       : '';
   }
 
@@ -172,11 +175,11 @@ function renderTimeline() {
         const blockIsDay = block.label.startsWith('Day');
         const isExile = team === 'traveller' && blockIsDay && d.type === 'death';
         const icon = d.type === 'ghostvote' ? '👻' : d.type === 'revive' ? '✨' : isExile ? '🚪' : '💀';
-        const ghostTarget = d.type === 'ghostvote' ? (() => { const n = nominationAt(d.ts); return n ? ` on ${seatName(n.nomineeSeat)}` : ''; })() : '';
+        const ghostTarget = d.type === 'ghostvote' ? (() => { const n = nominationAt(d.ts); return n ? ` on ${esc(seatName(n.nomineeSeat))}` : ''; })() : '';
         const action = d.type === 'ghostvote' ? `ghost vote${ghostTarget}` : d.type === 'revive' ? 'revived' : isExile ? 'exiled' : 'died';
         const cls = d.type === 'revive' ? 'revive' : d.type === 'ghostvote' ? 'ghostvote' : '';
         const offsetStr = d.refStart ? '' : ` <span class="tl-death-time">+${duration(d.ts - block.start)}</span>`;
-        return `<div class="tl-death ${cls}">${icon} <span class="${team ? `role-name ${team}` : ''}" data-player="${name}">${dn(name)}</span> ${action}${offsetStr}</div>`;
+        return `<div class="tl-death ${cls}">${icon} <span class="${team ? `role-name ${team}` : ''}" data-player="${esc(name)}">${esc(dn(name))}</span> ${action}${offsetStr}</div>`;
       }).join('')}
       ${block.end_event ? `<div class="tl-game-end tl-${block.end_event.isEvilWin ? 'evil' : 'good'} spoiler"><span class="spoiler-hide">reveal result</span><span class="spoiler-show">${block.end_event.label}</span></div>` : ''}
     `;
@@ -314,9 +317,9 @@ function renderNominations() {
     li.className = `nom-entry${executed ? ' nom-executed' : ''}`;
     li.innerHTML = `
       <div class="nom-header">
-        <span class="nom-nominator role-name ${playerTeamByName(nominator)}" data-player="${nominator}">${dn(nominator)}</span>
+        <span class="nom-nominator role-name ${playerTeamByName(nominator)}" data-player="${esc(nominator)}">${esc(dn(nominator))}</span>
         <span class="nom-arrow">→</span>
-        <span class="nom-nominee role-name ${playerTeamByName(nominee)}" data-player="${nominee}">${dn(nominee)}</span>
+        <span class="nom-nominee role-name ${playerTeamByName(nominee)}" data-player="${esc(nominee)}">${esc(dn(nominee))}</span>
         <span class="nom-meta">
           <span class="nom-count ${executed ? 'nom-execute' : ''}">${yesCount}/${needed}</span>
           <span class="nom-time">${fmt(nom.ts)}</span>
@@ -324,7 +327,7 @@ function renderNominations() {
       </div>
       <div class="nom-voters${yesNames.length === 0 ? ' nom-none' : ''}">
         <span class="nom-voters-label">${yesNames.length > 0 ? 'Voted' : 'No votes'}</span>
-        ${yesNames.length > 0 ? yesNames.map(n => `${isGhostVoter(n) ? '👻 ' : ''}<span class="role-name ${playerTeamByName(n)}" data-player="${n}">${dn(n)}</span>`).join('<span class="nom-voter-sep">,</span> ') : ''}
+        ${yesNames.length > 0 ? yesNames.map(n => `${isGhostVoter(n) ? '👻 ' : ''}<span class="role-name ${playerTeamByName(n)}" data-player="${esc(n)}">${esc(dn(n))}</span>`).join('<span class="nom-voter-sep">,</span> ') : ''}
       </div>
     `;
     list.appendChild(li);
@@ -379,10 +382,10 @@ function isObserver(userId) {
 
 function formatParticipant(userId) {
   const name = resolveParticipant(userId);
-  if (isStoryteller(userId)) return `<span class="chat-st" data-player="${name}">${dn(name)}</span>`;
-  if (isObserver(userId)) return `<span class="observer-name"><span class="observer-eye">👁</span>${dn(name)}</span>`;
+  if (isStoryteller(userId)) return `<span class="chat-st" data-player="${esc(name)}">${esc(dn(name))}</span>`;
+  if (isObserver(userId)) return `<span class="observer-name"><span class="observer-eye">👁</span>${esc(dn(name))}</span>`;
   const team = playerTeamByName(name);
-  return `<span class="role-name ${team}" data-player="${name}">${dn(name)}</span>`;
+  return `<span class="role-name ${team}" data-player="${esc(name)}">${esc(dn(name))}</span>`;
 }
 
 function renderChats() {
@@ -482,7 +485,7 @@ function buildPlayerEvents(name) {
     else if (ev.type === 'revive' && ev.name === name) events.push({ ts: ev.ts, type: 'revive', label: 'Revived' });
     else if (ev.type === 'ghostvote' && ev.name === name) {
       const nom = nominationAt(ev.ts);
-      const target = nom ? ` on ${seatName(nom.nomineeSeat)}` : '';
+      const target = nom ? ` on ${esc(seatName(nom.nomineeSeat))}` : '';
       events.push({ ts: ev.ts, type: 'ghostvote', label: `Used ghost vote${target}` });
     }
   }
@@ -505,12 +508,12 @@ function buildPlayerEvents(name) {
     const isNominee = nominee === name;
 
     if (isNominator) {
-      events.push({ ts: nom.ts, type: 'nom-made', label: `Nominated ${dn(nominee)} (${count})` });
+      events.push({ ts: nom.ts, type: 'nom-made', label: `Nominated ${esc(dn(nominee))} (${count})` });
       if (wasTracked) {
         events.push({ ts: nom.ts, type: raisedHand ? 'voted-yes' : 'voted-no', label: raisedHand ? `Voted yes as nominator${ghostSuffix}` : 'Did not vote as nominator' });
       }
     } else if (isNominee) {
-      events.push({ ts: nom.ts, type: 'nom-received', label: `Nominated by ${dn(nominator)} (${count})` });
+      events.push({ ts: nom.ts, type: 'nom-received', label: `Nominated by ${esc(dn(nominator))} (${count})` });
       const nomineeVoted = wasTracked ? raisedHand : null;
       if (nomineeVoted === true) {
         events.push({ ts: nom.ts, type: 'voted-yes', label: `Voted for own execution${ghostSuffix}` });
@@ -518,7 +521,7 @@ function buildPlayerEvents(name) {
         events.push({ ts: nom.ts, type: 'voted-no', label: 'Did not vote for own execution' });
       }
     } else if (wasTracked) {
-      events.push({ ts: nom.ts, type: raisedHand ? 'voted-yes' : 'voted-no', label: `${raisedHand ? `Voted yes${ghostSuffix}` : 'Did not vote'} on ${dn(nominator)} → ${dn(nominee)} (${count})` });
+      events.push({ ts: nom.ts, type: raisedHand ? 'voted-yes' : 'voted-no', label: `${raisedHand ? `Voted yes${ghostSuffix}` : 'Did not vote'} on ${esc(dn(nominator))} → ${esc(dn(nominee))} (${count})` });
     }
   }
 
@@ -674,17 +677,17 @@ function abilityValBadges(chip) {
 function chipsHtml(player, phase) {
   const chips = cellTokens[`${player}|${phase}`] ?? [];
   return chips.map((chip, idx) => {
-    const attrs = `data-player="${player}" data-phase="${phase}" data-idx="${idx}"`;
+    const attrs = `data-player="${esc(player)}" data-phase="${esc(phase)}" data-idx="${idx}"`;
     if (chip.type === 'role') {
-      const icon = chip.iconUrl ? `<img class="tp-role-icon" src="${chip.iconUrl}" />` : '';
-      return `<span class="token-chip role-chip role-name ${chip.team ?? ''}" ${attrs}>${icon}${chip.name}</span>`;
+      const icon = chip.iconUrl ? `<img class="tp-role-icon" src="${esc(chip.iconUrl)}" />` : '';
+      return `<span class="token-chip role-chip role-name ${chip.team ?? ''}" ${attrs}>${icon}${esc(chip.name)}</span>`;
     }
     if (chip.type === 'tag') {
       const content = chip.icon ? `${chip.icon} ${esc(chip.name ?? chip.label ?? '')}` : esc(chip.label ?? '');
       return `<span class="token-chip tag-chip" ${attrs}>${content}</span>`;
     }
     if (chip.type === 'note') {
-      return `<span class="token-chip note-chip" ${attrs}>${chip.text}</span>`;
+      return `<span class="token-chip note-chip" ${attrs}>${esc(chip.text)}</span>`;
     }
     if (chip.type === 'ability') {
       const resolvedUrl = _iconUrl({ id: chip.roleId, iconUrl: chip.iconUrl });
@@ -1231,9 +1234,9 @@ function getRolePopover() {
     const roles = (currentState?.roles ?? []).filter(r =>
       !filter || r.name.toLowerCase().includes(filter.toLowerCase()));
     list.innerHTML = roles.map(r => {
-      const icon = _iconUrl(r) ? `<img class="tp-role-icon" src="${_iconUrl(r)}" />` : '';
+      const icon = _iconUrl(r) ? `<img class="tp-role-icon" src="${esc(_iconUrl(r))}" />` : '';
       const active = playerMeta[_roleTarget]?.roleId === r.id ? ' active' : '';
-      return `<div class="mrp-item role-name ${r.team ?? ''}${active}" data-id="${r.id}" tabindex="-1">${icon}${r.name}</div>`;
+      return `<div class="mrp-item role-name ${r.team ?? ''}${active}" data-id="${esc(r.id)}" tabindex="-1">${icon}${esc(r.name)}</div>`;
     }).join('');
     list.querySelectorAll('.mrp-item').forEach(item => {
       item.addEventListener('mousedown', (e) => { e.preventDefault(); selectRole(item.dataset.id); });
@@ -1347,7 +1350,7 @@ function refreshMetaCells(name, { recolorPage = false } = {}) {
                          : meta.alignment === 'good' ? 'townsfolk'
                          : meta.roleTeam ?? '';
     roleCell.innerHTML = meta.roleName
-      ? `<span class="meta-role-chip role-name ${roleColorClass}">${icon}${meta.roleName}</span>`
+      ? `<span class="meta-role-chip role-name ${roleColorClass}">${icon}${esc(meta.roleName)}</span>`
       : '';
   }
   if (alignCell) {
@@ -1462,7 +1465,7 @@ function renderNotesGrid() {
                          : meta.alignment === 'good' ? 'townsfolk'
                          : meta.roleTeam ?? '';
     const roleHtml = meta.roleName
-      ? `<span class="meta-role-chip role-name ${roleColorClass}">${icon}${meta.roleName}</span>`
+      ? `<span class="meta-role-chip role-name ${roleColorClass}">${icon}${esc(meta.roleName)}</span>`
       : '';
     const alignLabel = { good: 'G', evil: 'E' };
     const alignClass = { good: 'meta-good', evil: 'meta-evil' };
@@ -1471,14 +1474,14 @@ function renderNotesGrid() {
     const tintStyle = tint ? `background:${tint}` : '';
     html += `<tr style="${tintStyle}">`;
     const pinned = pinnedPlayers.has(name);
-    html += `<td class="notes-player-name${dead}" data-player="${name}" style="${color ? `color:${color};` : ''}${tintStyle}"><button class="pin-hl-btn${pinned ? ' pinned' : ''}" data-pin="${esc(name)}" title="Pin highlight">☀</button><span class="notes-player-name-text">${dn(name)}</span>${statusIcons}</td>`;
+    html += `<td class="notes-player-name${dead}" data-player="${esc(name)}" style="${color ? `color:${color};` : ''}${tintStyle}"><button class="pin-hl-btn${pinned ? ' pinned' : ''}" data-pin="${esc(name)}" title="Pin highlight">☀</button><span class="notes-player-name-text">${esc(dn(name))}</span>${statusIcons}</td>`;
     const roleLocked = isTraveller ? ' role-locked' : '';
-    html += `<td class="notes-meta-cell notes-meta-role${roleLocked}" data-player="${name}">${roleHtml}</td>`;
-    html += `<td class="notes-meta-cell notes-meta-align" data-player="${name}">${alignHtml}</td>`;
+    html += `<td class="notes-meta-cell notes-meta-role${roleLocked}" data-player="${esc(name)}">${roleHtml}</td>`;
+    html += `<td class="notes-meta-cell notes-meta-align" data-player="${esc(name)}">${alignHtml}</td>`;
     for (let i = 0; i < phases.length; i++) {
       const ph = phases[i];
       const epoch = i % 2 === 0 ? ' epoch-start' : '';
-      html += `<td class="notes-cell${epoch}" data-player="${name}" data-phase="${ph}">
+      html += `<td class="notes-cell${epoch}" data-player="${esc(name)}" data-phase="${esc(ph)}">
         <div class="cell-chips">${chipsHtml(name, ph)}</div>
       </td>`;
     }
@@ -1538,9 +1541,16 @@ function renderNotesGrid() {
 // ── WS heartbeat ──────────────────────────────────────────────────────────
 
 let lastWsTs = Date.now(); // start counting from page load so timer is always visible
+let lastReconnectTry = 0;
 
 function touchWsHeartbeat() {
   lastWsTs = Date.now();
+}
+
+function tryReconnect() {
+  try {
+    chrome.runtime.sendMessage({ type: 'RECONNECT' }, () => void chrome.runtime?.lastError);
+  } catch { /* dummy mode / extension reloaded */ }
 }
 
 (function tickHeartbeat() {
@@ -1556,6 +1566,11 @@ function touchWsHeartbeat() {
           const t = Math.min((secs - 30) / 60, 1);
           const g = Math.round(200 * (1 - t));
           el.style.color = `rgb(255,${g},0)`;
+          // Try to recover automatically before the user has to reload
+          if (Date.now() - lastReconnectTry > 30000) {
+            lastReconnectTry = Date.now();
+            tryReconnect();
+          }
         } else {
           msgEl.textContent = '';
           el.style.color = '';
@@ -1695,6 +1710,17 @@ function showReloadPrompt() {
   }, 300);
 }
 
+// Shown when the bridge was injected into an already-open tab: game state
+// flows, but the WebSocket hook missed the existing connection.
+function showPartialBanner() {
+  if (document.getElementById('partial-banner')) return;
+  const el = document.createElement('div');
+  el.id = 'partial-banner';
+  el.innerHTML = 'Connected to an already-open botc.app tab — game state works, but live events (nominations, chats, messages) need a <strong>botc.app tab reload</strong>. <button id="partial-dismiss" type="button">dismiss</button>';
+  document.body.insertBefore(el, document.querySelector('main'));
+  el.querySelector('#partial-dismiss').addEventListener('click', () => el.remove());
+}
+
 chrome.runtime.sendMessage({ type: 'GET_STATE' }, (response) => {
   if (!response) { showReloadPrompt(); return; }
   applyFullRefresh(response);
@@ -1742,6 +1768,14 @@ chrome.runtime.onMessage.addListener((message) => {
     }
     else if (payload.type === 'WS_RECV' || payload.type === 'WS_SEND') { touchWsHeartbeat(); appendWsEvent(payload); }
     else if (payload.type === 'NEEDS_RELOAD') { showReloadPrompt(); }
+    return;
+  }
+  if (message.type === 'NEEDS_RELOAD') {
+    showReloadPrompt();
+    return;
+  }
+  if (message.type === 'PARTIAL_CONNECT') {
+    showPartialBanner();
     return;
   }
   if (message.type === 'TIMELINE_EVENTS') {

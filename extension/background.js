@@ -20,7 +20,7 @@ async function sendToCompanion(msg) {
 
 const store = {
   async get() {
-    const data = await chrome.storage.session.get(['latestState', 'timeline', 'wsEvents', 'processedIds', 'nameMap', 'currentGameId', 'nominations', 'pendingNomination', 'chatSessions', 'cellTokens', 'playerMeta', 'textMessages']);
+    const data = await chrome.storage.session.get(['latestState', 'timeline', 'wsEvents', 'processedIds', 'nameMap', 'currentGameId', 'nominations', 'pendingNomination', 'chatSessions', 'cellTokens', 'playerMeta', 'textMessages', 'channelPresence']);
     return {
       latestState: data.latestState ?? null,
       timeline: data.timeline ?? [],
@@ -34,6 +34,7 @@ const store = {
       cellTokens: data.cellTokens ?? {},
       playerMeta: data.playerMeta ?? {},
       textMessages: data.textMessages ?? [],
+      channelPresence: data.channelPresence ?? {},
     };
   },
   async set(patch) {
@@ -41,7 +42,47 @@ const store = {
   },
 };
 
-// ── Nomination processing ─────────────────────────────────────────────────
+// All storage-mutating handlers run through one promise chain — concurrent
+// read-modify-write cycles on chrome.storage.session would lose updates.
+let _chain = Promise.resolve();
+function enqueue(fn) {
+  const next = _chain.then(fn);
+  _chain = next.catch(e => console.error('botc-tool:', e));
+  return next;
+}
+
+// ── Bridge connectivity ───────────────────────────────────────────────────
+
+// Ping the content script in a botc.app tab; if it's missing (tab was open
+// before the extension loaded), inject the scripts programmatically. Note a
+// late-injected WebSocket hook can't capture an already-open socket, so live
+// WS events still need a tab reload — but state scraping works immediately.
+async function ensureBridge(tab) {
+  try {
+    await chrome.tabs.sendMessage(tab.id, { type: 'FORCE_UPDATE' });
+    return 'alive';
+  } catch {
+    try {
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['page-bridge.js'], world: 'MAIN' });
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['injector.js'] });
+      await chrome.tabs.sendMessage(tab.id, { type: 'FORCE_UPDATE' });
+      return 'injected';
+    } catch {
+      return 'failed';
+    }
+  }
+}
+
+async function connectToTabs() {
+  const tabs = await chrome.tabs.query({ url: 'https://botc.app/play*' });
+  if (tabs.length === 0) return 'no-tab';
+  const results = await Promise.all(tabs.map(ensureBridge));
+  if (results.includes('alive')) return 'alive';
+  if (results.includes('injected')) return 'injected';
+  return 'failed';
+}
+
+// ── WS frame parsing & dedup ──────────────────────────────────────────────
 
 function parseSocketIO(raw) {
   if (typeof raw !== 'string') return null;
@@ -50,17 +91,26 @@ function parseSocketIO(raw) {
   try { return JSON.parse(m[1]); } catch { return null; }
 }
 
-// In-memory dedup: server sends each WS message 4x
-const _nomDedupMap = new Map();
-function isDupNomEvent(key) {
+// In-memory dedup: server sends each WS message 4x. Survives only as long as
+// the service worker, but duplicate bursts arrive within milliseconds.
+function isDup(map, key, windowMs = 1500) {
   const now = Date.now();
-  if (now - (_nomDedupMap.get(key) ?? 0) < 1500) return true;
-  _nomDedupMap.set(key, now);
+  if (now - (map.get(key) ?? 0) < windowMs) return true;
+  map.set(key, now);
+  if (map.size > 500) {
+    for (const [k, t] of map) if (now - t > windowMs) map.delete(k);
+  }
   return false;
 }
 
+const _nomDedupMap = new Map();
+const _msgDedupMap = new Map();
+const _chanDedupMap = new Map();
+
+// ── Nomination processing ─────────────────────────────────────────────────
+
 async function handleNominationFrame(eventName, eventData, ts) {
-  if (isDupNomEvent(eventName + JSON.stringify(eventData))) return;
+  if (isDup(_nomDedupMap, eventName + JSON.stringify(eventData))) return;
 
   const { nominations, pendingNomination, latestState } = await store.get();
 
@@ -68,7 +118,7 @@ async function handleNominationFrame(eventName, eventData, ts) {
     if (Array.isArray(eventData.nomination)) {
       const [nominatorSeat, nomineeSeat] = eventData.nomination;
       const alive = (latestState?.players ?? []).filter(p => !p.isDead).length;
-      const highscore = Math.max(eventData.highscore, Math.ceil(alive / 2));
+      const highscore = Math.max(eventData.highscore ?? 0, Math.ceil(alive / 2));
       const entry = { ts, nominatorSeat, nomineeSeat, highscore, handState: {}, yesSeats: [] };
       await store.set({ pendingNomination: entry });
     } else if (eventData.nomination === false && pendingNomination) {
@@ -83,6 +133,8 @@ async function handleNominationFrame(eventName, eventData, ts) {
   if (eventName === 'vote' && Array.isArray(eventData)) {
     // vote [seat, 0|1] — track live hand state; seat indices here are real seat numbers
     const [seat, value] = eventData;
+    // A real toggle (up→down→up) must not be eaten by the duplicate window
+    _nomDedupMap.delete('vote' + JSON.stringify([seat, value ? 0 : 1]));
     const handState = { ...pendingNomination.handState, [seat]: value };
     await store.set({ pendingNomination: { ...pendingNomination, handState } });
     return;
@@ -99,18 +151,14 @@ async function handleNominationFrame(eventName, eventData, ts) {
 
 // ── Text messages ─────────────────────────────────────────────────────────
 
-const _msgDedupMap = new Map();
-function isDupMessage(key) {
-  const now = Date.now();
-  if (now - (_msgDedupMap.get(key) ?? 0) < 1500) return true;
-  _msgDedupMap.set(key, now);
-  return false;
-}
-
 async function handleTextMessage(senderId, recipientId, message, length, ts) {
+  const { nameMap, textMessages, latestState } = await store.get();
+  // Normalize the 'me' sentinel to the real user ID so a server echo of our
+  // own message dedups against the locally-recorded send
+  const myId = latestState?.myUserId ? String(latestState.myUserId) : null;
+  if (senderId === 'me' && myId) senderId = myId;
   const key = `${senderId}|${recipientId}|${message ?? length}`;
-  if (isDupMessage(key)) return;
-  const { nameMap, textMessages } = await store.get();
+  if (isDup(_msgDedupMap, key)) return;
   const senderName = nameMap[String(senderId)] ?? String(senderId);
   const recipientName = recipientId ? (nameMap[String(recipientId)] ?? String(recipientId)) : null;
   const entry = { ts, senderId: String(senderId), senderName, recipientId: recipientId || null, recipientName, message: message ?? null, length: length ?? null };
@@ -120,19 +168,7 @@ async function handleTextMessage(senderId, recipientId, message, length, ts) {
 }
 
 // ── Channel / chat tracking ───────────────────────────────────────────────
-
-// channelId → { start, participants: Map<userId,joinTs>, allParticipants: Set<userId> }
-const channelPresence = {};
-
-// Per-user dedup: server sends channelChange 4× per event
-const _chanDedupMap = new Map();
-function isDupChannelEvent(userId, channel) {
-  const key = `${userId}|${channel}`;
-  const now = Date.now();
-  if (now - (_chanDedupMap.get(key) ?? 0) < 1500) return true;
-  _chanDedupMap.set(key, now);
-  return false;
-}
+// channelPresence (persisted): channelId → { start, participants: {userId: joinTs}, allParticipants: [userId] }
 
 async function saveSession(channelId, start, end, participants) {
   if (participants.length < 2) return;
@@ -146,20 +182,25 @@ async function saveSession(channelId, start, end, participants) {
 }
 
 async function handleChannelChange(userId, newChannel, ts) {
-  if (isDupChannelEvent(userId, newChannel)) return;
+  const { latestState, channelPresence } = await store.get();
+  // Normalize 'me' to the real user ID so the server echoing our own
+  // channelChange doesn't track us twice
+  const myId = latestState?.myUserId ? String(latestState.myUserId) : null;
+  if (userId === 'me' && myId) userId = myId;
+  if (isDup(_chanDedupMap, `${userId}|${newChannel}`)) return;
 
   // Leave old channel
   for (const [ch, info] of Object.entries(channelPresence)) {
-    if (info.participants.has(userId)) {
-      const joinTs = info.participants.get(userId);
-      info.participants.delete(userId);
+    if (userId in info.participants) {
+      const joinTs = info.participants[userId];
+      delete info.participants[userId];
 
       if (ch.startsWith('night-')) {
         // Log each player's individual night visit (storyteller stays, so don't close channel)
-        const others = [...info.participants.keys()];
+        const others = Object.keys(info.participants);
         await saveSession(ch, joinTs, ts, [userId, ...others]);
-      } else if (info.participants.size === 0) {
-        await saveSession(ch, info.start, ts, [...info.allParticipants]);
+      } else if (Object.keys(info.participants).length === 0) {
+        await saveSession(ch, info.start, ts, info.allParticipants);
         delete channelPresence[ch];
       }
       break;
@@ -169,14 +210,20 @@ async function handleChannelChange(userId, newChannel, ts) {
   // Join new channel
   if (newChannel) {
     if (!channelPresence[newChannel]) {
-      channelPresence[newChannel] = { start: ts, participants: new Map(), allParticipants: new Set() };
+      channelPresence[newChannel] = { start: ts, participants: {}, allParticipants: [] };
     }
-    channelPresence[newChannel].participants.set(userId, ts);
-    channelPresence[newChannel].allParticipants.add(userId);
+    channelPresence[newChannel].participants[userId] = ts;
+    if (!channelPresence[newChannel].allParticipants.includes(userId)) {
+      channelPresence[newChannel].allParticipants.push(userId);
+    }
   }
+
+  await store.set({ channelPresence });
 }
 
-function phaseLabel(phase, historyUpTo) {
+// ── Timeline ──────────────────────────────────────────────────────────────
+
+function phaseLabel(phase) {
   const isNight = phase % 2 === 1;
   const round = Math.ceil(phase / 2);
   return isNight ? `Night ${round}` : `Day ${round}`;
@@ -184,19 +231,25 @@ function phaseLabel(phase, historyUpTo) {
 
 function eventsFromHistory(history, nameMap, processedIds) {
   const events = [];
-  history.forEach((entry, i) => {
-    if (processedIds.has(entry.id)) return;
+  for (const entry of history) {
+    if (processedIds.has(entry.id)) continue;
     processedIds.add(entry.id);
-    const historyUpTo = history.slice(0, i + 1);
     if (entry.type === 'start') {
       events.push({ ts: entry.time, type: 'start', label: 'Game started' });
     } else if (entry.type === 'phase') {
-      events.push({ ts: entry.time, type: 'phase', label: phaseLabel(entry.data, historyUpTo) });
+      events.push({ ts: entry.time, type: 'phase', label: phaseLabel(entry.data) });
     } else if (entry.type === 'death') {
       const pid = String(entry.data?.id ?? entry.data);
-      events.push({ ts: entry.time, type: 'death', playerId: pid, name: nameMap[pid] ?? null });
+      // dom-death marker is shared with diffDeaths: whichever source records a
+      // death first wins, the other is skipped
+      const domKey = `dom-death-${pid}`;
+      if (!processedIds.has(domKey)) {
+        processedIds.add(domKey);
+        events.push({ ts: entry.time, type: 'death', playerId: pid, name: nameMap[pid] ?? null });
+      }
     } else if (entry.type === 'revive') {
       const pid = String(entry.data?.id ?? entry.data);
+      processedIds.delete(`dom-death-${pid}`);
       events.push({ ts: entry.time, type: 'revive', playerId: pid, name: nameMap[pid] ?? null });
     } else if (entry.type === 'vote') {
       const pid = String(entry.data?.id ?? entry.data);
@@ -208,7 +261,7 @@ function eventsFromHistory(history, nameMap, processedIds) {
         events.push({ ts: entry.time, type: 'roles_revealed', roles: entry.data.players });
       }
     }
-  });
+  }
   return events;
 }
 
@@ -247,6 +300,113 @@ async function pushStateToCompanion() {
   }).catch(() => {});
 }
 
+// ── Message handlers ──────────────────────────────────────────────────────
+
+async function handleStatePayload(payload) {
+  const { latestState, timeline, processedIds, nameMap, currentGameId } = await store.get();
+
+  // Update nameMap with any newly named players
+  for (const p of payload.data.players ?? []) {
+    if (p.id && p.name) nameMap[p.id] = p.name;
+  }
+
+  // Map 'me' sentinel to the local user's actual ID so channel sessions resolve correctly
+  if (payload.data.myUserId) {
+    for (const p of payload.data.players ?? []) {
+      if (p.id === payload.data.myUserId && p.name) {
+        nameMap['me'] = p.name;
+        break;
+      }
+    }
+  }
+
+  // Spectator names scraped from the users panel (only present when panel is open)
+  for (const s of payload.data.spectators ?? []) {
+    if (s.id && s.name) nameMap[String(s.id)] = s.name;
+  }
+
+  // Match storyteller IDs (localStorage) to names (DOM) by position
+  const storytellers = payload.data.storytellers ?? [];
+  const storytellerNames = payload.data.storytellerNames ?? [];
+  for (let i = 0; i < Math.min(storytellers.length, storytellerNames.length); i++) {
+    if (storytellers[i].id) nameMap[String(storytellers[i].id)] = storytellerNames[i];
+  }
+
+  // Detect new game: start entry ID changed → reset timeline
+  const history = payload.data.history ?? [];
+  const startEntry = history.find(h => h.type === 'start');
+  if (startEntry && startEntry.id !== currentGameId) {
+    timeline.length = 0;
+    processedIds.clear();
+    await store.set({ currentGameId: startEntry.id, nominations: [], pendingNomination: null, chatSessions: [], cellTokens: {}, textMessages: [], channelPresence: {} });
+  }
+
+  const historyEvents = eventsFromHistory(history, nameMap, processedIds);
+  const domEvents = diffDeaths(latestState?.players, payload.data.players, processedIds, nameMap);
+  const newEvents = [...historyEvents, ...domEvents];
+  const merged = [...timeline, ...newEvents].sort((a, b) => a.ts - b.ts);
+  const seen = new Set();
+  const newTimeline = merged.filter(ev => {
+    const key = `${ev.ts}|${ev.type}|${ev.playerId ?? ''}|${ev.label ?? ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  await store.set({
+    latestState: payload.data,
+    timeline: newTimeline,
+    processedIds: [...processedIds],
+    nameMap,
+  });
+
+  await sendToCompanion({ type: 'BOTC_UPDATE', payload, nameMap });
+  if (newEvents.length > 0) await sendToCompanion({ type: 'TIMELINE_EVENTS', events: newEvents });
+}
+
+async function handleWsPayload(payload) {
+  const frame = parseSocketIO(payload.data);
+  if (frame && typeof frame[0] === 'string') {
+    if (payload.type === 'WS_RECV') {
+      // Covers both player and storyteller perspectives: ["vote",[seat,value]] / ["vote",[seat,value],userId]
+      await handleNominationFrame(frame[0], frame[1], Date.now());
+      if (frame[0] === 'channelChange' && frame[1] && typeof frame[1] === 'object') {
+        await handleChannelChange(String(frame[1].userId), frame[1].channel ?? '', Date.now());
+      }
+      // ["textMessage", {message, recipientId}, senderUserId] — public messages (plaintext)
+      if (frame[0] === 'textMessage' && frame[1]?.message !== undefined) {
+        await handleTextMessage(frame[2] ?? 'unknown', frame[1].recipientId ?? '', frame[1].message, null, Date.now());
+      }
+      // ["textMessageIndicator", {recipientId, length}, senderUserId] — private messages (no plaintext)
+      if (frame[0] === 'textMessageIndicator' && frame[1]?.recipientId) {
+        await handleTextMessage(frame[2] ?? 'unknown', frame[1].recipientId, null, frame[1].length ?? null, Date.now());
+      }
+    } else if (payload.type === 'WS_SEND') {
+      if (frame[0] === 'channelChange' && typeof frame[1] === 'string') {
+        await handleChannelChange('me', frame[1], Date.now());
+      }
+      // Storyteller sends all events wrapped as ["message",eventName,eventData]
+      if (frame[0] === 'message' && typeof frame[1] === 'string') {
+        await handleNominationFrame(frame[1], frame[2], Date.now());
+      }
+      // User sending a text message: ["textMessage", {message, recipientId}]
+      if (frame[0] === 'textMessage' && frame[1]?.message !== undefined) {
+        await handleTextMessage('me', frame[1].recipientId ?? '', frame[1].message, null, Date.now());
+      }
+      // User sending a private message: ["textMessageIndicator", {recipientId, length}]
+      if (frame[0] === 'textMessageIndicator' && frame[1]?.recipientId) {
+        await handleTextMessage('me', frame[1].recipientId, null, frame[1].length ?? null, Date.now());
+      }
+    }
+  }
+
+  const { wsEvents } = await store.get();
+  const updated = [...wsEvents, { ...payload, ts: Date.now() }];
+  if (updated.length > 100) updated.shift();
+  await store.set({ wsEvents: updated });
+  await sendToCompanion({ type: 'BOTC_UPDATE', payload });
+}
+
 chrome.action.onClicked.addListener(async () => {
   if (companionTabId !== null) {
     try {
@@ -266,6 +426,11 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   if (tabId === companionTabId) companionTabId = null;
 });
 
+// Pick up botc.app tabs that were already open when the extension was
+// (re)loaded — content scripts are only auto-injected into new page loads.
+chrome.runtime.onInstalled.addListener(() => { connectToTabs(); });
+chrome.runtime.onStartup.addListener(() => { connectToTabs(); });
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Restore companionTabId if service worker restarted
   if (sender.tab?.url?.includes(chrome.runtime.getURL('companion'))) {
@@ -273,179 +438,57 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.type === 'BOTC_UPDATE') {
     const payload = message.payload;
-
     if (payload.type === 'STATE') {
-      (async () => {
-        const { latestState, timeline, wsEvents, processedIds, nameMap, currentGameId } = await store.get();
-
-        // Update nameMap with any newly named players
-        for (const p of payload.data.players ?? []) {
-          if (p.id && p.name) nameMap[p.id] = p.name;
-        }
-
-        // Map 'me' sentinel to the local user's actual ID so channel sessions resolve correctly
-        if (payload.data.myUserId) {
-          for (const p of payload.data.players ?? []) {
-            if (p.id === payload.data.myUserId && p.name) {
-              nameMap['me'] = p.name;
-              break;
-            }
-          }
-        }
-
-        // Spectator names scraped from the users panel (only present when panel is open)
-        for (const s of payload.data.spectators ?? []) {
-          if (s.id && s.name) nameMap[String(s.id)] = s.name;
-        }
-
-        // Match storyteller IDs (localStorage) to names (DOM) by position
-        const storytellers = payload.data.storytellers ?? [];
-        const storytellerNames = payload.data.storytellerNames ?? [];
-        for (let i = 0; i < Math.min(storytellers.length, storytellerNames.length); i++) {
-          if (storytellers[i].id) nameMap[String(storytellers[i].id)] = storytellerNames[i];
-        }
-
-        // Detect new game: start entry ID changed → reset timeline
-        const history = payload.data.history ?? [];
-        const startEntry = history.find(h => h.type === 'start');
-        if (startEntry && startEntry.id !== currentGameId) {
-          timeline.length = 0;
-          processedIds.clear();
-          await store.set({ currentGameId: startEntry.id, nominations: [], pendingNomination: null, chatSessions: [], cellTokens: {}, textMessages: [] });
-        }
-
-        // History-based deaths mark their player IDs so DOM diff won't duplicate them
-        const historyEvents = eventsFromHistory(history, nameMap, processedIds);
-        for (const ev of historyEvents) {
-          if (ev.type === 'death') {
-            processedIds.add(`dom-death-${ev.playerId}`);
-          }
-        }
-        const domEvents = diffDeaths(latestState?.players, payload.data.players, processedIds, nameMap);
-        const newEvents = [...historyEvents, ...domEvents];
-        const merged = [...timeline, ...newEvents].sort((a, b) => a.ts - b.ts);
-        const seen = new Set();
-        const newTimeline = merged.filter(ev => {
-          const key = `${ev.ts}|${ev.type}|${ev.playerId ?? ''}|${ev.label ?? ''}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
-
-        await store.set({
-          latestState: payload.data,
-          timeline: newTimeline,
-          processedIds: [...processedIds],
-          nameMap,
-        });
-
-        await sendToCompanion({ type: 'BOTC_UPDATE', payload, nameMap });
-        if (newEvents.length > 0) await sendToCompanion({ type: 'TIMELINE_EVENTS', events: newEvents });
-      })();
+      enqueue(() => handleStatePayload(payload));
       return;
     }
-
     if (payload.type === 'WS_RECV' || payload.type === 'WS_SEND') {
-      (async () => {
-        // Parse frames from WS_RECV and WS_SEND
-        const frame = parseSocketIO(payload.data);
-        if (frame && typeof frame[0] === 'string') {
-          if (payload.type === 'WS_RECV') {
-            await handleNominationFrame(frame[0], frame[1], Date.now());
-            // Storyteller receives player votes as ["vote",[seat,value],userId]
-            if (frame[0] === 'vote' && Array.isArray(frame[1])) {
-              await handleNominationFrame('vote', frame[1], Date.now());
-            }
-            if (frame[0] === 'channelChange' && frame[1] && typeof frame[1] === 'object') {
-              await handleChannelChange(String(frame[1].userId), frame[1].channel ?? '', Date.now());
-            }
-            // ["textMessage", {message, recipientId}, senderUserId] — public messages (plaintext)
-            if (frame[0] === 'textMessage' && frame[1]?.message !== undefined) {
-              await handleTextMessage(frame[2] ?? 'unknown', frame[1].recipientId ?? '', frame[1].message, null, Date.now());
-            }
-            // ["textMessageIndicator", {recipientId, length}, senderUserId] — private messages (no plaintext)
-            if (frame[0] === 'textMessageIndicator' && frame[1]?.recipientId) {
-              await handleTextMessage(frame[2] ?? 'unknown', frame[1].recipientId, null, frame[1].length ?? null, Date.now());
-            }
-          } else if (payload.type === 'WS_SEND') {
-            if (frame[0] === 'channelChange' && typeof frame[1] === 'string') {
-              await handleChannelChange('me', frame[1], Date.now());
-            }
-            // Storyteller sends all events wrapped as ["message",eventName,eventData]
-            if (frame[0] === 'message' && typeof frame[1] === 'string') {
-              await handleNominationFrame(frame[1], frame[2], Date.now());
-            }
-            // User sending a text message: ["textMessage", {message, recipientId}]
-            if (frame[0] === 'textMessage' && frame[1]?.message !== undefined) {
-              await handleTextMessage('me', frame[1].recipientId ?? '', frame[1].message, null, Date.now());
-            }
-            // User sending a private message: ["textMessageIndicator", {recipientId, length}]
-            if (frame[0] === 'textMessageIndicator' && frame[1]?.recipientId) {
-              await handleTextMessage('me', frame[1].recipientId, null, frame[1].length ?? null, Date.now());
-            }
-          }
-        }
-
-        const { wsEvents } = await store.get();
-        const updated = [...wsEvents, { ...payload, ts: Date.now() }];
-        if (updated.length > 100) updated.shift();
-        await store.set({ wsEvents: updated });
-        await sendToCompanion({ type: 'BOTC_UPDATE', payload });
-      })();
+      enqueue(() => handleWsPayload(payload));
       return;
     }
-
     sendToCompanion({ type: 'BOTC_UPDATE', payload });
     return;
   }
 
   if (message.type === 'SAVE_TOKENS') {
-    (async () => {
+    enqueue(async () => {
       const { cellTokens } = await store.get();
       const key = `${message.player}|${message.phase}`;
       const updated = { ...cellTokens, [key]: message.tokens };
       await store.set({ cellTokens: updated });
-    })();
+    });
     return;
   }
 
   if (message.type === 'CLEAR_TOKENS') {
-    store.set({ cellTokens: {} });
+    enqueue(() => store.set({ cellTokens: {} }));
     return;
   }
 
   if (message.type === 'SAVE_PLAYER_META') {
-    (async () => {
+    enqueue(async () => {
       const { playerMeta } = await store.get();
       const updated = { ...playerMeta, [message.name]: message.meta };
       await store.set({ playerMeta: updated });
-    })();
+    });
     return;
+  }
+
+  if (message.type === 'RECONNECT') {
+    (async () => {
+      sendResponse({ result: await connectToTabs() });
+    })();
+    return true;
   }
 
   if (message.type === 'GET_STATE') {
     (async () => {
       const { latestState, timeline, wsEvents, nominations, chatSessions, nameMap, cellTokens, playerMeta, textMessages } = await store.get();
       sendResponse({ state: latestState, timeline, wsEvents, nominations, chatSessions, nameMap, cellTokens, playerMeta, textMessages });
-      // Re-inject relay into any open botc.app tabs (handles extension reload case)
-      const tabs = await chrome.tabs.query({ url: 'https://botc.app/play*' });
-      for (const tab of tabs) {
-        try {
-          await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            func: () => {
-              // page-bridge.js already runs and sets __botcBridgeActive; just trigger a state push
-              if (window.__botcBridgeActive) {
-                window.postMessage({ source: 'botc-bridge-cmd', type: 'FORCE_UPDATE' }, '*');
-                return;
-              }
-              // Bridge not active — page was loaded before extension; prompt user to reload
-              window.__botcNeedsReload = true;
-              window.postMessage({ source: 'botc-bridge', payload: { type: 'NEEDS_RELOAD' } }, '*');
-            },
-          });
-        } catch {}
-      }
+      // Ask open botc.app tabs for a fresh push, injecting the bridge if missing
+      const result = await connectToTabs();
+      if (result === 'injected') await sendToCompanion({ type: 'PARTIAL_CONNECT' });
+      else if (result === 'failed') await sendToCompanion({ type: 'NEEDS_RELOAD' });
     })();
     return true;
   }

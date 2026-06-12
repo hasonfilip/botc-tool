@@ -158,6 +158,30 @@ main { padding: 14px 20px; display: flex; flex-direction: column; gap: 14px; }
 
 #no-data-banner strong { color: var(--text); }
 
+#partial-banner {
+  margin: 10px 20px 0;
+  padding: 10px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--muted);
+  text-align: center;
+}
+
+#partial-banner strong { color: var(--text); }
+
+#partial-banner button {
+  margin-left: 10px;
+  padding: 2px 10px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
 .main-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));

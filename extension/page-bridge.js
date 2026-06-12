@@ -1,6 +1,8 @@
-// Runs in page context (not extension context). Has full access to window APIs.
-// Hooks WebSocket, watches localStorage, scrapes DOM, and posts structured
-// state to injector.js via window.postMessage.
+// Registered in the manifest as a MAIN-world content script at document_start,
+// so it runs in the page context before any page script — guaranteeing the
+// WebSocket hook is in place before botc.app opens its connection.
+// Watches localStorage, scrapes DOM, and posts structured state to
+// injector.js via window.postMessage.
 
 (function () {
   'use strict';
@@ -12,12 +14,17 @@
 
   const post = (payload) => window.postMessage({ source: 'botc-bridge', payload }, '*');
 
+  // Only the keys buildState uses — this runs on every (debounced) DOM
+  // mutation, so parsing the whole store would be wasted work
+  const STORAGE_KEYS = ['game', 'players', 'roles', 'storytellers', 'edition', 'bluffs', 'reminders', 'timer', 'session', 'token'];
+
   const readStorage = () => {
     const raw = {};
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      try { raw[key] = JSON.parse(localStorage.getItem(key)); }
-      catch { raw[key] = localStorage.getItem(key); }
+    for (const key of STORAGE_KEYS) {
+      const val = localStorage.getItem(key);
+      if (val === null) continue;
+      try { raw[key] = JSON.parse(val); }
+      catch { raw[key] = val; }
     }
     return raw;
   };
