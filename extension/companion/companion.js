@@ -19,9 +19,11 @@ let allChatSessions = [];
 let allTextMessages = [];
 let nameMap = {};
 let showNightChats = false;
+let mergePhases = true; // notes grid: one column per round (Night N + Day N) instead of per phase
 let colorSource = 'grimoire'; // 'grimoire' | 'notes'
 let openPlayerTimelineName = null;
 let cellTokens = {};
+let materializedStatus = new Set(); // event keys already turned into a status chip — never recreate, even after edit/delete
 let playerMeta = {}; // { name: { roleId, roleName, roleTeam, roleIconUrl, alignment } }
 let lastNotesKey = '';
 let notesFixedColWidths = null; // { player, role, align } in px — set once, never shrunk
@@ -36,6 +38,24 @@ const PREDEFINED_TAGS = [
   { id: 'not-outsider',         label: 'not an outsider' },
 ];
 
+// Chips that tint their own cell. Default label is editable per chip.
+const CELL_COLORS = {
+  good:      { label: '👍 Good ping', title: 'Good ping (blue)' },
+  evil:      { label: '👎 Evil ping', title: 'Evil ping (red)' },
+  droisoned: { label: '🍺 Droisoned', title: 'Drunk or poisoned (sick green)' },
+};
+
+// Roles that can cause a droison (cause drunkenness/poison, or are themselves a
+// drunk/malfunctioning role). Used to limit the Droisoned chip's source dropdown.
+const DROISON_SOURCE_ROLES = new Set([
+  // poison / drunk causers
+  'poisoner', 'pukka', 'nodashii', 'vigormortis', 'lleech', 'widow',
+  'sailor', 'courtier', 'innkeeper', 'minstrel', 'philosopher', 'puzzlemaster',
+  'sweetheart', 'vortox',
+  // self-drunk / malfunctioning by nature
+  'drunk', 'goon', 'lunatic', 'marionette', 'hermit',
+]);
+
 const phaseLabel = (phase) => phase % 2 === 1 ? `Night ${Math.ceil(phase / 2)}` : `Day ${Math.ceil(phase / 2)}`;
 const dn = (name) => {
   const chars = [...(name ?? '')]; // code points, so truncation can't split an emoji
@@ -46,8 +66,29 @@ const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').
 // Bundled data from extension/data/ scripts (guarded in case scripts fail to load)
 const _roles = () => (typeof BOTC_ROLES !== 'undefined' ? BOTC_ROLES : []);
 const _specs = () => (typeof BOTC_CHIP_SPECS !== 'undefined' ? BOTC_CHIP_SPECS : {});
+// Custom-script role ids (e.g. localized scripts: 'washerwomancz') mapped to
+// canonical ids so spec/icon lookups keep working — populated by enrichRoles
+const _roleAliases = {};
 // Role IDs may have a 'traveller_' prefix in some contexts — strip it for spec/icon lookups
-const _normalizeId = (id) => id?.replace(/^traveller_/, '') ?? id;
+const _normalizeId = (id) => {
+  const base = id?.replace(/^traveller_/, '') ?? id;
+  return _roleAliases[base] ?? base;
+};
+
+function registerRoleAlias(r) {
+  const id = (r.id ?? '').replace(/^traveller_/, '');
+  if (!id || _roleAliases[id] || _roles().some(x => x.id === id)) return;
+  // Official wiki icon URL is the most reliable hint: Icon_fortune_teller.png → fortuneteller
+  const m = (r.iconUrl ?? '').match(/Icon_([a-z0-9_]+)\./i);
+  const guess = m ? m[1].toLowerCase().replace(/_/g, '') : null;
+  if (guess && _roles().some(x => x.id === guess)) { _roleAliases[id] = guess; return; }
+  // Fallback: longest canonical id the custom id starts with (washerwomancz → washerwoman)
+  let best = null;
+  for (const x of _roles()) {
+    if (id.startsWith(x.id) && (!best || x.id.length > best.length)) best = x.id;
+  }
+  if (best) _roleAliases[id] = best;
+}
 // Base URL for local icons — set by ICONS_BASE global from each page, or derived from chrome.runtime
 const _iconBase = () => {
   if (typeof ICONS_BASE !== 'undefined') return ICONS_BASE;
@@ -73,9 +114,20 @@ function roleNameFromId(roleId, state) {
   return role?.name ?? roleId;
 }
 
+// Roles arriving via the localStorage fallback may lack name/team — fill
+// them in from the bundled role data by id
+function enrichRoles(roles) {
+  return (roles ?? []).map(r => {
+    registerRoleAlias(r);
+    if (r.name && r.team) return r;
+    const b = _roles().find(x => x.id === _normalizeId(r.id));
+    return { ...r, name: r.name ?? b?.name ?? r.id, team: r.team || b?.team || '' };
+  });
+}
+
 function renderState(state) {
   if (!state) return;
-  currentState = state;
+  currentState = { ...state, roles: enrichRoles(state.roles) };
   document.getElementById('no-data-banner')?.remove();
 
   const phase = state.phase ? phaseLabel(state.phase) : '—';
@@ -174,7 +226,7 @@ function renderTimeline() {
         const team = playerTeamByName(name);
         const blockIsDay = block.label.startsWith('Day');
         const isExile = team === 'traveller' && blockIsDay && d.type === 'death';
-        const icon = d.type === 'ghostvote' ? '👻' : d.type === 'revive' ? '✨' : isExile ? '🚪' : '💀';
+        const icon = d.type === 'ghostvote' ? '👻' : d.type === 'revive' ? '🌱' : isExile ? '👋' : '💀';
         const ghostTarget = d.type === 'ghostvote' ? (() => { const n = nominationAt(d.ts); return n ? ` on ${esc(seatName(n.nomineeSeat))}` : ''; })() : '';
         const action = d.type === 'ghostvote' ? `ghost vote${ghostTarget}` : d.type === 'revive' ? 'revived' : isExile ? 'exiled' : 'died';
         const cls = d.type === 'revive' ? 'revive' : d.type === 'ghostvote' ? 'ghostvote' : '';
@@ -233,6 +285,7 @@ function addTimelineEvents(events) {
   }
   fullTimeline.sort((a, b) => a.ts - b.ts);
   patchTimelineNames();
+  materializeStatusChips();
   renderTimeline();
 }
 
@@ -283,6 +336,32 @@ function gamePhaseAt(ts) {
     else if (ev.type === 'phase') label = ev.label;
   }
   return label ?? 'Unknown';
+}
+
+// Phase column a death/revive belongs to in the notes grid. Mirrors the
+// timeline grouping rule: a death announced in the first 2 minutes of a Day is
+// really a night death, so it maps to the preceding phase (the Night).
+function phaseForStatusEvent(ev) {
+  let curLabel = null, curStart = null, prevLabel = null;
+  for (const e of fullTimeline) {
+    if (e.ts > ev.ts) break;
+    if (e.type === 'start') { prevLabel = curLabel; curLabel = 'Game started'; curStart = e.ts; }
+    else if (e.type === 'phase') { prevLabel = curLabel; curLabel = e.label; curStart = e.ts; }
+  }
+  if (curLabel === null) return null;
+  const isEarlyDay = curLabel.startsWith('Day') && (ev.ts - curStart) < 120000;
+  return (isEarlyDay && prevLabel) ? prevLabel : curLabel;
+}
+
+// A death within the last minute of a day — i.e. just before the next Night
+// begins — is treated as a day execution rather than a plain death.
+function isExecutionDeath(ev) {
+  for (const e of fullTimeline) {
+    if (e.type === 'phase' && e.ts > ev.ts) {
+      return e.label.startsWith('Night') && (e.ts - ev.ts) < 60000;
+    }
+  }
+  return false;
 }
 
 function renderNominations() {
@@ -577,7 +656,7 @@ function openPlayerTimeline(name) {
   list.innerHTML = '';
 
   const typeIcon = {
-    'death': '💀', 'revive': '✨', 'ghostvote': '👻',
+    'death': '💀', 'revive': '🌱', 'ghostvote': '👻',
     'nom-made': '⚖', 'nom-received': '⚖',
     'voted-yes': '✋', 'voted-no': '✋',
     'chat-public': '🗣', 'chat-private': '🔒', 'chat-night': '🌙',
@@ -638,6 +717,41 @@ function getPhaseColumns() {
   return phases;
 }
 
+// Notes-grid columns. Normally one per phase; when mergePhases is on, Night N
+// and Day N collapse into a single "round" column. Each column carries the list
+// of underlying phases it shows, plus the phase a freshly added chip lands in.
+function getNotesColumns() {
+  const phases = getPhaseColumns();
+  if (!mergePhases) {
+    return phases.map(p => ({
+      key: p,
+      label: p,
+      phases: [p],
+      cls: p.startsWith('Night') ? 'notes-night' : 'notes-day',
+      addPhase: p,
+    }));
+  }
+  const groups = [];
+  const byNum = new Map();
+  for (const p of phases) {
+    const num = (p.match(/(\d+)\s*$/) ?? [, p])[1];
+    if (!byNum.has(num)) {
+      const g = { key: `r${num}`, label: `D/N ${num}`, phases: [], cls: 'notes-merged', addPhase: null };
+      byNum.set(num, g);
+      groups.push(g);
+    }
+    byNum.get(num).phases.push(p);
+  }
+  // New chips default to the Day of the round (where most notes go), else its
+  // only/last phase.
+  for (const g of groups) g.addPhase = g.phases.find(p => p.startsWith('Day')) ?? g.phases[g.phases.length - 1];
+  return groups;
+}
+
+function columnForPhase(phase) {
+  return getNotesColumns().find(c => c.phases.includes(phase)) ?? null;
+}
+
 function abilityValBadges(chip) {
   const inputs = chip.inputs ?? {};
   const spec = _specs()[_normalizeId(chip.roleId)];
@@ -651,7 +765,7 @@ function abilityValBadges(chip) {
       if (inputSpec.type === 'player' || inputSpec.type === 'player?') {
         badges.push(`<span class="ab-val ab-val-player" data-player="${esc(String(v))}">${esc(String(v))}</span>`);
       } else if (inputSpec.type === 'role') {
-        const r = _roles().find(x => x.id === v);
+        const r = (currentState?.roles ?? []).find(x => x.id === v) ?? _roles().find(x => x.id === v);
         const team = r?.team ?? '';
         badges.push(`<span class="ab-val ab-val-role role-name ${team}">${esc(r ? r.name : String(v))}</span>`);
       } else if (inputSpec.type === 'yn' || inputSpec.type === 'options' || inputSpec.type === 'alignment' || inputSpec.type === 'direction') {
@@ -667,16 +781,14 @@ function abilityValBadges(chip) {
     Object.values(inputs).forEach(v => {
       if (v === null || v === undefined || v === '') return;
       if (typeof v === 'boolean') { pushBadge('ab-val-option', v ? 'yes' : 'no'); return; }
-      const r = _roles().find(x => x.id === v);
+      const r = (currentState?.roles ?? []).find(x => x.id === v) ?? _roles().find(x => x.id === v);
       pushBadge(r ? 'ab-val-role' : 'ab-val-text', r ? r.name : String(v));
     });
   }
   return badges.slice(0, 4).join('');
 }
 
-function chipsHtml(player, phase) {
-  const chips = cellTokens[`${player}|${phase}`] ?? [];
-  return chips.map((chip, idx) => {
+function chipHtml(chip, player, phase, idx) {
     const attrs = `data-player="${esc(player)}" data-phase="${esc(phase)}" data-idx="${idx}"`;
     if (chip.type === 'role') {
       const icon = chip.iconUrl ? `<img class="tp-role-icon" src="${esc(chip.iconUrl)}" />` : '';
@@ -688,6 +800,21 @@ function chipsHtml(player, phase) {
     }
     if (chip.type === 'note') {
       return `<span class="token-chip note-chip" ${attrs}>${esc(chip.text)}</span>`;
+    }
+    if (chip.type === 'cellcolor') {
+      let sourceHtml = '';
+      if (chip.source) {
+        if (chip.id === 'droisoned') {
+          const r = (currentState?.roles ?? []).find(x => x.id === chip.source) ?? _roles().find(x => x.id === chip.source);
+          const url = _iconUrl({ id: chip.source, iconUrl: r?.iconUrl });
+          const ic = url ? `<img class="tp-role-icon" src="${esc(url)}" />` : '';
+          sourceHtml = `<span class="cc-source role-name ${r?.team ?? ''}">${ic}${esc(r?.name ?? chip.source)}</span>`;
+        } else {
+          sourceHtml = `<span class="cc-source" data-player="${esc(chip.source)}">${esc(chip.source)}</span>`;
+        }
+      }
+      const inherited = chip.auto ? ' cc-inherited' : '';
+      return `<span class="token-chip cellcolor-chip cc-${esc(chip.id)}${inherited}" ${attrs}>${esc(chip.label ?? '')}${sourceHtml}</span>`;
     }
     if (chip.type === 'ability') {
       const resolvedUrl = _iconUrl({ id: chip.roleId, iconUrl: chip.iconUrl });
@@ -701,12 +828,123 @@ function chipsHtml(player, phase) {
       return `<span class="token-chip confirmed-chip" title="${esc(chip.label ?? '')}" ${attrs}>${icon}✓</span>`;
     }
     return '';
-  }).join('');
+}
+
+function chipsHtml(player, phase) {
+  const chips = cellTokens[`${player}|${phase}`] ?? [];
+  return chips.map((chip, idx) => chipHtml(chip, player, phase, idx)).join('');
+}
+
+// Renders all chips for a cell spanning one or more phases (merged rounds), but
+// shows at most one droison chip — preferring the user's own/origin over an
+// inherited "from now on" copy — so a cell never shows the token twice.
+function cellChipsHtml(player, phases) {
+  const entries = [];
+  for (const phase of phases) {
+    (cellTokens[`${player}|${phase}`] ?? []).forEach((chip, idx) => entries.push({ chip, phase, idx }));
+  }
+  const isDroison = (c) => c.type === 'cellcolor' && c.id === 'droisoned';
+  const droison = entries.filter(e => isDroison(e.chip));
+  const keep = droison.length ? (droison.find(e => !e.chip.auto) ?? droison[0]) : null;
+  return entries
+    .filter(e => !isDroison(e.chip) || e === keep)
+    .map(e => chipHtml(e.chip, player, e.phase, e.idx))
+    .join('');
+}
+
+// Stable key for a timeline status event, independent of which phase column it
+// lands in — used to remember which events have already been turned into a
+// chip, so we don't recreate one after the user edits or deletes it.
+const statusEventKey = (ev) => `${ev.type}|${ev.ts}|${ev.name ?? playerName(ev.playerId)}`;
+
+// How a death should be labelled. Note this can change after the fact: a death
+// only counts as an execution once we see a Night start within a minute of it,
+// and that phase event doesn't exist yet at the moment the death happens.
+function classifyDeath(player, phase, ev) {
+  if (playerTeamByName(player) === 'traveller' && phase.startsWith('Day')) return { id: 'dead', icon: '👋', name: 'Exiled' };
+  if (isExecutionDeath(ev)) return { id: 'executed', icon: '🪓', name: 'Executed' };
+  return { id: 'dead', icon: '💀', name: 'Died' };
+}
+
+// When the timeline records a death/revive, drop a real, editable, persisted
+// status chip into the right cell — exactly like clicking the 💀/🌱 button.
+// The chip is created once and tagged `auto`. On later passes we re-classify our
+// own untouched auto chip (e.g. Died → Executed once the following Night starts),
+// but never recreate or override one the user has edited or deleted.
+function materializeStatusChips() {
+  if (!fullTimeline.length) return false;
+  let touched = false;
+  let keysChanged = false;
+  for (const ev of fullTimeline) {
+    if (ev.type !== 'death' && ev.type !== 'revive') continue;
+    const player = ev.name ?? playerName(ev.playerId);
+    const phase = phaseForStatusEvent(ev);
+    if (!player || !phase) continue; // names/phases not resolved yet — retry next pass
+
+    const key = statusEventKey(ev);
+    const cellKey = `${player}|${phase}`;
+    const existing = cellTokens[cellKey] ?? [];
+
+    if (!materializedStatus.has(key)) {
+      // First sighting: create the chip, unless the user already recorded a
+      // matching status by hand.
+      let chip = null;
+      if (ev.type === 'death') {
+        if (!existing.some(c => c.type === 'tag' && (c.id === 'dead' || c.id === 'executed'))) {
+          chip = { type: 'tag', auto: true, ...classifyDeath(player, phase, ev) };
+        }
+      } else if (!existing.some(c => c.type === 'tag' && c.id === 'revived')) {
+        chip = { type: 'tag', auto: true, id: 'revived', icon: '🌱', name: 'Revived' };
+      }
+      materializedStatus.add(key);
+      keysChanged = true;
+      if (chip) {
+        cellTokens[cellKey] = [...existing, chip];
+        saveTokens(player, phase);
+        touched = true;
+      }
+    } else if (ev.type === 'death') {
+      // Already created — but we may now know it was an execution. Upgrade our
+      // own auto chip in place; leave a user-edited/removed one untouched.
+      const want = classifyDeath(player, phase, ev);
+      const idx = existing.findIndex(c => c.auto && c.type === 'tag' && (c.id === 'dead' || c.id === 'executed'));
+      if (idx !== -1 && (existing[idx].id !== want.id || existing[idx].icon !== want.icon || existing[idx].name !== want.name)) {
+        existing[idx] = { type: 'tag', auto: true, ...want };
+        cellTokens[cellKey] = existing;
+        saveTokens(player, phase);
+        touched = true;
+      }
+    }
+  }
+  if (keysChanged) chrome.runtime.sendMessage({ type: 'SAVE_MATERIALIZED_STATUS', keys: [...materializedStatus] });
+  if (touched) lastNotesKey = null; // force the grid to rebuild even if isDead hasn't synced yet
+  return touched;
+}
+
+// The cell tint reflects the last cellcolor chip among the column's phases.
+function cellColorId(player, phases) {
+  let id = null;
+  for (const ph of phases) {
+    for (const c of (cellTokens[`${player}|${ph}`] ?? [])) {
+      if (c.type === 'cellcolor' && CELL_COLORS[c.id]) id = c.id;
+    }
+  }
+  return id;
+}
+
+function applyCellColorClass(cell, player, phases) {
+  Object.keys(CELL_COLORS).forEach(id => cell.classList.remove(`cc-cell-${id}`));
+  const id = cellColorId(player, phases);
+  if (id) cell.classList.add(`cc-cell-${id}`);
 }
 
 function refreshCellChips(player, phase) {
-  const cell = document.querySelector(`#notes-table td.notes-cell[data-player="${CSS.escape(player)}"][data-phase="${CSS.escape(phase)}"]`);
-  if (cell) cell.querySelector('.cell-chips').innerHTML = chipsHtml(player, phase);
+  const col = columnForPhase(phase);
+  if (!col) return;
+  const cell = document.querySelector(`#notes-table td.notes-cell[data-player="${CSS.escape(player)}"][data-col="${CSS.escape(col.key)}"]`);
+  if (!cell) return;
+  cell.querySelector('.cell-chips').innerHTML = cellChipsHtml(player, col.phases);
+  applyCellColorClass(cell, player, col.phases);
 }
 
 function setChip(player, phase, chip, idx) {
@@ -737,11 +975,21 @@ function getPopover() {
       <input type="text" class="tp-note-input" placeholder="note" />
       <div class="tp-status-tags">
         <button class="tp-tag-btn" data-tag-id="dead"      data-tag-icon="💀" data-tag-name="Died"               title="Dead">💀</button>
-        <button class="tp-tag-btn" data-tag-id="executed"  data-tag-icon="⚖️" data-tag-name="Executed"           title="Executed">⚖️</button>
-        <button class="tp-tag-btn" data-tag-id="revived"   data-tag-icon="✨" data-tag-name="Revived"            title="Revived">✨</button>
+        <button class="tp-tag-btn" data-tag-id="executed"  data-tag-icon="🪓" data-tag-name="Executed"           title="Executed">🪓</button>
+        <button class="tp-tag-btn" data-tag-id="revived"   data-tag-icon="🌱" data-tag-name="Revived"            title="Revived">🌱</button>
         <button class="tp-tag-btn" data-tag-id="survived"  data-tag-icon="🛡️" data-tag-name="Survived"          title="Survived execution">🛡️</button>
       </div>
+      <div class="tp-color-tags">
+        <button class="tp-color-btn cc-good"      data-color-id="good"      title="Good ping (blue)">👍</button>
+        <button class="tp-color-btn cc-evil"      data-color-id="evil"      title="Evil ping (red)">👎</button>
+        <button class="tp-color-btn cc-droisoned" data-color-id="droisoned" title="Drunk or poisoned (sick green)">🍺</button>
+      </div>
       <button class="tp-x-btn" type="button" title="Remove / cancel">🗑</button>
+    </div>
+    <div class="tp-source-section" style="display:none">
+      <span class="tp-source-label">source</span>
+      <div class="tp-source-select"></div>
+      <label class="tp-fromnow" style="display:none"><input type="checkbox" class="tp-fromnow-cb" /> from now on</label>
     </div>
     <div class="tp-ability-section" style="display:none">
       <div class="tp-ability-tabs"></div>
@@ -754,6 +1002,10 @@ function getPopover() {
   const xBtn = _popover.querySelector('.tp-x-btn');
   const abilityTabs = _popover.querySelector('.tp-ability-tabs');
   const abilityForm = _popover.querySelector('.tp-ability-form');
+  const sourceSection = _popover.querySelector('.tp-source-section');
+  const sourceSelectWrap = _popover.querySelector('.tp-source-select');
+  const fromNowLabel = _popover.querySelector('.tp-fromnow');
+  const fromNowCb = _popover.querySelector('.tp-fromnow-cb');
 
   let _activeAbilityRoleId = null;
   let _lockedAbilityRoleId = null;
@@ -768,15 +1020,62 @@ function getPopover() {
     _popoverTarget = { player, phase, chipIdx: newIdx };
   };
 
+  // Re-commit a colored-cell chip with edits applied; drops the `auto` flag so a
+  // user-touched chip is no longer managed by droison propagation.
+  const editCellColor = (cur, changes) => commit({
+    type: 'cellcolor',
+    id: cur.id,
+    label: 'label' in changes ? changes.label : cur.label,
+    source: 'source' in changes ? changes.source : cur.source,
+    fromNowOn: 'fromNowOn' in changes ? changes.fromNowOn : cur.fromNowOn,
+  });
+
   // ── Note input ──────────────────────────────────────────────────────────────
 
   noteInput.addEventListener('input', () => {
     const val = noteInput.value.trim();
-    if (val) commit({ type: 'note', text: val });
+    const { player, phase, chipIdx } = _popoverTarget ?? {};
+    const cur = (chipIdx !== null && chipIdx !== undefined) ? (cellTokens[`${player}|${phase}`] ?? [])[chipIdx] : null;
+    if (cur?.type === 'cellcolor') {
+      editCellColor(cur, { label: val }); // editing a colored cell's label, not a note
+    } else if (val) {
+      commit({ type: 'note', text: val });
+    }
     const q = val.toLowerCase();
     abilityTabs.querySelectorAll('.tp-ab-tab').forEach(btn => {
       btn.style.display = (!q || btn.title.toLowerCase().includes(q)) ? '' : 'none';
     });
+  });
+
+  // Enter confirms (the note is already saved live) and closes; Esc is handled
+  // by the global handler below.
+  noteInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); closePopover(); }
+  });
+
+  // ── Cell-color buttons ───────────────────────────────────────────────────────
+  // Tint the cell and add an editable label chip; keep the popover open so the
+  // user can immediately overwrite the default label.
+  _popover.querySelectorAll('.tp-color-btn').forEach(btn => {
+    btn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const id = btn.dataset.colorId;
+      commit({ type: 'cellcolor', id, label: CELL_COLORS[id].label });
+      showCellColorSource(id, null, false);
+      noteInput.value = CELL_COLORS[id].label;
+      noteInput.focus();
+      noteInput.select();
+    });
+  });
+
+  // "from now on": mark a droison as ongoing → propagate it to all later phases
+  fromNowCb.addEventListener('change', () => {
+    const { player, phase, chipIdx } = _popoverTarget ?? {};
+    const cur = (chipIdx !== null && chipIdx !== undefined) ? (cellTokens[`${player}|${phase}`] ?? [])[chipIdx] : null;
+    if (cur?.type !== 'cellcolor' || cur.id !== 'droisoned') return;
+    editCellColor(cur, { fromNowOn: fromNowCb.checked || undefined });
+    lastNotesKey = null;
+    renderNotesGrid(); // rebuild so propagated copies appear in later columns
   });
 
   // ── Status tag buttons ──────────────────────────────────────────────────────
@@ -794,14 +1093,24 @@ function getPopover() {
   xBtn.addEventListener('click', () => {
     if (!_popoverTarget) return;
     const { player, phase, chipIdx } = _popoverTarget;
-    if (chipIdx !== null) {
-      const chips = cellTokens[`${player}|${phase}`] ?? [];
-      chips.splice(chipIdx, 1);
-      cellTokens[`${player}|${phase}`] = chips;
-      saveTokens(player, phase);
-      refreshCellChips(player, phase);
-    }
-    closePopover();
+    if (chipIdx === null || chipIdx === undefined) { closePopover(); return; }
+    const key = `${player}|${phase}`;
+    const chips = cellTokens[key] ?? [];
+    chips.splice(chipIdx, 1);
+    cellTokens[key] = chips;
+    saveTokens(player, phase);
+    refreshCellChips(player, phase);
+
+    // Keep editing: jump to the neighbouring chip — the one to the left, or the
+    // next one to the right if the deleted chip was the leftmost.
+    let nextIdx = null;
+    if (chipIdx >= 1) nextIdx = chipIdx - 1;     // left neighbour
+    else if (chips.length > 0) nextIdx = 0;      // right neighbour (shifted into place)
+
+    const col = nextIdx !== null ? columnForPhase(phase) : null;
+    const cell = col && document.querySelector(`#notes-table td.notes-cell[data-player="${CSS.escape(player)}"][data-col="${CSS.escape(col.key)}"]`);
+    if (cell) openPopover(player, phase, cell, nextIdx);
+    else closePopover();
   });
 
   document.addEventListener('mousedown', (e) => {
@@ -877,6 +1186,47 @@ function getPopover() {
     });
 
     return wrap;
+  }
+
+  // Optional "source" for a colored-cell chip: a player for good/evil pings,
+  // an in-play role for droisoned. Reuses the ability hover-select widget.
+  function buildSourceSelect(colorId, currentSource) {
+    sourceSelectWrap.innerHTML = '';
+    let items, placeholder;
+    if (colorId === 'droisoned') {
+      placeholder = 'source role';
+      const pool = currentState?.roles?.length ? currentState.roles : _roles();
+      items = [{ value: '', label: '(none)' }, ...pool
+        .filter(r => DROISON_SOURCE_ROLES.has(_normalizeId(r.id)))
+        .map(r => ({ value: r.id, label: r.name, cls: `role-name ${r.team ?? ''}` }))];
+    } else {
+      placeholder = 'source player';
+      const players = currentState?.players?.map(p => p.name).filter(Boolean) ?? [];
+      items = [{ value: '', label: '(none)' }, ...players.map(n => ({ value: n, label: n }))];
+    }
+    const sel = buildHoverSelect(placeholder, items, currentSource ?? '', 'src');
+    const hidden = sel.querySelector('input[type="hidden"]');
+    hidden.addEventListener('change', () => {
+      const { player, phase, chipIdx } = _popoverTarget ?? {};
+      const cur = (chipIdx !== null && chipIdx !== undefined) ? (cellTokens[`${player}|${phase}`] ?? [])[chipIdx] : null;
+      if (cur?.type === 'cellcolor') {
+        editCellColor(cur, { source: hidden.value || undefined });
+        if (cur.id === 'droisoned' && cur.fromNowOn) { lastNotesKey = null; renderNotesGrid(); }
+      }
+    });
+    sourceSelectWrap.appendChild(sel);
+  }
+
+  function showCellColorSource(colorId, currentSource, fromNowOn) {
+    buildSourceSelect(colorId, currentSource);
+    const isDroison = colorId === 'droisoned';
+    fromNowLabel.style.display = isDroison ? '' : 'none';
+    fromNowCb.checked = isDroison && !!fromNowOn;
+    sourceSection.style.display = 'flex';
+  }
+  function hideCellColorSource() {
+    sourceSection.style.display = 'none';
+    sourceSelectWrap.innerHTML = '';
   }
 
   function buildPills(options, currentVal, idx) {
@@ -1081,7 +1431,7 @@ function getPopover() {
         img.src = url;
         btn.appendChild(img);
       } else {
-        btn.textContent = role.name.slice(0, 3);
+        btn.textContent = (role.name ?? role.id ?? '?').slice(0, 3);
       }
       if (role.id === existingAbilityRoleId) {
         btn.classList.add('active', 'locked');
@@ -1127,6 +1477,8 @@ function getPopover() {
   }
 
   _popover._buildAbilityTabs = buildAbilityTabs;
+  _popover._showCellColorSource = showCellColorSource;
+  _popover._hideCellColorSource = hideCellColorSource;
 
   return _popover;
 }
@@ -1143,8 +1495,14 @@ function openPopover(player, phase, anchorEl, chipIdx = null) {
   const chip = chipIdx !== null ? (cellTokens[`${player}|${phase}`] ?? [])[chipIdx] : null;
   const noteInput = pop.querySelector('.tp-note-input');
 
-  // Pre-fill note text if editing a note chip
-  noteInput.value = chip?.type === 'note' ? chip.text : '';
+  // Pre-fill the input when editing a note chip or a colored-cell chip's label
+  noteInput.value = chip?.type === 'note' ? chip.text
+    : chip?.type === 'cellcolor' ? (chip.label ?? '')
+    : '';
+
+  // Source picker only applies to colored-cell chips
+  if (chip?.type === 'cellcolor') pop._showCellColorSource(chip.id, chip.source, chip.fromNowOn);
+  else pop._hideCellColorSource();
 
   // Ability tabs — pre-select: editing chip > player's assigned role > none
   const existingAbilityRoleId = chip?.type === 'ability' ? chip.roleId
@@ -1387,6 +1745,43 @@ function measureMaxRoleChipWidth() {
   return max + 8; // 4px cell padding each side
 }
 
+// A droison marked "from now on" is stamped into every later phase as an auto
+// copy that mirrors the origin (and re-mirrors as the origin is edited). Copies
+// are recomputed from scratch each pass, so deleting/unchecking the origin or a
+// new phase appearing is handled automatically. A user's own droison in a phase
+// overrides the inherited copy there.
+function propagateDroison() {
+  const phases = getPhaseColumns();
+  if (!phases.length || !currentState?.players?.length) return;
+  for (const p of currentState.players) {
+    const player = p.name ?? `Seat ${p.seat + 1}`;
+    let active = null; // { label, source } carried forward from the latest origin
+    for (const phase of phases) {
+      const key = `${player}|${phase}`;
+      const chips = cellTokens[key] ?? [];
+      const userDroison = chips.find(c => c.type === 'cellcolor' && c.id === 'droisoned' && !c.auto);
+      const autoIdx = chips.findIndex(c => c.type === 'cellcolor' && c.id === 'droisoned' && c.auto);
+
+      if (userDroison?.fromNowOn) active = { label: userDroison.label, source: userDroison.source };
+
+      const wantCopy = active && !userDroison; // inherit only where the user hasn't placed their own
+      if (wantCopy) {
+        const ex = autoIdx !== -1 ? chips[autoIdx] : null;
+        if (!ex || ex.label !== active.label || ex.source !== active.source) {
+          const copy = { type: 'cellcolor', id: 'droisoned', label: active.label, source: active.source, auto: true };
+          if (autoIdx !== -1) chips[autoIdx] = copy; else chips.push(copy);
+          cellTokens[key] = chips;
+          saveTokens(player, phase);
+        }
+      } else if (autoIdx !== -1) {
+        chips.splice(autoIdx, 1);
+        cellTokens[key] = chips;
+        saveTokens(player, phase);
+      }
+    }
+  }
+}
+
 function renderNotesGrid() {
   if (!currentState?.players?.length) return;
 
@@ -1395,11 +1790,14 @@ function renderNotesGrid() {
   if (document.activeElement?.dataset?.player) return;
 
   const phases = getPhaseColumns();
+  const cols = getNotesColumns();
   const players = currentState.players;
 
-  const key = JSON.stringify([players.map(p => [p.name, p.team, p.isDead]), phases]);
+  const key = JSON.stringify([players.map(p => [p.name, p.team, p.isDead]), phases, mergePhases]);
   if (key === lastNotesKey) return;
   lastNotesKey = key;
+
+  propagateDroison(); // stamp/refresh inherited "from now on" droison copies
 
   const table = document.getElementById('notes-table');
 
@@ -1412,12 +1810,12 @@ function renderNotesGrid() {
     const fixedTotal = w.player + w.role + w.align;
     table.style.tableLayout = 'fixed';
     table.style.width = '100%';
-    table.style.minWidth = (fixedTotal + phases.length * minPhaseWidth) + 'px';
+    table.style.minWidth = (fixedTotal + cols.length * minPhaseWidth) + 'px';
     html += '<colgroup>';
     html += `<col style="width:${w.player}px">`;
     html += `<col style="width:${w.role}px">`;
     html += `<col style="width:${w.align}px">`;
-    for (let i = 0; i < phases.length; i++) html += '<col>';
+    for (let i = 0; i < cols.length; i++) html += '<col>';
     html += '</colgroup>';
   } else {
     table.style.tableLayout = '';
@@ -1429,11 +1827,10 @@ function renderNotesGrid() {
   html += `<th class="notes-player-col">Player</th>`;
   html += `<th class="notes-meta-col">Role</th>`;
   html += `<th class="notes-meta-col notes-align-col">Align</th>`;
-  for (let i = 0; i < phases.length; i++) {
-    const ph = phases[i];
-    const cls = ph.startsWith('Night') ? 'notes-night' : 'notes-day';
+  for (let i = 0; i < cols.length; i++) {
+    const col = cols[i];
     const epoch = i % 2 === 0 ? ' epoch-start' : '';
-    html += `<th class="notes-phase-col ${cls}${epoch}">${ph}</th>`;
+    html += `<th class="notes-phase-col ${col.cls}${epoch}">${esc(col.label)}</th>`;
   }
   html += '</tr></thead><tbody>';
 
@@ -1478,11 +1875,14 @@ function renderNotesGrid() {
     const roleLocked = isTraveller ? ' role-locked' : '';
     html += `<td class="notes-meta-cell notes-meta-role${roleLocked}" data-player="${esc(name)}">${roleHtml}</td>`;
     html += `<td class="notes-meta-cell notes-meta-align" data-player="${esc(name)}">${alignHtml}</td>`;
-    for (let i = 0; i < phases.length; i++) {
-      const ph = phases[i];
+    for (let i = 0; i < cols.length; i++) {
+      const col = cols[i];
       const epoch = i % 2 === 0 ? ' epoch-start' : '';
-      html += `<td class="notes-cell${epoch}" data-player="${esc(name)}" data-phase="${esc(ph)}">
-        <div class="cell-chips">${chipsHtml(name, ph)}</div>
+      const chips = cellChipsHtml(name, col.phases);
+      const ccId = cellColorId(name, col.phases);
+      const ccClass = ccId ? ` cc-cell-${ccId}` : '';
+      html += `<td class="notes-cell${epoch}${ccClass}" data-player="${esc(name)}" data-col="${esc(col.key)}" data-phase="${esc(col.addPhase)}">
+        <div class="cell-chips">${chips}</div>
       </td>`;
     }
     html += '</tr>';
@@ -1528,7 +1928,8 @@ function renderNotesGrid() {
     cell.addEventListener('click', (e) => {
       const chip = e.target.closest('.token-chip[data-idx]');
       if (chip) {
-        openPopover(cell.dataset.player, cell.dataset.phase, cell, Number(chip.dataset.idx));
+        // Edit the chip in its own phase (a merged cell may mix Night & Day chips).
+        openPopover(cell.dataset.player, chip.dataset.phase, cell, Number(chip.dataset.idx));
       } else {
         openPopover(cell.dataset.player, cell.dataset.phase, cell, null);
       }
@@ -1616,6 +2017,7 @@ document.getElementById('color-source-toggle').addEventListener('click', () => {
   const isNotes = colorSource === 'notes';
   document.getElementById('ct-switch').setAttribute('aria-checked', String(isNotes));
   document.getElementById('color-source-toggle').classList.toggle('ct-active', isNotes);
+  saveSettings();
   renderState(currentState);
   renderTimeline();
   renderNominations();
@@ -1628,6 +2030,75 @@ document.getElementById('toggle-night').addEventListener('click', (e) => {
   e.target.textContent = showNightChats ? 'hide night' : 'show night';
   e.target.classList.toggle('toggle-btn-active', showNightChats);
   renderChats();
+});
+
+document.getElementById('merge-switch').addEventListener('click', (e) => {
+  mergePhases = !mergePhases;
+  e.currentTarget.classList.toggle('on', mergePhases);
+  e.currentTarget.setAttribute('aria-checked', String(mergePhases));
+  saveSettings();
+  lastNotesKey = null;
+  renderNotesGrid();
+});
+
+// ── Persisted UI settings (survive reloads) ─────────────────────────────────
+const SETTINGS_KEY = 'botc-companion-settings';
+
+function loadSettings() {
+  try {
+    const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+    if (s.colorSource === 'grimoire' || s.colorSource === 'notes') colorSource = s.colorSource;
+    if (typeof s.mergePhases === 'boolean') mergePhases = s.mergePhases;
+  } catch { /* localStorage unavailable / corrupt — use defaults */ }
+}
+
+function saveSettings() {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ colorSource, mergePhases }));
+  } catch { /* ignore */ }
+}
+
+function applySettingsToUI() {
+  const isNotes = colorSource === 'notes';
+  document.getElementById('ct-switch').setAttribute('aria-checked', String(isNotes));
+  document.getElementById('color-source-toggle').classList.toggle('ct-active', isNotes);
+  const ms = document.getElementById('merge-switch');
+  ms.classList.toggle('on', mergePhases);
+  ms.setAttribute('aria-checked', String(mergePhases));
+}
+
+loadSettings();
+applySettingsToUI();
+
+// Settings popup (gear): toggle on click, close on outside click
+(() => {
+  const btn = document.getElementById('settings-btn');
+  const popup = document.getElementById('settings-popup');
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = popup.classList.toggle('open');
+    btn.classList.toggle('open', open);
+  });
+  document.addEventListener('click', (e) => {
+    if (!popup.classList.contains('open')) return;
+    if (popup.contains(e.target) || e.target === btn) return;
+    popup.classList.remove('open');
+    btn.classList.remove('open');
+  });
+})();
+
+// Esc closes whatever popover/menu is open
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const chip = document.getElementById('token-popover');
+  if (chip && chip.style.display !== 'none') closePopover();
+  const role = document.getElementById('meta-role-popover');
+  if (role && role.style.display !== 'none') role.style.display = 'none';
+  const settings = document.getElementById('settings-popup');
+  if (settings?.classList.contains('open')) {
+    settings.classList.remove('open');
+    document.getElementById('settings-btn').classList.remove('open');
+  }
 });
 
 document.getElementById('ws-toggle').addEventListener('click', (e) => {
@@ -1647,10 +2118,13 @@ document.getElementById('clear-ws').addEventListener('click', () => {
 document.getElementById('clear-notes').addEventListener('click', () => {
   if (!confirm('Clear all notes?')) return;
   cellTokens = {};
+  // Keep materializedStatus: cleared death/revive chips stay cleared instead of
+  // being recreated from the timeline; only brand-new deaths will reappear.
   if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
     chrome.runtime.sendMessage({ type: 'CLEAR_TOKENS' });
   }
-  document.querySelectorAll('#notes-table .cell-chips').forEach(el => { el.innerHTML = ''; });
+  lastNotesKey = null;
+  renderNotesGrid();
 });
 
 window.__botc = { get state() { return currentState; }, get timeline() { return fullTimeline; }, get roles() { return revealedRoles; } };
@@ -1736,6 +2210,7 @@ function applyFullRefresh(response) {
   nameMap = response.nameMap ?? {};
   document.getElementById('timeline-log').innerHTML = '';
   cellTokens = response.cellTokens ?? {};
+  materializedStatus = new Set(response.materializedStatus ?? []);
   playerMeta = response.playerMeta ?? {};
   renderState(response.state);
   if (response.timeline?.length) addTimelineEvents(response.timeline);
@@ -1763,7 +2238,7 @@ chrome.runtime.onMessage.addListener((message) => {
           nameMap[id] = name;
         }
       }
-      renderState(payload.data); patchTimelineNames(); renderTimeline(); renderNotesGrid(); refreshPlayerTimeline();
+      renderState(payload.data); patchTimelineNames(); materializeStatusChips(); renderTimeline(); renderNotesGrid(); refreshPlayerTimeline();
       if (nameMapGrew) { renderNominations(); renderChats(); renderMessages(); refreshPlayerTimeline(); }
     }
     else if (payload.type === 'WS_RECV' || payload.type === 'WS_SEND') { touchWsHeartbeat(); appendWsEvent(payload); }

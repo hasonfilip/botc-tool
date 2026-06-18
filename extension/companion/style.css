@@ -50,8 +50,48 @@ header h1 { font-size: 16px; color: var(--accent); letter-spacing: 2px; white-sp
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 0 auto;
 }
+
+/* ── Settings popup (gear) ── */
+#settings-wrap { position: relative; display: flex; align-items: center; }
+#settings-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1;
+  padding: 5px 8px;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+}
+#settings-btn:hover { background: rgba(255,255,255,0.06); }
+#settings-btn.open { background: rgba(255,255,255,0.08); border-color: var(--accent); }
+
+#settings-popup {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+  padding: 12px 14px;
+  flex-direction: column;
+  gap: 14px;
+  z-index: 1002;
+  min-width: 210px;
+}
+#settings-popup.open { display: flex; }
+
+.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.settings-row-col { flex-direction: column; align-items: flex-start; gap: 6px; }
+.settings-row .ct-title { margin: 0; }
+
+/* Standalone on/off switch (e.g. merge day/night) */
+.ct-switch.on { background: var(--accent); }
+.ct-switch.on::after { transform: translateX(16px); }
 
 .ct-title {
   font-size: 9px;
@@ -567,6 +607,8 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 
 #notes-table th.notes-night { background: rgba(123,104,238,0.18); }
 #notes-table th.notes-day   { background: rgba(255,215,0,0.12); }
+/* Merged round column: blend the night (left) and day (right) tints */
+#notes-table th.notes-merged { background: linear-gradient(90deg, rgba(123,104,238,0.18), rgba(255,215,0,0.12)); }
 
 #notes-table td {
   border: 1px solid var(--border);
@@ -596,7 +638,7 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 .notes-meta-cell:hover { background: rgba(255,255,255,0.04); }
 
 .meta-role-chip { font-size: 11px; display: inline-flex; align-items: center; gap: 3px; padding: 2px 6px; }
-.meta-role-chip .tp-role-icon { width: 14px; height: 14px; object-fit: contain; }
+.meta-role-chip .tp-role-icon { width: 22px; height: 22px; object-fit: contain; }
 .meta-align-badge { font-size: 11px; font-weight: 700; padding: 1px 5px; border-radius: 4px; }
 .meta-good { color: var(--townsfolk); }
 .meta-evil { color: var(--demon); }
@@ -663,7 +705,7 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 .mrp-clear:hover { color: #e74c3c; }
 
 .notes-player-name {
-  padding: 8px 8px;
+  padding: 12px 8px;
   font-weight: 500;
   white-space: nowrap;
   font-size: 12px;
@@ -695,9 +737,9 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 .cell-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 3px;
-  padding: 4px;
-  min-height: 28px;
+  gap: 4px;
+  padding: 6px;
+  min-height: 42px;
   width: 100%;
   overflow: hidden;
 }
@@ -706,7 +748,7 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 
 .token-chip {
   font-size: 12px;
-  padding: 2px 7px;
+  padding: 6px 8px;
   border-radius: 8px;
   line-height: 1.2;
   white-space: normal;
@@ -722,9 +764,9 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 .token-chip:hover { opacity: 0.75; }
 
 .token-chip .tp-role-icon {
-  width: 20px;
-  height: 20px;
-  margin: -2px;
+  width: 28px;
+  height: 28px;
+  margin: -6px -4px;
 }
 
 .role-chip { background: var(--border); }
@@ -732,6 +774,31 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 .note-chip { background: rgba(255,255,255,0.06); color: var(--text); font-style: italic; }
 .ability-chip { background: rgba(99,102,241,0.12); border: 1px solid rgba(99,102,241,0.3); gap: 3px; flex-wrap: wrap; }
 .confirmed-chip { background: rgba(52,211,153,0.15); border: 1px solid rgba(52,211,153,0.35); color: var(--text); }
+
+/* Cell-color chips: a label chip whose colour also tints the cell (see below) */
+.cellcolor-chip { border: 1px solid; font-weight: 600; }
+.cellcolor-chip.cc-good      { background: rgba(74,158,255,0.20);  border-color: rgba(74,158,255,0.55);  color: #9ccaff; }
+.cellcolor-chip.cc-evil      { background: rgba(255,68,68,0.20);   border-color: rgba(255,68,68,0.55);   color: #ff9a9a; }
+.cellcolor-chip.cc-droisoned { background: rgba(154,205,50,0.22);  border-color: rgba(154,205,50,0.55);  color: #c6e87a; }
+
+/* Optional source (player / role) shown after the label */
+.cellcolor-chip .cc-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding-left: 6px;
+  border-left: 1px solid currentColor;
+  font-weight: 500;
+  opacity: 0.9;
+}
+.cellcolor-chip .cc-source .tp-role-icon { width: 22px; height: 22px; margin: -6px -2px; }
+/* Auto-propagated ("from now on") copies are dimmed + dashed to mark them inherited */
+.cellcolor-chip.cc-inherited { opacity: 0.6; border-style: dashed; }
+
+/* The tint applied to the whole cell (only the cell, not the row) */
+#notes-table td.notes-cell.cc-cell-good      { background: rgba(74,158,255,0.18); }
+#notes-table td.notes-cell.cc-cell-evil      { background: rgba(255,68,68,0.18); }
+#notes-table td.notes-cell.cc-cell-droisoned { background: rgba(154,205,50,0.20); }
 
 /* ── Ability chip value badges ── */
 .ab-val {
@@ -806,6 +873,29 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 
 .tp-note-input:focus { border-color: var(--accent); }
 
+.tp-source-section {
+  align-items: center;
+  gap: 8px;
+  padding-top: 2px;
+}
+.tp-source-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--muted);
+}
+.tp-fromnow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.tp-fromnow input { cursor: pointer; margin: 0; }
+
 .tp-status-tags {
   display: flex;
   gap: 2px;
@@ -823,6 +913,27 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
   transition: opacity 0.1s, border-color 0.1s;
 }
 .tp-tag-btn:hover { opacity: 1; border-color: var(--border); }
+
+.tp-color-tags {
+  display: flex;
+  gap: 2px;
+}
+.tp-color-btn {
+  border: 1px solid transparent;
+  border-radius: 5px;
+  width: 20px;
+  height: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity 0.1s, border-color 0.1s;
+}
+.tp-color-btn:hover { opacity: 1; }
+.tp-color-btn.cc-good      { background: rgba(74,158,255,0.25);  border-color: rgba(74,158,255,0.6);  color: #9ccaff; }
+.tp-color-btn.cc-evil      { background: rgba(255,68,68,0.25);   border-color: rgba(255,68,68,0.6);   color: #ff9a9a; }
+.tp-color-btn.cc-droisoned { background: rgba(154,205,50,0.28);  border-color: rgba(154,205,50,0.6);  color: #c6e87a; }
 
 .tp-x-btn {
   width: 24px;

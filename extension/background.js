@@ -20,7 +20,7 @@ async function sendToCompanion(msg) {
 
 const store = {
   async get() {
-    const data = await chrome.storage.session.get(['latestState', 'timeline', 'wsEvents', 'processedIds', 'nameMap', 'currentGameId', 'nominations', 'pendingNomination', 'chatSessions', 'cellTokens', 'playerMeta', 'textMessages', 'channelPresence']);
+    const data = await chrome.storage.session.get(['latestState', 'timeline', 'wsEvents', 'processedIds', 'nameMap', 'currentGameId', 'nominations', 'pendingNomination', 'chatSessions', 'cellTokens', 'materializedStatus', 'playerMeta', 'textMessages', 'channelPresence']);
     return {
       latestState: data.latestState ?? null,
       timeline: data.timeline ?? [],
@@ -32,6 +32,7 @@ const store = {
       pendingNomination: data.pendingNomination ?? null,
       chatSessions: data.chatSessions ?? [],
       cellTokens: data.cellTokens ?? {},
+      materializedStatus: data.materializedStatus ?? [],
       playerMeta: data.playerMeta ?? {},
       textMessages: data.textMessages ?? [],
       channelPresence: data.channelPresence ?? {},
@@ -285,7 +286,7 @@ function diffDeaths(prevPlayers, nextPlayers, processedIds, nameMap) {
 async function pushStateToCompanion() {
   const tabId = await resolveCompanionTabId();
   if (tabId === null) return;
-  const { latestState, timeline, wsEvents, nominations, chatSessions, nameMap, cellTokens, playerMeta, textMessages } = await store.get();
+  const { latestState, timeline, wsEvents, nominations, chatSessions, nameMap, cellTokens, materializedStatus, playerMeta, textMessages } = await store.get();
   chrome.tabs.sendMessage(tabId, {
     type: 'FULL_REFRESH',
     state: latestState,
@@ -295,6 +296,7 @@ async function pushStateToCompanion() {
     chatSessions,
     nameMap,
     cellTokens,
+    materializedStatus,
     playerMeta,
     textMessages,
   }).catch(() => {});
@@ -338,7 +340,7 @@ async function handleStatePayload(payload) {
   if (startEntry && startEntry.id !== currentGameId) {
     timeline.length = 0;
     processedIds.clear();
-    await store.set({ currentGameId: startEntry.id, nominations: [], pendingNomination: null, chatSessions: [], cellTokens: {}, textMessages: [], channelPresence: {} });
+    await store.set({ currentGameId: startEntry.id, nominations: [], pendingNomination: null, chatSessions: [], cellTokens: {}, materializedStatus: [], textMessages: [], channelPresence: {} });
   }
 
   const historyEvents = eventsFromHistory(history, nameMap, processedIds);
@@ -465,6 +467,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return;
   }
 
+  if (message.type === 'SAVE_MATERIALIZED_STATUS') {
+    enqueue(() => store.set({ materializedStatus: message.keys ?? [] }));
+    return;
+  }
+
   if (message.type === 'SAVE_PLAYER_META') {
     enqueue(async () => {
       const { playerMeta } = await store.get();
@@ -483,8 +490,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === 'GET_STATE') {
     (async () => {
-      const { latestState, timeline, wsEvents, nominations, chatSessions, nameMap, cellTokens, playerMeta, textMessages } = await store.get();
-      sendResponse({ state: latestState, timeline, wsEvents, nominations, chatSessions, nameMap, cellTokens, playerMeta, textMessages });
+      const { latestState, timeline, wsEvents, nominations, chatSessions, nameMap, cellTokens, materializedStatus, playerMeta, textMessages } = await store.get();
+      sendResponse({ state: latestState, timeline, wsEvents, nominations, chatSessions, nameMap, cellTokens, materializedStatus, playerMeta, textMessages });
       // Ask open botc.app tabs for a fresh push, injecting the bridge if missing
       const result = await connectToTabs();
       if (result === 'injected') await sendToCompanion({ type: 'PARTIAL_CONNECT' });

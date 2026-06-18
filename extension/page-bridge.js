@@ -118,6 +118,17 @@
       myUserId = payload.id ?? null;
     } catch {}
 
+    // Script roles: prefer the DOM script sheet (has icon URLs), but it only
+    // exists while the script panel is rendered — fall back to localStorage
+    // so role pickers keep working when the panel is closed. The companion
+    // resolves missing icons from its bundled data by role id.
+    const scrapedRoles = scrapeScriptRoles();
+    const storageRoles = (storage.roles ?? [])
+      .map(r => typeof r === 'string'
+        ? { id: r, name: null, team: '', iconUrl: null }
+        : (r?.id ? { id: r.id, name: r.name ?? null, team: r.team ?? '', iconUrl: r.image ?? null } : null))
+      .filter(Boolean);
+
     return {
       myUserId,
       phase: storage.game?.phase ?? null,
@@ -142,7 +153,7 @@
       storytellers: storage.storytellers ?? [],
       storytellerNames,
       spectators: scrapeSpectators(),
-      roles: scrapeScriptRoles(),
+      roles: scrapedRoles.length ? scrapedRoles : storageRoles,
       edition: storage.edition ?? null,
       bluffs: storage.bluffs ?? [],
       reminders: storage.reminders ?? [],

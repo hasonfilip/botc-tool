@@ -17,15 +17,26 @@
 			<span id="stat-edition"></span>
 		</div>
 		<div id="header-storytellers"></div>
-		<div id="color-source-toggle" class="color-toggle">
-			<span class="ct-title">source of truth:</span>
-			<span class="ct-label ct-left">grimoire</span>
-			<button class="ct-switch" id="ct-switch" role="switch" aria-checked="false"></button>
-			<span class="ct-label ct-right">notes</span>
-		</div>
 		<div id="ws-heartbeat" class="ws-heartbeat">
 			<span id="ws-heartbeat-timer"></span>
 			<span id="ws-heartbeat-msg"></span>
+		</div>
+		<div id="settings-wrap">
+			<button id="settings-btn" title="Settings" aria-label="Settings">⚙</button>
+			<div id="settings-popup">
+				<div class="settings-row settings-row-col">
+					<span class="ct-title">source of truth</span>
+					<div id="color-source-toggle" class="color-toggle">
+						<span class="ct-label ct-left">grimoire</span>
+						<button class="ct-switch" id="ct-switch" role="switch" aria-checked="false"></button>
+						<span class="ct-label ct-right">notes</span>
+					</div>
+				</div>
+				<div class="settings-row">
+					<span class="ct-title">merge day/night</span>
+					<button class="ct-switch on" id="merge-switch" role="switch" aria-checked="true"></button>
+				</div>
+			</div>
 		</div>
 	</header>
 
