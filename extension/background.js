@@ -463,7 +463,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === 'CLEAR_TOKENS') {
-    enqueue(() => store.set({ cellTokens: {} }));
+    enqueue(() => store.set({ cellTokens: {}, playerMeta: {} }));
     return;
   }
 

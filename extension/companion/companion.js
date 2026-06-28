@@ -2118,6 +2118,7 @@ document.getElementById('clear-ws').addEventListener('click', () => {
 document.getElementById('clear-notes').addEventListener('click', () => {
   if (!confirm('Clear all notes?')) return;
   cellTokens = {};
+  playerMeta = {};
   // Keep materializedStatus: cleared death/revive chips stay cleared instead of
   // being recreated from the timeline; only brand-new deaths will reappear.
   if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
