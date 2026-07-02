@@ -28,6 +28,10 @@ let playerMeta = {}; // { name: { roleId, roleName, roleTeam, roleIconUrl, align
 let lastNotesKey = '';
 let notesFixedColWidths = null; // { player, role, align } in px — set once, never shrunk
 let pinnedPlayers = new Set();
+let stMessage = [];
+let stRecipientIds = new Set();
+let viewRole = 'player'; // 'storyteller' | 'player' — auto-follows amIStoryteller() until user toggles explicitly
+let viewRoleUserSet = false;
 
 const PREDEFINED_TAGS = [
   { id: 'first-night-info',     label: 'first night' },
@@ -130,6 +134,16 @@ function renderState(state) {
   currentState = { ...state, roles: enrichRoles(state.roles) };
   document.getElementById('no-data-banner')?.remove();
 
+  if (!viewRoleUserSet) {
+    viewRole = amIStoryteller() ? 'storyteller' : 'player';
+    const isPlayer = viewRole === 'player';
+    const rs = document.getElementById('role-switch');
+    rs.classList.toggle('on', isPlayer);
+    rs.setAttribute('aria-checked', String(isPlayer));
+    document.getElementById('role-toggle').classList.toggle('ct-active', isPlayer);
+    applyViewRole();
+  }
+
   const phase = state.phase ? phaseLabel(state.phase) : '—';
   const phaseBadge = document.getElementById('phase-badge');
   phaseBadge.textContent = phase;
@@ -151,6 +165,8 @@ function renderState(state) {
   document.getElementById('stat-edition').textContent = state.edition?.edition?.name ?? '';
 
   applyHighlights(); applyPinnedHighlights();
+  renderSignalPlayers();
+  renderTimerPresets();
 }
 
 // ── Timeline ──────────────────────────────────────────────────────────────
@@ -322,10 +338,17 @@ function nominationAt(ts) {
   return best;
 }
 
+// botc.app assigns a literal "Seat N" name to a player when they join without a
+// nickname, but never updates that string if seats get shuffled/rotated afterward —
+// so a stored "Seat 3" can mean a player now actually sitting in seat 1. Treat that
+// pattern as a placeholder and always recompute it from the player's current seat.
+const isDefaultSeatName = (name) => typeof name === 'string' && /^seat \d+$/i.test(name.trim());
+const displayName = (p, seat) => (p?.name && !isDefaultSeatName(p.name)) ? p.name : `Seat ${(seat ?? p?.seat ?? -1) + 1}`;
+
 function seatName(seat) {
   if (!currentState?.players) return `Seat ${seat + 1}`;
   const p = currentState.players.find(p => p.seat === seat);
-  return p?.name ?? `Seat ${seat + 1}`;
+  return displayName(p, seat);
 }
 
 function gamePhaseAt(ts) {
@@ -432,6 +455,10 @@ function playerTeamByName(name) {
 function isStoryteller(userId) {
   if (userId === 'me') return false;
   return !!(currentState?.storytellers?.find(s => String(s.id) === String(userId)));
+}
+
+function amIStoryteller() {
+  return isStoryteller(currentState?.myUserId);
 }
 
 function resolveParticipant(userId) {
@@ -1939,6 +1966,656 @@ function renderNotesGrid() {
   applyHighlights(); applyPinnedHighlights();
 }
 
+// ── ST Panel ──────────────────────────────────────────────────────────────
+
+const SIGNAL_TOKEN_DEFS = [
+  { id: 'you',        label: 'You are',                       cls: '' },
+  { id: 'good',       label: 'good',                          cls: 'sig-chip-good' },
+  { id: 'evil',       label: 'evil',                          cls: 'sig-chip-evil' },
+  { id: 'yes',        label: '✓',                             cls: 'sig-chip-yes' },
+  { id: 'no',         label: '✗',                             cls: 'sig-chip-no' },
+  { id: 'acknowledge',label: '👍',                            cls: '' },
+  { id: 'ability',    label: 'Use your ability?',             cls: '' },
+  { id: 'choice',     label: 'Make a choice!',                cls: '' },
+  { id: 'bluffs',     label: 'Bluffs:',                       cls: '' },
+  { id: 'demon',      label: 'Demon is',                      cls: 'sig-chip-evil' },
+  { id: 'minions',    label: 'Minions are',                   cls: 'sig-chip-evil' },
+  { id: 'claim',      label: 'This player is',                cls: '' },
+  { id: 'selected',   label: 'This character selected you',   cls: '' },
+  { id: 'zero',       label: '0',                             cls: 'sig-chip-num' },
+  { id: 'one',        label: '1',                             cls: 'sig-chip-num' },
+  { id: 'two',        label: '2',                             cls: 'sig-chip-num' },
+  { id: 'three',      label: '3',                             cls: 'sig-chip-num' },
+  { id: 'four',       label: '4',                             cls: 'sig-chip-num' },
+  { id: 'five',       label: '5',                             cls: 'sig-chip-num' },
+];
+
+const SIGNAL_TOKEN_GROUPS = [
+  ['you', 'good', 'evil', 'zero', 'one', 'two', 'three', 'four', 'five', 'yes', 'no', 'acknowledge'],
+  ['ability', 'choice', 'bluffs', 'demon', 'minions', 'claim', 'selected'],
+];
+
+function signalTokenDef(id) {
+  return SIGNAL_TOKEN_DEFS.find(d => d.id === id);
+}
+
+function signalTokenLabel(token) {
+  if (token.id === 'role') return currentState?.roles?.find(r => r.id === token.data)?.name ?? token.data;
+  if (token.id === 'player') {
+    const p = currentState?.players?.find(p => p.seat === token.data);
+    return dn(displayName(p, token.data));
+  }
+  if (token.id === 'custom') return token.data;
+  return signalTokenDef(token.id)?.label ?? token.id;
+}
+
+function signalTokenCls(token) {
+  if (token.id === 'role')   return 'sig-chip sig-chip-role';
+  if (token.id === 'player') return 'sig-chip sig-chip-player';
+  if (token.id === 'custom') return 'sig-chip sig-chip-custom';
+  const cls = signalTokenDef(token.id)?.cls ?? '';
+  return ('sig-chip ' + cls).trim();
+}
+
+function renderSignalPreview() {
+  const el = document.getElementById('signal-preview');
+  if (!el) return;
+  if (!stMessage.length) {
+    el.innerHTML = '<span class="sig-empty">No tokens selected</span>';
+  } else {
+    el.innerHTML = stMessage.map((t, i) =>
+      `<span class="${signalTokenCls(t)}">${esc(signalTokenLabel(t))}<button class="sig-chip-remove" data-idx="${i}">×</button></span>`
+    ).join('');
+    el.querySelectorAll('.sig-chip-remove').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        stMessage.splice(Number(btn.dataset.idx), 1);
+        renderSignalPreview();
+        updateSignalSendBtn();
+      });
+    });
+  }
+}
+
+function updateSignalSendBtn() {
+  const btn = document.getElementById('signal-send-btn');
+  if (btn) btn.disabled = !stMessage.length || !stRecipientIds.size;
+}
+
+function renderSignalPlayers() {
+  const list = document.getElementById('signal-player-list');
+  const roleSelect = document.getElementById('signal-role-select');
+  const playerSelect = document.getElementById('signal-player-select');
+  if (!list || !currentState) return;
+
+  const players = (currentState.players ?? []).filter(p => p.id);
+
+  list.innerHTML = players.map(p => {
+    const name = esc(dn(displayName(p)));
+    const checked = stRecipientIds.has(String(p.id)) ? 'checked' : '';
+    return `<label class="sig-player-row"><input type="checkbox" data-id="${esc(String(p.id))}" ${checked} />${name}</label>`;
+  }).join('');
+
+  list.querySelectorAll('input[type=checkbox]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      if (cb.checked) stRecipientIds.add(cb.dataset.id);
+      else stRecipientIds.delete(cb.dataset.id);
+      const allCheck = document.getElementById('signal-all-check');
+      if (allCheck) allCheck.checked = players.length > 0 && stRecipientIds.size === players.length;
+      updateSignalSendBtn();
+    });
+  });
+
+  if (roleSelect) {
+    const prev = roleSelect.value;
+    roleSelect.innerHTML = '<option value="">+ role</option>' +
+      (currentState.roles ?? []).map(r => `<option value="${esc(r.id)}">${esc(r.name ?? r.id)}</option>`).join('');
+    roleSelect.value = prev;
+  }
+
+  if (playerSelect) {
+    const prev = playerSelect.value;
+    playerSelect.innerHTML = '<option value="">+ player</option>' +
+      (currentState.players ?? []).map(p =>
+        `<option value="${p.seat}">${esc(displayName(p))}</option>`
+      ).join('');
+    playerSelect.value = prev;
+  }
+
+  updateSignalSendBtn();
+}
+
+const TIMER_PRESETS = [
+  { label: 'Day ends', title: 'Day ends', minutes: 0, seconds: 10, pause: true },
+  { label: 'Private conversations', title: 'Private conversations', pause: null, dynamic: 'halfAlive' },
+];
+let customTimerPresets = []; // [{ label, title, minutes, seconds, pause }] — user-saved, persisted in settings
+
+function sendSetTimer({ title, minutes, seconds, isPausedDuringVotes }) {
+  const duration = (minutes * 60 + seconds) * 1000;
+  if (duration <= 0) return;
+  try {
+    chrome.runtime.sendMessage({ type: 'SET_TIMER', title, duration, isPausedDuringVotes, paused: 0 }, () => void chrome.runtime?.lastError);
+  } catch { /* dummy mode */ }
+}
+
+function renderTimerPresets() {
+  const wrap = document.getElementById('timer-presets');
+  if (!wrap) return;
+  const alive = (currentState?.players ?? []).filter(p => !p.isDead).length;
+
+  const builtin = TIMER_PRESETS.map(preset => {
+    if (preset.dynamic === 'halfAlive') {
+      const totalSeconds = Math.round((alive / 2) * 60);
+      return { ...preset, minutes: Math.floor(totalSeconds / 60), seconds: totalSeconds % 60 };
+    }
+    return preset;
+  });
+  const all = [...builtin.map(p => ({ ...p, custom: false })), ...customTimerPresets.map(p => ({ ...p, custom: true }))];
+
+  wrap.innerHTML = all.map((preset, i) =>
+    `<button type="button" class="timer-preset-btn" data-i="${i}">${esc(preset.label)} <span class="timer-preset-time">${preset.minutes}:${String(preset.seconds).padStart(2, '0')}</span>${preset.custom ? '<span class="timer-preset-remove" data-i="' + i + '">✕</span>' : ''}</button>`
+  ).join('');
+
+  const applyPreset = (preset) => {
+    document.getElementById('timer-title').value = preset.title;
+    document.getElementById('timer-minutes').value = preset.minutes;
+    document.getElementById('timer-seconds').value = preset.seconds;
+    if (preset.pause !== null) document.getElementById('timer-pause-votes').checked = preset.pause;
+    sendSetTimer({ title: preset.title, minutes: preset.minutes, seconds: preset.seconds, isPausedDuringVotes: preset.pause ?? document.getElementById('timer-pause-votes').checked });
+  };
+
+  wrap.querySelectorAll('.timer-preset-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      if (e.target.closest('.timer-preset-remove')) return;
+      applyPreset(all[Number(btn.dataset.i)]);
+    });
+  });
+  wrap.querySelectorAll('.timer-preset-remove').forEach(x => {
+    x.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const preset = all[Number(x.dataset.i)];
+      customTimerPresets = customTimerPresets.filter(p => p.id !== preset.id);
+      saveSettings();
+      renderTimerPresets();
+    });
+  });
+}
+
+function initSignalPanel() {
+  // Build token grid
+  const grid = document.getElementById('signal-token-grid');
+  if (grid) {
+    grid.innerHTML = SIGNAL_TOKEN_GROUPS.map(group =>
+      `<div class="sig-token-group">${group.map(id => {
+        const def = signalTokenDef(id);
+        return `<button class="sig-token-btn sig-token-${id}" data-id="${esc(id)}">${esc(def?.label ?? id)}</button>`;
+      }).join('')}</div>`
+    ).join('');
+    grid.querySelectorAll('.sig-token-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        stMessage.push({ id: btn.dataset.id });
+        renderSignalPreview();
+        updateSignalSendBtn();
+      });
+    });
+  }
+
+  document.getElementById('signal-role-select')?.addEventListener('change', function() {
+    if (!this.value) return;
+    stMessage.push({ id: 'role', data: this.value });
+    this.value = '';
+    renderSignalPreview();
+    updateSignalSendBtn();
+  });
+
+  document.getElementById('signal-player-select')?.addEventListener('change', function() {
+    if (this.value === '') return;
+    stMessage.push({ id: 'player', data: Number(this.value) });
+    this.value = '';
+    renderSignalPreview();
+    updateSignalSendBtn();
+  });
+
+  document.getElementById('signal-custom-input')?.addEventListener('keydown', function(e) {
+    if (e.key !== 'Enter' || !this.value.trim()) return;
+    stMessage.push({ id: 'custom', data: this.value.trim() });
+    this.value = '';
+    renderSignalPreview();
+    updateSignalSendBtn();
+  });
+
+  document.getElementById('signal-clear-btn')?.addEventListener('click', () => {
+    stMessage = [];
+    renderSignalPreview();
+    updateSignalSendBtn();
+  });
+
+  document.getElementById('signal-all-check')?.addEventListener('change', function() {
+    const players = (currentState?.players ?? []).filter(p => p.id);
+    stRecipientIds = new Set(this.checked ? players.map(p => String(p.id)) : []);
+    renderSignalPlayers();
+  });
+
+  document.getElementById('signal-send-btn')?.addEventListener('click', () => {
+    if (!stMessage.length || !stRecipientIds.size) return;
+    const userIds = [...stRecipientIds];
+    try {
+      chrome.runtime.sendMessage({ type: 'SEND_SIGNAL', userIds, message: stMessage }, () => void chrome.runtime?.lastError);
+    } catch { /* dummy mode */ }
+    stMessage = [];
+    renderSignalPreview();
+    updateSignalSendBtn();
+  });
+
+  document.getElementById('timer-set-btn')?.addEventListener('click', () => {
+    sendSetTimer({
+      title: document.getElementById('timer-title').value.trim(),
+      minutes: parseInt(document.getElementById('timer-minutes').value, 10) || 0,
+      seconds: parseInt(document.getElementById('timer-seconds').value, 10) || 0,
+      isPausedDuringVotes: document.getElementById('timer-pause-votes').checked,
+    });
+  });
+
+  document.getElementById('timer-clear-btn')?.addEventListener('click', () => {
+    const isPausedDuringVotes = document.getElementById('timer-pause-votes').checked;
+    try {
+      chrome.runtime.sendMessage({ type: 'SET_TIMER', title: '', duration: 0, isPausedDuringVotes, paused: 0 }, () => void chrome.runtime?.lastError);
+    } catch { /* dummy mode */ }
+  });
+
+  document.getElementById('timer-save-preset-btn')?.addEventListener('click', () => {
+    const title = document.getElementById('timer-title').value.trim();
+    const minutes = parseInt(document.getElementById('timer-minutes').value, 10) || 0;
+    const seconds = parseInt(document.getElementById('timer-seconds').value, 10) || 0;
+    const pause = document.getElementById('timer-pause-votes').checked;
+    if (!title || minutes * 60 + seconds <= 0) return;
+    customTimerPresets.push({ id: `${Date.now()}-${Math.random()}`, label: title, title, minutes, seconds, pause });
+    saveSettings();
+    renderTimerPresets();
+  });
+
+  const sendEndGame = (isEvilWin) => {
+    if (!confirm(`End the game with ${isEvilWin ? 'Evil' : 'Good'} winning?`)) return;
+    try {
+      chrome.runtime.sendMessage({ type: 'END_GAME', isEvilWin }, () => void chrome.runtime?.lastError);
+    } catch { /* dummy mode */ }
+  };
+  document.getElementById('endgame-good-btn')?.addEventListener('click', () => sendEndGame(false));
+  document.getElementById('endgame-evil-btn')?.addEventListener('click', () => sendEndGame(true));
+
+  document.getElementById('gong-btn')?.addEventListener('click', () => {
+    try {
+      chrome.runtime.sendMessage({ type: 'GONG' }, () => void chrome.runtime?.lastError);
+    } catch { /* dummy mode */ }
+  });
+
+  document.getElementById('seat-add-btn')?.addEventListener('click', () => {
+    try {
+      chrome.runtime.sendMessage({ type: 'ADD_SEAT' }, () => void chrome.runtime?.lastError);
+    } catch { /* dummy mode */ }
+  });
+
+  const sendSeatOrder = (order) => {
+    try {
+      chrome.runtime.sendMessage({ type: 'SHUFFLE_SEATS', order }, () => void chrome.runtime?.lastError);
+    } catch { /* dummy mode */ }
+  };
+
+  document.getElementById('seat-shuffle-btn')?.addEventListener('click', () => {
+    const n = (currentState?.players ?? []).length;
+    if (n < 2) return;
+    const order = [...Array(n).keys()];
+    for (let i = order.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [order[i], order[j]] = [order[j], order[i]];
+    }
+    sendSeatOrder(order);
+  });
+
+  // Direction is a best-effort guess (untested against the real clockwise/counterclockwise
+  // labeling) — if a button rotates the wrong way visually, swap these two formulas.
+  document.getElementById('seat-rotate-cw-btn')?.addEventListener('click', () => {
+    const n = (currentState?.players ?? []).length;
+    if (n < 2) return;
+    sendSeatOrder(Array.from({ length: n }, (_, j) => (j - 1 + n) % n));
+  });
+
+  document.getElementById('seat-rotate-ccw-btn')?.addEventListener('click', () => {
+    const n = (currentState?.players ?? []).length;
+    if (n < 2) return;
+    sendSeatOrder(Array.from({ length: n }, (_, j) => (j + 1) % n));
+  });
+
+  document.getElementById('seat-remove-empty-btn')?.addEventListener('click', () => {
+    if (!confirm('Remove all empty seats?')) return;
+    try {
+      chrome.runtime.sendMessage({ type: 'REMOVE_EMPTY_SEATS' }, () => void chrome.runtime?.lastError);
+    } catch { /* dummy mode */ }
+  });
+
+  document.getElementById('become-st-btn')?.addEventListener('click', () => {
+    try {
+      chrome.runtime.sendMessage({ type: 'BECOME_STORYTELLER' }, () => void chrome.runtime?.lastError);
+    } catch { /* dummy mode */ }
+  });
+
+  document.getElementById('stepdown-st-btn')?.addEventListener('click', () => {
+    if (!confirm('Step down as storyteller?')) return;
+    try {
+      chrome.runtime.sendMessage({ type: 'STEP_DOWN_STORYTELLER' }, () => void chrome.runtime?.lastError);
+    } catch { /* dummy mode */ }
+  });
+
+  let pendingScript = null;
+  const scriptFileInput = document.getElementById('script-file-input');
+  const scriptLoadBtn = document.getElementById('script-load-btn');
+
+  scriptFileInput?.addEventListener('change', async () => {
+    const file = scriptFileInput.files?.[0];
+    pendingScript = null;
+    scriptLoadBtn.disabled = true;
+    if (!file) return;
+    try {
+      pendingScript = parseScriptJson(JSON.parse(await file.text()), file.name.replace(/\.json$/i, ''));
+      scriptLoadBtn.disabled = false;
+    } catch {
+      alert('Could not parse this file as a script (expected the script-tool JSON export format).');
+    }
+  });
+
+  scriptLoadBtn?.addEventListener('click', () => {
+    if (!pendingScript) return;
+    sendLoadScript(pendingScript);
+  });
+
+  const scriptLibOverlay = document.getElementById('script-library-overlay');
+  document.getElementById('script-lib-open-btn')?.addEventListener('click', () => {
+    scriptLibOverlay.style.display = '';
+  });
+  document.getElementById('script-library-close')?.addEventListener('click', () => {
+    scriptLibOverlay.style.display = 'none';
+  });
+  document.getElementById('script-library-backdrop')?.addEventListener('click', () => {
+    scriptLibOverlay.style.display = 'none';
+  });
+
+}
+
+function parseScriptJson(json, fallbackName) {
+  if (!Array.isArray(json)) throw new Error('not an array');
+  const meta = json.find(r => r === '_meta' || r?.id === '_meta') || {};
+  const roles = json
+    .filter(r => r !== '_meta' && r?.id !== '_meta')
+    .map(r => (typeof r === 'string' ? { id: r } : r));
+  return { author: meta.author ?? '', name: meta.name ?? fallbackName, roles };
+}
+
+function sendLoadScript(script) {
+  try {
+    chrome.runtime.sendMessage({ type: 'LOAD_CUSTOM_SCRIPT', author: script.author, name: script.name, roles: script.roles }, () => void chrome.runtime?.lastError);
+  } catch { /* dummy mode */ }
+}
+
+// ── Script Library ──────────────────────────────────────────────────────────
+// Classifies a script role entry's team WITHOUT touching the shared _roleAliases
+// cache (registerRoleAlias/enrichRoles) — that cache is meant for the live game
+// session, and scanning a whole library through it would pollute it with
+// one-off mappings. Falls back to 'unclassified' rather than guessing wrong.
+function classifyScriptRoleTeam(entry) {
+  const id = typeof entry === 'string' ? entry : entry?.id;
+  const explicitName = typeof entry === 'object' ? entry.name : null;
+  const explicitTeam = typeof entry === 'object' ? entry.team : null;
+  if (!id) return { team: '', name: explicitName ?? '?', id: null };
+
+  // Find the canonical bundled role this entry resolves to, if any — done even
+  // when the script already supplies its own team/name (e.g. fanggucz has both
+  // an explicit team AND resolves to the canonical 'fanggu' for icon purposes).
+  const cleanId = id.replace(/^traveller_/, '').toLowerCase();
+  let canonical = _roles().find(x => x.id === cleanId);
+
+  if (!canonical && cleanId.includes('_')) {
+    canonical = _roles().find(x => x.id === cleanId.replace(/_/g, ''));
+  }
+
+  if (!canonical) {
+    // Wiki-style icon filename: Icon_fortune_teller.png → fortuneteller
+    const iconMatch = (entry?.iconUrl ?? '').match(/Icon_([a-z0-9_]+)\./i);
+    if (iconMatch) {
+      const guess = iconMatch[1].toLowerCase().replace(/_/g, '');
+      canonical = _roles().find(x => x.id === guess);
+    }
+  }
+
+  if (!canonical) {
+    // botc.app asset filename embedded in an `image` array (seen in fully-translated
+    // scripts where id/name bear no resemblance to English): .../washerwoman_g-HASH.webp
+    const images = Array.isArray(entry?.image) ? entry.image : [];
+    for (const url of images) {
+      const m = String(url).match(/\/([a-z0-9]+)_[ge](?:-|\.)/i);
+      if (m) { canonical = _roles().find(x => x.id === m[1].toLowerCase()); if (canonical) break; }
+    }
+  }
+
+  if (!canonical) {
+    // Fallback: longest canonical id the custom id starts with (fanggucz → fanggu)
+    for (const x of _roles()) {
+      if (cleanId.startsWith(x.id) && (!canonical || x.id.length > canonical.id.length)) canonical = x;
+    }
+  }
+
+  return {
+    team: explicitTeam || canonical?.team || '',
+    name: explicitName ?? canonical?.name ?? id,
+    id: canonical?.id ?? null,
+  };
+}
+
+// ── IndexedDB: persist the picked FileSystemDirectoryHandle (not string-serializable,
+// so it can't go through the localStorage-based settings like everything else here) ──
+const SCRIPT_LIB_DB = 'botc-companion-db';
+const SCRIPT_LIB_STORE = 'handles';
+
+function openScriptLibDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(SCRIPT_LIB_DB, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(SCRIPT_LIB_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function saveDirHandle(handle) {
+  const db = await openScriptLibDb();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(SCRIPT_LIB_STORE, 'readwrite');
+    tx.objectStore(SCRIPT_LIB_STORE).put(handle, 'scriptLibraryDir');
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function loadDirHandle() {
+  const db = await openScriptLibDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(SCRIPT_LIB_STORE, 'readonly');
+    const req = tx.objectStore(SCRIPT_LIB_STORE).get('scriptLibraryDir');
+    req.onsuccess = () => resolve(req.result ?? null);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+// ── Recursive scan ───────────────────────────────────────────────────────────
+async function scanScriptDir(dirHandle, category = null) {
+  const results = [];
+  for await (const [name, handle] of dirHandle.entries()) {
+    if (handle.kind === 'directory') {
+      results.push(...await scanScriptDir(handle, category ? `${category}/${name}` : name));
+    } else if (name.toLowerCase().endsWith('.json')) {
+      try {
+        const file = await handle.getFile();
+        const json = JSON.parse(await file.text());
+        const parsed = parseScriptJson(json, name.replace(/\.json$/i, ''));
+        const rolesByTeam = {};
+        for (const r of parsed.roles) {
+          const { team, name: roleName, id: roleId } = classifyScriptRoleTeam(r);
+          // Fabled and Loric are both non-player special roles — merge into one "NPCs" bucket
+          const key = (team === 'fabled' || team === 'loric') ? 'NPCs' : (team || 'unclassified');
+          (rolesByTeam[key] ??= []).push({ name: roleName, id: roleId });
+        }
+        const roleNames = Object.values(rolesByTeam).flat().map(r => r.name).filter(Boolean);
+        results.push({ ...parsed, category: category ?? 'Uncategorized', rolesByTeam, roleNames });
+      } catch { /* not a valid script file — skip it silently, library scan shouldn't halt on one bad file */ }
+    }
+  }
+  return results;
+}
+
+// ── UI ────────────────────────────────────────────────────────────────────────
+let scriptLibrary = [];
+let collapsedScriptCategories = new Set();
+
+function initScriptLibrary() {
+  const pickBtn = document.getElementById('script-lib-pick-btn');
+  const resumeBtn = document.getElementById('script-lib-resume-btn');
+  const rescanBtn = document.getElementById('script-lib-rescan-btn');
+  const statusEl = document.getElementById('script-lib-status');
+  const filtersEl = document.getElementById('script-library-filters');
+  const searchInput = document.getElementById('script-lib-search');
+  const resultsEl = document.getElementById('script-library-results');
+
+  let currentDirHandle = null;
+
+  const setStatus = (text) => { statusEl.textContent = text; };
+
+  async function runScan(dirHandle) {
+    setStatus('Scanning…');
+    try {
+      scriptLibrary = await scanScriptDir(dirHandle);
+      filtersEl.style.display = '';
+      rescanBtn.style.display = '';
+      setStatus(`${scriptLibrary.length} scripts`);
+      renderResults();
+    } catch (e) {
+      setStatus('Scan failed — folder may have been moved or access revoked.');
+    }
+  }
+
+  async function pickDirectory() {
+    try {
+      const handle = await window.showDirectoryPicker({ mode: 'read' });
+      currentDirHandle = handle;
+      await saveDirHandle(handle);
+      resumeBtn.style.display = 'none';
+      await runScan(handle);
+    } catch { /* user cancelled the picker */ }
+  }
+
+  pickBtn?.addEventListener('click', pickDirectory);
+  rescanBtn?.addEventListener('click', () => { if (currentDirHandle) runScan(currentDirHandle); });
+
+  resumeBtn?.addEventListener('click', async () => {
+    if (!currentDirHandle) return;
+    try {
+      const perm = await currentDirHandle.requestPermission({ mode: 'read' });
+      if (perm === 'granted') {
+        resumeBtn.style.display = 'none';
+        await runScan(currentDirHandle);
+      } else {
+        setStatus('Access denied — pick the folder again.');
+      }
+    } catch {
+      setStatus('Could not resume access — pick the folder again.');
+    }
+  });
+
+  function renderResults() {
+    const q = (searchInput.value ?? '').trim().toLowerCase();
+    const filtered = scriptLibrary.filter(s => {
+      if (!q) return true;
+      return s.name.toLowerCase().includes(q)
+        || s.author.toLowerCase().includes(q)
+        || s.roleNames.some(n => n.toLowerCase().includes(q));
+    });
+
+    const byCategory = {};
+    for (const s of filtered) (byCategory[s.category] ??= []).push(s);
+
+    resultsEl.innerHTML = Object.keys(byCategory).sort().map(cat => {
+      const items = byCategory[cat].map((s, i) => {
+        const rolesHtml = Object.entries(s.rolesByTeam).map(([t, roles]) => {
+          const chips = roles.map(r => {
+            const url = r.id ? _iconUrl({ id: r.id }) : null;
+            const icon = url ? `<img class="tp-role-icon" src="${esc(url)}" />` : '';
+            return `<span class="script-role-chip">${icon}${esc(r.name)}</span>`;
+          }).join('');
+          return `<div class="script-lib-role-team"><span class="script-team-label">${esc(t)}</span>${chips}</div>`;
+        }).join('');
+        return `<div class="script-lib-entry">
+          <div class="script-lib-row" data-cat="${esc(cat)}" data-idx="${i}">
+            <span class="script-lib-expand">▸</span>
+            <span class="script-lib-name">${esc(s.name)}</span>
+            <span class="script-lib-author">${esc(s.author)}</span>
+            <span class="script-lib-role-count">${s.roleNames.length} roles</span>
+            <button type="button" class="script-lib-apply" data-cat="${esc(cat)}" data-idx="${i}">Apply</button>
+          </div>
+          <div class="script-lib-roles" style="display:none">${rolesHtml}</div>
+        </div>`;
+      }).join('');
+      const isCollapsed = collapsedScriptCategories.has(cat);
+      return `<div class="script-lib-category${isCollapsed ? ' collapsed' : ''}">
+        <div class="script-lib-cat-header" data-cat="${esc(cat)}"><span class="script-lib-cat-chevron">▾</span>${esc(cat)} (${byCategory[cat].length})</div>
+        <div class="script-lib-cat-items">${items}</div>
+      </div>`;
+    }).join('') || '<div class="script-lib-empty">No scripts match.</div>';
+
+    resultsEl.querySelectorAll('.script-lib-cat-header').forEach(header => {
+      header.addEventListener('click', () => {
+        const catEl = header.closest('.script-lib-category');
+        const collapsing = !catEl.classList.contains('collapsed');
+        catEl.classList.toggle('collapsed', collapsing);
+        if (collapsing) collapsedScriptCategories.add(header.dataset.cat); else collapsedScriptCategories.delete(header.dataset.cat);
+      });
+    });
+
+    resultsEl.querySelectorAll('.script-lib-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const rolesEl = row.closest('.script-lib-entry').querySelector('.script-lib-roles');
+        const chevron = row.querySelector('.script-lib-expand');
+        const open = rolesEl.style.display !== 'none';
+        rolesEl.style.display = open ? 'none' : '';
+        chevron.textContent = open ? '▸' : '▾';
+      });
+    });
+
+    resultsEl.querySelectorAll('.script-lib-apply').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const script = byCategory[btn.dataset.cat][Number(btn.dataset.idx)];
+        sendLoadScript(script);
+        document.getElementById('script-library-overlay').style.display = 'none';
+      });
+    });
+  }
+
+  searchInput?.addEventListener('input', renderResults);
+
+  (async () => {
+    try {
+      const handle = await loadDirHandle();
+      if (!handle) return;
+      currentDirHandle = handle;
+      const perm = await handle.queryPermission({ mode: 'read' });
+      if (perm === 'granted') {
+        await runScan(handle);
+      } else {
+        setStatus('Script folder remembered — resume access to rescan.');
+        resumeBtn.style.display = '';
+      }
+    } catch { /* no stored handle, or IndexedDB unavailable — user can pick fresh */ }
+  })();
+}
+
 // ── WS heartbeat ──────────────────────────────────────────────────────────
 
 let lastWsTs = Date.now(); // start counting from page load so timer is always visible
@@ -2049,12 +2726,17 @@ function loadSettings() {
     const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
     if (s.colorSource === 'grimoire' || s.colorSource === 'notes') colorSource = s.colorSource;
     if (typeof s.mergePhases === 'boolean') mergePhases = s.mergePhases;
+    if (s.viewRole === 'storyteller' || s.viewRole === 'player') {
+      viewRole = s.viewRole;
+      viewRoleUserSet = true;
+    }
+    if (Array.isArray(s.customTimerPresets)) customTimerPresets = s.customTimerPresets;
   } catch { /* localStorage unavailable / corrupt — use defaults */ }
 }
 
 function saveSettings() {
   try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ colorSource, mergePhases }));
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ colorSource, mergePhases, viewRole: viewRoleUserSet ? viewRole : undefined, customTimerPresets }));
   } catch { /* ignore */ }
 }
 
@@ -2065,10 +2747,38 @@ function applySettingsToUI() {
   const ms = document.getElementById('merge-switch');
   ms.classList.toggle('on', mergePhases);
   ms.setAttribute('aria-checked', String(mergePhases));
+  const rs = document.getElementById('role-switch');
+  const isPlayer = viewRole === 'player';
+  rs.classList.toggle('on', isPlayer);
+  rs.setAttribute('aria-checked', String(isPlayer));
+  document.getElementById('role-toggle').classList.toggle('ct-active', isPlayer);
+  applyViewRole();
 }
+
+// Storyteller vs player view — auto-detected via amIStoryteller(), but always manually
+// toggleable since role detection and the ST-only feature set are still under development.
+function applyViewRole() {
+  const isStoryteller = viewRole === 'storyteller';
+  document.getElementById('st-tools-section')?.style.setProperty('display', isStoryteller ? '' : 'none');
+  document.getElementById('notes-section')?.style.setProperty('display', isStoryteller ? 'none' : '');
+}
+
+document.getElementById('role-switch').addEventListener('click', (e) => {
+  viewRole = viewRole === 'storyteller' ? 'player' : 'storyteller';
+  viewRoleUserSet = true;
+  const isPlayer = viewRole === 'player';
+  e.currentTarget.classList.toggle('on', isPlayer);
+  e.currentTarget.setAttribute('aria-checked', String(isPlayer));
+  document.getElementById('role-toggle').classList.toggle('ct-active', isPlayer);
+  saveSettings();
+  applyViewRole();
+});
 
 loadSettings();
 applySettingsToUI();
+initSignalPanel();
+renderTimerPresets();
+initScriptLibrary();
 
 // Settings popup (gear): toggle on click, close on outside click
 (() => {

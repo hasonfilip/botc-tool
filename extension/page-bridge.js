@@ -14,6 +14,11 @@
 
   const post = (payload) => window.postMessage({ source: 'botc-bridge', payload }, '*');
 
+  const getMyUserId = () => {
+    try { return JSON.parse(atob(localStorage.getItem('token').split('.')[1])).id ?? null; }
+    catch { return null; }
+  };
+
   // Only the keys buildState uses — this runs on every (debounced) DOM
   // mutation, so parsing the whole store would be wasted work
   const STORAGE_KEYS = ['game', 'players', 'roles', 'storytellers', 'edition', 'bluffs', 'reminders', 'timer', 'session', 'token'];
@@ -112,11 +117,7 @@
     const historyIds = (storage.game?.history ?? [])
       .find(h => h.type === 'start')?.data?.players?.map(p => p.id) ?? [];
 
-    let myUserId = null;
-    try {
-      const payload = JSON.parse(atob(storage.token.split('.')[1]));
-      myUserId = payload.id ?? null;
-    } catch {}
+    const myUserId = getMyUserId();
 
     // Script roles: prefer the DOM script sheet (has icon URLs), but it only
     // exists while the script panel is rendered — fall back to localStorage
@@ -135,13 +136,16 @@
       isRunning: storage.game?.isRunning ?? false,
       history: storage.game?.history ?? [],
       players: tokens.slice(0, playerCount).map((token, i) => {
-        const stored = (storage.players ?? []).find(p => p.seat === i) ?? { seat: i };
+        // Pair by array/DOM index, not by the stored .seat field — that field goes stale
+        // after movePlayers/removePlayers reorders the array (the array position IS the
+        // current seat; .seat is a leftover value that doesn't get updated on reorder).
+        const stored = (storage.players ?? [])[i] ?? { seat: i };
         const id = stored.id ?? historyIds[i] ?? null;
         const roleId = token.roleId || stored.role?.id || '';
         return {
           ...stored,
           id,
-          seat: stored.seat ?? i,
+          seat: i,
           name: playerNames[i]?.name ?? null,
           pronouns: playerNames[i]?.pronouns ?? null,
           roleId,
@@ -210,10 +214,88 @@
     startObserver();
   }
 
-  // ── Handle force-update requests from injector ────────────────────────────
+  // ── Handle commands from injector ────────────────────────────────────────
   window.addEventListener('message', (event) => {
     if (event.source !== window || event.data?.source !== 'botc-bridge-cmd') return;
-    if (event.data?.type === 'FORCE_UPDATE') sendState();
+    if (event.data?.type === 'FORCE_UPDATE') { sendState(); return; }
+    if (event.data?.type === 'SEND_SIGNAL') {
+      try {
+        const store = document.querySelector('#main')?.__vue_app__?.config?.globalProperties?.$store;
+        if (store) store.commit('session/addSignal', { userIds: event.data.userIds, message: event.data.message, isInbound: false });
+      } catch { /* page not ready or store unavailable */ }
+    }
+    if (event.data?.type === 'SET_TIMER') {
+      try {
+        const store = document.querySelector('#main')?.__vue_app__?.config?.globalProperties?.$store;
+        // Store expects an absolute expiration timestamp, not a relative duration —
+        // 0 is the sentinel for "no timer running" (produces a negative duration on the wire).
+        const expiration = event.data.duration > 0 ? Date.now() + event.data.duration : 0;
+        if (store) store.commit('session/setTimer', {
+          expiration,
+          title: event.data.title,
+          isPausedDuringVotes: event.data.isPausedDuringVotes,
+          paused: event.data.paused,
+        });
+      } catch { /* page not ready or store unavailable */ }
+    }
+    if (event.data?.type === 'END_GAME') {
+      try {
+        const store = document.querySelector('#main')?.__vue_app__?.config?.globalProperties?.$store;
+        if (store) store.commit('game/endGame', event.data.isEvilWin);
+      } catch { /* page not ready or store unavailable */ }
+    }
+    if (event.data?.type === 'GONG') {
+      try {
+        const store = document.querySelector('#main')?.__vue_app__?.config?.globalProperties?.$store;
+        if (store) store.dispatch('session/triggerHook', { name: 'attention-gong', delay: 1000 });
+      } catch { /* page not ready or store unavailable */ }
+    }
+    if (event.data?.type === 'ADD_SEAT') {
+      try {
+        const store = document.querySelector('#main')?.__vue_app__?.config?.globalProperties?.$store;
+        if (store) store.dispatch('players/addPlayer');
+      } catch { /* page not ready or store unavailable */ }
+    }
+    if (event.data?.type === 'SHUFFLE_SEATS') {
+      try {
+        const store = document.querySelector('#main')?.__vue_app__?.config?.globalProperties?.$store;
+        if (store) store.dispatch('players/movePlayers', event.data.order);
+      } catch { /* page not ready or store unavailable */ }
+    }
+    if (event.data?.type === 'REMOVE_EMPTY_SEATS') {
+      try {
+        const store = document.querySelector('#main')?.__vue_app__?.config?.globalProperties?.$store;
+        // Computed fresh from the real store state (id === null marks a vacant seat) rather
+        // than our scraped/derived state, which can drift and misidentify a filled seat as empty.
+        const indices = (store?.state?.players?.players ?? [])
+          .map((p, i) => (p.id === null ? i : null))
+          .filter(i => i !== null);
+        if (store && indices.length) store.dispatch('players/removePlayers', indices);
+      } catch { /* page not ready or store unavailable */ }
+    }
+    if (event.data?.type === 'BECOME_STORYTELLER') {
+      try {
+        const store = document.querySelector('#main')?.__vue_app__?.config?.globalProperties?.$store;
+        const myUserId = getMyUserId();
+        if (store && myUserId) store.commit('players/addStoryteller', { id: myUserId });
+      } catch { /* page not ready or store unavailable */ }
+    }
+    if (event.data?.type === 'STEP_DOWN_STORYTELLER') {
+      try {
+        const store = document.querySelector('#main')?.__vue_app__?.config?.globalProperties?.$store;
+        const myUserId = getMyUserId();
+        if (store && myUserId) store.commit('players/removeStoryteller', { id: myUserId });
+      } catch { /* page not ready or store unavailable */ }
+    }
+    if (event.data?.type === 'LOAD_CUSTOM_SCRIPT') {
+      try {
+        const store = document.querySelector('#main')?.__vue_app__?.config?.globalProperties?.$store;
+        if (!store) return;
+        store.dispatch('players/clearRoles', { clearNPCs: true });
+        store.commit('setCustomRoles', event.data.roles);
+        store.commit('setEdition', { edition: { author: event.data.author, name: event.data.name, isOfficial: false, id: 'custom' }, theme: 0 });
+      } catch { /* page not ready or store unavailable */ }
+    }
   });
 
   // ── Hook WebSocket ────────────────────────────────────────────────────────

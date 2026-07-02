@@ -481,6 +481,83 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return;
   }
 
+  if (message.type === 'SEND_SIGNAL') {
+    (async () => {
+      const tabs = await chrome.tabs.query({ url: 'https://botc.app/play*' });
+      for (const tab of tabs) {
+        chrome.tabs.sendMessage(tab.id, { type: 'SEND_SIGNAL', userIds: message.userIds, message: message.message }).catch(() => {});
+      }
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+
+  if (message.type === 'SET_TIMER') {
+    (async () => {
+      const tabs = await chrome.tabs.query({ url: 'https://botc.app/play*' });
+      for (const tab of tabs) {
+        chrome.tabs.sendMessage(tab.id, { type: 'SET_TIMER', title: message.title, duration: message.duration, isPausedDuringVotes: message.isPausedDuringVotes, paused: message.paused }).catch(() => {});
+      }
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+
+  if (message.type === 'END_GAME') {
+    (async () => {
+      const tabs = await chrome.tabs.query({ url: 'https://botc.app/play*' });
+      for (const tab of tabs) {
+        chrome.tabs.sendMessage(tab.id, { type: 'END_GAME', isEvilWin: message.isEvilWin }).catch(() => {});
+      }
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+
+  if (message.type === 'GONG') {
+    (async () => {
+      const tabs = await chrome.tabs.query({ url: 'https://botc.app/play*' });
+      for (const tab of tabs) {
+        chrome.tabs.sendMessage(tab.id, { type: 'GONG' }).catch(() => {});
+      }
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+
+  if (message.type === 'ADD_SEAT' || message.type === 'SHUFFLE_SEATS' || message.type === 'REMOVE_EMPTY_SEATS') {
+    (async () => {
+      const tabs = await chrome.tabs.query({ url: 'https://botc.app/play*' });
+      for (const tab of tabs) {
+        chrome.tabs.sendMessage(tab.id, { type: message.type, order: message.order, indices: message.indices }).catch(() => {});
+      }
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+
+  if (message.type === 'BECOME_STORYTELLER' || message.type === 'STEP_DOWN_STORYTELLER') {
+    (async () => {
+      const tabs = await chrome.tabs.query({ url: 'https://botc.app/play*' });
+      for (const tab of tabs) {
+        chrome.tabs.sendMessage(tab.id, { type: message.type }).catch(() => {});
+      }
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+
+  if (message.type === 'LOAD_CUSTOM_SCRIPT') {
+    (async () => {
+      const tabs = await chrome.tabs.query({ url: 'https://botc.app/play*' });
+      for (const tab of tabs) {
+        chrome.tabs.sendMessage(tab.id, { type: 'LOAD_CUSTOM_SCRIPT', author: message.author, name: message.name, roles: message.roles }).catch(() => {});
+      }
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+
   if (message.type === 'RECONNECT') {
     (async () => {
       sendResponse({ result: await connectToTabs() });
