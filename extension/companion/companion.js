@@ -2540,6 +2540,7 @@ function initScriptLibrary() {
 
     const byCategory = {};
     for (const s of filtered) (byCategory[s.category] ??= []).push(s);
+    for (const cat of Object.keys(byCategory)) byCategory[cat].sort((a, b) => a.name.localeCompare(b.name));
 
     resultsEl.innerHTML = Object.keys(byCategory).sort().map(cat => {
       const items = byCategory[cat].map((s, i) => {
