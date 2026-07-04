@@ -23,6 +23,8 @@ let mergePhases = true; // notes grid: one column per round (Night N + Day N) in
 let colorSource = 'grimoire'; // 'grimoire' | 'notes'
 let openPlayerTimelineName = null;
 let cellTokens = {};
+let playerActionMode = null; // null | 'nominate' | 'swap'
+let playerActionPickedSeat = null; // first seat picked during 'swap'/'nominate' mode
 let materializedStatus = new Set(); // event keys already turned into a status chip — never recreate, even after edit/delete
 let playerMeta = {}; // { name: { roleId, roleName, roleTeam, roleIconUrl, alignment } }
 let lastNotesKey = '';
@@ -141,9 +143,33 @@ function enrichRoles(roles) {
   });
 }
 
+// Sync grimoire roles into playerMeta: grimoire wins in grimoire mode, only
+// fills gaps in notes mode. Auto-synced entries are marked roleAuto so that
+// clearing the grimoire clears them too — manual assignments (popover) stick.
+function syncPlayerMetaFromGrimoire() {
+  for (const player of currentState?.players ?? []) {
+    const name = player.name ?? `Seat ${player.seat + 1}`;
+    const meta = playerMeta[name];
+    if (player.roleId && (colorSource === 'grimoire' || !meta?.roleId)) {
+      const roleObj = (currentState.roles ?? []).find(r => r.id === player.roleId);
+      playerMeta[name] = {
+        ...(meta ?? {}),
+        roleId: player.roleId,
+        roleName: player.roleName || roleObj?.name || player.roleId,
+        roleTeam: player.team || roleObj?.team || '',
+        roleIconUrl: _iconUrl(roleObj),
+        roleAuto: true,
+      };
+    } else if (!player.roleId && meta?.roleId && meta.roleAuto) {
+      playerMeta[name] = { ...meta, roleId: '', roleName: '', roleTeam: '', roleIconUrl: null, roleAuto: false };
+    }
+  }
+}
+
 function renderState(state) {
   if (!state) return;
   currentState = { ...state, roles: enrichRoles(state.roles) };
+  syncPlayerMetaFromGrimoire();
   document.getElementById('no-data-banner')?.remove();
 
   if (!viewRoleUserSet) {
@@ -178,7 +204,18 @@ function renderState(state) {
 
   applyHighlights(); applyPinnedHighlights();
   renderSignalPlayers();
+  refreshSignalHistoryPanel();
   renderTimerPresets();
+  renderPlayers();
+  renderNightOrder();
+  updateStRoleBtn();
+}
+
+function updateStRoleBtn() {
+  const btn = document.getElementById('st-role-btn');
+  if (!btn) return;
+  const isSt = amIStoryteller();
+  btn.textContent = isSt ? '🚪 Step Down' : '🧙 Become Storyteller';
 }
 
 // ── Timeline ──────────────────────────────────────────────────────────────
@@ -1588,6 +1625,7 @@ function openPopover(player, phase, anchorEl, chipIdx = null) {
 
 function savePlayerMeta(name) {
   sendBg({ type: 'SAVE_PLAYER_META', name, meta: playerMeta[name] ?? {} });
+  renderPlayers(); renderNightOrder(); // role assignments feed both role views
 }
 
 function metaNameColor(name) {
@@ -1642,7 +1680,7 @@ function getRolePopover() {
     if (!_roleTarget) return;
     const role = (currentState?.roles ?? []).find(r => r.id === roleId);
     if (!role) return;
-    playerMeta[_roleTarget] = { ...(playerMeta[_roleTarget] ?? {}), roleId: role.id, roleName: role.name, roleTeam: role.team ?? '', roleIconUrl: _iconUrl(role) };
+    playerMeta[_roleTarget] = { ...(playerMeta[_roleTarget] ?? {}), roleId: role.id, roleName: role.name, roleTeam: role.team ?? '', roleIconUrl: _iconUrl(role), roleAuto: false };
     savePlayerMeta(_roleTarget);
     refreshMetaCells(_roleTarget, { recolorPage: true });
     closePopover();
@@ -1698,7 +1736,7 @@ function getRolePopover() {
   clearBtn.addEventListener('mousedown', (e) => {
     e.preventDefault();
     if (!_roleTarget) return;
-    playerMeta[_roleTarget] = { ...(playerMeta[_roleTarget] ?? {}), roleId: '', roleName: '', roleTeam: '', roleIconUrl: null };
+    playerMeta[_roleTarget] = { ...(playerMeta[_roleTarget] ?? {}), roleId: '', roleName: '', roleTeam: '', roleIconUrl: null, roleAuto: false };
     savePlayerMeta(_roleTarget);
     refreshMetaCells(_roleTarget, { recolorPage: true });
     closePopover();
@@ -1729,6 +1767,108 @@ function openRolePopover(name, anchorEl) {
   pop.style.left = `${Math.max(8, Math.min(rect.left + window.scrollX, window.innerWidth - pop.offsetWidth - 8))}px`;
 
   list.querySelector('.mrp-item.active')?.scrollIntoView({ block: 'nearest' });
+  search.focus();
+}
+
+// ── Signal role popover — same searchable icon list as the Notes role picker,
+// but selecting a role pushes a {id:'role'} signal token instead of setting
+// a player's meta role. Kept separate from getRolePopover/_roleTarget since
+// that one is tightly coupled to playerMeta semantics.
+let _sigRolePop = null;
+
+function getSignalRolePopover() {
+  if (_sigRolePop) return _sigRolePop;
+  _sigRolePop = document.createElement('div');
+  _sigRolePop.id = 'signal-role-popover';
+  _sigRolePop.className = 'mrp-popover';
+  _sigRolePop.innerHTML = `
+    <input class="mrp-search" type="text" placeholder="Search…" />
+    <div class="mrp-list"></div>
+  `;
+  document.body.appendChild(_sigRolePop);
+
+  const search = _sigRolePop.querySelector('.mrp-search');
+  const list = _sigRolePop.querySelector('.mrp-list');
+
+  const closePopover = () => { _sigRolePop.style.display = 'none'; };
+
+  const selectRole = (roleId) => {
+    const role = (currentState?.roles ?? []).find(r => r.id === roleId);
+    if (!role) return;
+    stMessage.push({ id: 'role', data: role.id });
+    renderSignalPreview();
+    updateSignalSendBtn();
+    closePopover();
+  };
+
+  const renderList = (filter) => {
+    const roles = (currentState?.roles ?? []).filter(r =>
+      !filter || r.name.toLowerCase().includes(filter.toLowerCase()));
+    list.innerHTML = roles.map(r => {
+      const icon = _iconUrl(r) ? `<img class="tp-role-icon" src="${esc(_iconUrl(r))}" />` : '';
+      return `<div class="mrp-item role-name ${r.team ?? ''}" data-id="${esc(r.id)}" tabindex="-1">${icon}${esc(r.name)}</div>`;
+    }).join('');
+    list.querySelectorAll('.mrp-item').forEach(item => {
+      item.addEventListener('mousedown', (e) => { e.preventDefault(); selectRole(item.dataset.id); });
+    });
+  };
+
+  _sigRolePop._renderList = renderList;
+
+  search.addEventListener('input', () => renderList(search.value));
+
+  search.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      list.querySelector('.mrp-item')?.focus();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const first = list.querySelector('.mrp-item');
+      if (first) selectRole(first.dataset.id);
+    } else if (e.key === 'Escape') {
+      closePopover();
+    }
+  });
+
+  list.addEventListener('keydown', (e) => {
+    const items = [...list.querySelectorAll('.mrp-item')];
+    const idx = items.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      items[idx + 1]?.focus();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (idx > 0) items[idx - 1].focus(); else search.focus();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (idx >= 0) selectRole(items[idx].dataset.id);
+    } else if (e.key === 'Escape') {
+      closePopover();
+    }
+  });
+
+  document.addEventListener('mousedown', (e) => {
+    if (_sigRolePop.style.display !== 'none' && !_sigRolePop.contains(e.target) && !e.target.closest('#signal-role-btn')) {
+      closePopover();
+    }
+  });
+  return _sigRolePop;
+}
+
+function openSignalRolePopover(anchorEl) {
+  const pop = getSignalRolePopover();
+  const search = pop.querySelector('.mrp-search');
+  search.value = '';
+  pop._renderList('');
+  pop.style.display = 'flex';
+
+  const rect = anchorEl.getBoundingClientRect();
+  const spaceBelow = window.innerHeight - rect.bottom;
+  pop.style.top = spaceBelow > 200
+    ? `${rect.bottom + window.scrollY + 2}px`
+    : `${rect.top + window.scrollY - pop.offsetHeight - 2}px`;
+  pop.style.left = `${Math.max(8, Math.min(rect.left + window.scrollX, window.innerWidth - pop.offsetWidth - 8))}px`;
+
   search.focus();
 }
 
@@ -1898,18 +2038,6 @@ function renderNotesGrid() {
     const name = player.name ?? `Seat ${player.seat + 1}`;
     const isTraveller = player.team === 'traveller';
 
-    // Sync role from grimoire: always in grimoire mode, only when empty in notes mode
-    if (player.roleId && (colorSource === 'grimoire' || !playerMeta[name]?.roleId)) {
-      const roleObj = (currentState.roles ?? []).find(r => r.id === player.roleId);
-      playerMeta[name] = {
-        ...(playerMeta[name] ?? {}),
-        roleId: player.roleId,
-        roleName: player.roleName || roleObj?.name || player.roleId,
-        roleTeam: player.team || roleObj?.team || '',
-        roleIconUrl: _iconUrl(roleObj),
-      };
-    }
-
     const meta = playerMeta[name] ?? {};
     const color = metaNameColor(name);
     const tint = metaRowTint(name);
@@ -2005,8 +2133,8 @@ const SIGNAL_TOKEN_DEFS = [
   { id: 'you',        label: 'You are',                       cls: '' },
   { id: 'good',       label: 'good',                          cls: 'sig-chip-good' },
   { id: 'evil',       label: 'evil',                          cls: 'sig-chip-evil' },
-  { id: 'yes',        label: '✓',                             cls: 'sig-chip-yes' },
-  { id: 'no',         label: '✗',                             cls: 'sig-chip-no' },
+  { id: 'yes',        label: 'yes',                           cls: 'sig-chip-yes' },
+  { id: 'no',         label: 'no',                            cls: 'sig-chip-no' },
   { id: 'acknowledge',label: '👍',                            cls: '' },
   { id: 'ability',    label: 'Use your ability?',             cls: '' },
   { id: 'choice',     label: 'Make a choice!',                cls: '' },
@@ -2023,10 +2151,19 @@ const SIGNAL_TOKEN_DEFS = [
   { id: 'five',       label: '5',                             cls: 'sig-chip-num' },
 ];
 
-const SIGNAL_TOKEN_GROUPS = [
-  ['you', 'good', 'evil', 'zero', 'one', 'two', 'three', 'four', 'five', 'yes', 'no', 'acknowledge'],
-  ['ability', 'choice', 'bluffs', 'demon', 'minions', 'claim', 'selected'],
-];
+// Split into "self report" (You are evil, role X, Bluffs: ...) and "other
+// player report" (This player is X, Demon is Y) — these two sets are rarely
+// mixed in the same signal, so they get their own column each; everything
+// else (yes/no/numbers/prompts) is general-purpose and sits below both.
+// Split into "self report" (You are evil, role X, Bluffs: ...) and "other
+// player report" (This player is X, Demon is Y) — these two sets are rarely
+// mixed in the same signal, so they get their own column each; everything
+// else (yes/no/numbers/prompts) is general-purpose and sits below both.
+const SIGNAL_TOKEN_COLUMNS = {
+  left: ['you',  'selected', 'good', 'evil', 'bluffs'],
+  right: ['claim', 'demon', 'minions'],
+  center: ['ability', 'choice', 'yes', 'no', 'acknowledge', 'zero', 'one', 'two', 'three', 'four', 'five'],
+};
 
 function signalTokenDef(id) {
   return SIGNAL_TOKEN_DEFS.find(d => d.id === id);
@@ -2075,9 +2212,158 @@ function updateSignalSendBtn() {
   if (btn) btn.disabled = !stMessage.length || !stRecipientIds.size;
 }
 
+// session.signals is keyed by recipient — "storyteller" mirrors outbound-only
+// signals (a convenience subset), while each real user id holds the full
+// two-way conversation with that player. Skip the mirror key to avoid
+// double-counting the same signal.
+// Signals aren't normally sent during the day, but if one is, attribute it to
+// the preceding night (same round) rather than giving Day its own group.
+function signalNightGroup(ts) {
+  const label = gamePhaseAt(ts);
+  return label.startsWith('Day ') ? 'Night ' + label.slice(4) : label;
+}
+
+function getPlayerSignalEntries(userId) {
+  const list = currentState?.signals?.[userId] ?? [];
+  return [...list].sort((a, b) => a.timestamp - b.timestamp);
+}
+
+// Entries are expected time-ordered — consecutive same-night entries form
+// contiguous chunks, so no separate sort is needed here.
+function groupSignalEntriesByNight(entries) {
+  const nightGroups = [];
+  for (const e of entries) {
+    const night = signalNightGroup(e.timestamp);
+    const last = nightGroups[nightGroups.length - 1];
+    if (last && last.night === night) last.entries.push(e);
+    else nightGroups.push({ night, entries: [e] });
+  }
+  return nightGroups;
+}
+
+function renderSignalNightGroupsHtml(nightGroups) {
+  return nightGroups.map(ng => {
+    const rows = ng.entries.map(e => {
+      const time = new Date(e.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+      const dir = e.isInbound ? '←' : '→';
+      const tokens = (e.message ?? []).map(t => `<span class="${signalTokenCls(t)}">${esc(signalTokenLabel(t))}</span>`).join('');
+      return `<li class="sig-log-row${e.isInbound ? ' sig-log-inbound' : ''}">
+        <span class="sig-log-time">${time}</span>
+        <span class="sig-log-dir">${dir}</span>
+        <span class="sig-log-tokens">${tokens}</span>
+      </li>`;
+    }).join('');
+    return `<div class="sig-log-night">
+      <div class="sig-log-night-label">${esc(ng.night)}</div>
+      <ul class="sig-log-rows">${rows}</ul>
+    </div>`;
+  }).join('');
+}
+
+// ── Signal history popover (used by night order rows + player table) ───────
+
+let _sigPop = null;
+
+function getSignalPopover() {
+  if (_sigPop) return _sigPop;
+  _sigPop = document.createElement('div');
+  _sigPop.id = 'signal-popover';
+  document.body.appendChild(_sigPop);
+  document.addEventListener('mousedown', (e) => {
+    if (_sigPop.style.display !== 'none' && !_sigPop.contains(e.target) && !e.target.closest('.sig-hist-holder')) {
+      _sigPop.style.display = 'none';
+    }
+  });
+  return _sigPop;
+}
+
+function closeSignalPopover() {
+  if (_sigPop) _sigPop.style.display = 'none';
+}
+
+// night: pass a "Night N" label to scope to just that night (night order rows);
+// omit for the player table's "whole history" view.
+function openSignalPopover(userId, anchorEl, night = null) {
+  const pop = getSignalPopover();
+  const entries = getPlayerSignalEntries(userId).filter(e => !night || signalNightGroup(e.timestamp) === night);
+  const title = night ? `${dn(resolveParticipant(userId))} — ${night}` : dn(resolveParticipant(userId));
+  const body = entries.length
+    ? renderSignalNightGroupsHtml(night ? [{ night, entries }] : groupSignalEntriesByNight(entries))
+    : '<div class="sig-log-empty">No signals</div>';
+  pop.innerHTML = `<div class="sig-pop-title">${esc(title)}</div><div class="sig-pop-body">${body}</div>`;
+  pop.style.display = 'block';
+
+  const rect = anchorEl.getBoundingClientRect();
+  const spaceBelow = window.innerHeight - rect.bottom;
+  pop.style.top = spaceBelow > 220
+    ? `${rect.bottom + window.scrollY + 4}px`
+    : `${rect.top + window.scrollY - pop.offsetHeight - 4}px`;
+  pop.style.left = `${Math.max(8, Math.min(rect.left + window.scrollX, window.innerWidth - pop.offsetWidth - 8))}px`;
+}
+
+// ── Signal history sidebar (whole history — can get long, so it gets the same
+// slide-out side panel treatment as the player event timeline). userId=null
+// means "all players", which is what the Signal panel's history button opens.
+
+function buildAllPlayersSignalHtml() {
+  const signals = currentState?.signals ?? {};
+  const byPlayer = Object.keys(signals)
+    .filter(userId => userId !== 'storyteller')
+    .map(userId => ({ userId, name: resolveParticipant(userId), entries: getPlayerSignalEntries(userId) }))
+    .filter(g => g.entries.length)
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  if (!byPlayer.length) return '<div class="sig-log-empty">No signals yet</div>';
+
+  return byPlayer.map(g => `<div class="sig-log-group">
+    <div class="sig-log-player">${esc(dn(g.name))}</div>
+    ${renderSignalNightGroupsHtml(groupSignalEntriesByNight(g.entries))}
+  </div>`).join('');
+}
+
+let signalHistoryOpen = false;
+let openSignalHistoryUserId = null; // null while open means "all players" mode
+
+function openSignalHistoryPanel(userId = null) {
+  signalHistoryOpen = true;
+  openSignalHistoryUserId = userId;
+  const panel = document.getElementById('signal-history-panel');
+  const overlay = document.getElementById('signal-history-overlay');
+
+  if (userId) {
+    document.getElementById('sighist-name').textContent = dn(resolveParticipant(userId));
+    const entries = getPlayerSignalEntries(userId);
+    document.getElementById('sighist-body').innerHTML = entries.length
+      ? renderSignalNightGroupsHtml(groupSignalEntriesByNight(entries))
+      : '<div class="sig-log-empty">No signals</div>';
+  } else {
+    document.getElementById('sighist-name').textContent = 'Signal History';
+    document.getElementById('sighist-body').innerHTML = buildAllPlayersSignalHtml();
+  }
+
+  overlay.classList.add('open');
+  panel.classList.add('open');
+  requestAnimationFrame(() => overlay.classList.add('visible'));
+}
+
+function closeSignalHistoryPanel() {
+  signalHistoryOpen = false;
+  openSignalHistoryUserId = null;
+  document.getElementById('signal-history-panel').classList.remove('open');
+  const overlay = document.getElementById('signal-history-overlay');
+  overlay.classList.remove('visible');
+  overlay.addEventListener('transitionend', () => overlay.classList.remove('open'), { once: true });
+}
+
+function refreshSignalHistoryPanel() {
+  if (signalHistoryOpen) openSignalHistoryPanel(openSignalHistoryUserId);
+}
+
+document.getElementById('sighist-close').addEventListener('click', closeSignalHistoryPanel);
+document.getElementById('signal-history-overlay').addEventListener('click', closeSignalHistoryPanel);
+
 function renderSignalPlayers() {
   const list = document.getElementById('signal-player-list');
-  const roleSelect = document.getElementById('signal-role-select');
   const playerSelect = document.getElementById('signal-player-select');
   if (!list || !currentState) return;
 
@@ -2098,13 +2384,6 @@ function renderSignalPlayers() {
       updateSignalSendBtn();
     });
   });
-
-  if (roleSelect) {
-    const prev = roleSelect.value;
-    roleSelect.innerHTML = '<option value="">+ role</option>' +
-      (currentState.roles ?? []).map(r => `<option value="${esc(r.id)}">${esc(r.name ?? r.id)}</option>`).join('');
-    roleSelect.value = prev;
-  }
 
   if (playerSelect) {
     const prev = playerSelect.value;
@@ -2149,10 +2428,6 @@ function renderTimerPresets() {
   ).join('');
 
   const applyPreset = (preset) => {
-    document.getElementById('timer-title').value = preset.title;
-    document.getElementById('timer-minutes').value = preset.minutes;
-    document.getElementById('timer-seconds').value = preset.seconds;
-    if (preset.pause !== null) document.getElementById('timer-pause-votes').checked = preset.pause;
     sendSetTimer({ title: preset.title, minutes: preset.minutes, seconds: preset.seconds, isPausedDuringVotes: preset.pause ?? document.getElementById('timer-pause-votes').checked });
   };
 
@@ -2174,16 +2449,15 @@ function renderTimerPresets() {
 }
 
 function initSignalPanel() {
-  // Build token grid
-  const grid = document.getElementById('signal-token-grid');
-  if (grid) {
-    grid.innerHTML = SIGNAL_TOKEN_GROUPS.map(group =>
-      `<div class="sig-token-group">${group.map(id => {
-        const def = signalTokenDef(id);
-        return `<button class="sig-token-btn sig-token-${id}" data-id="${esc(id)}">${esc(def?.label ?? id)}</button>`;
-      }).join('')}</div>`
-    ).join('');
-    grid.querySelectorAll('.sig-token-btn').forEach(btn => {
+  // Build the three token columns (left/right/center — see SIGNAL_TOKEN_COLUMNS)
+  for (const [col, ids] of Object.entries(SIGNAL_TOKEN_COLUMNS)) {
+    const el = document.getElementById(`sig-col-${col}`);
+    if (!el) continue;
+    el.innerHTML = ids.map(id => {
+      const def = signalTokenDef(id);
+      return `<button class="sig-token-btn sig-token-${id}" data-id="${esc(id)}">${esc(def?.label ?? id)}</button>`;
+    }).join('');
+    el.querySelectorAll('.sig-token-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         stMessage.push({ id: btn.dataset.id });
         renderSignalPreview();
@@ -2192,12 +2466,8 @@ function initSignalPanel() {
     });
   }
 
-  document.getElementById('signal-role-select')?.addEventListener('change', function() {
-    if (!this.value) return;
-    stMessage.push({ id: 'role', data: this.value });
-    this.value = '';
-    renderSignalPreview();
-    updateSignalSendBtn();
+  document.getElementById('signal-role-btn')?.addEventListener('click', (e) => {
+    openSignalRolePopover(e.currentTarget);
   });
 
   document.getElementById('signal-player-select')?.addEventListener('change', function() {
@@ -2208,13 +2478,21 @@ function initSignalPanel() {
     updateSignalSendBtn();
   });
 
-  document.getElementById('signal-custom-input')?.addEventListener('keydown', function(e) {
-    if (e.key !== 'Enter' || !this.value.trim()) return;
-    stMessage.push({ id: 'custom', data: this.value.trim() });
-    this.value = '';
+  const addCustomSignalToken = () => {
+    const input = document.getElementById('signal-custom-input');
+    if (!input || !input.value.trim()) return;
+    stMessage.push({ id: 'custom', data: input.value.trim() });
+    input.value = '';
     renderSignalPreview();
     updateSignalSendBtn();
+  };
+
+  document.getElementById('signal-custom-input')?.addEventListener('keydown', function(e) {
+    if (e.key !== 'Enter') return;
+    addCustomSignalToken();
   });
+
+  document.getElementById('signal-custom-add-btn')?.addEventListener('click', addCustomSignalToken);
 
   document.getElementById('signal-clear-btn')?.addEventListener('click', () => {
     stMessage = [];
@@ -2236,6 +2514,8 @@ function initSignalPanel() {
     renderSignalPreview();
     updateSignalSendBtn();
   });
+
+  document.getElementById('signal-history-open-btn')?.addEventListener('click', () => openSignalHistoryPanel());
 
   document.getElementById('timer-set-btn')?.addEventListener('click', () => {
     sendSetTimer({
@@ -2273,15 +2553,15 @@ function initSignalPanel() {
     sendBg({ type: 'GONG' });
   });
 
-  document.getElementById('seat-add-btn')?.addEventListener('click', () => {
-    sendBg({ type: 'ADD_SEAT' });
+  document.getElementById('next-phase-btn')?.addEventListener('click', () => {
+    sendBg({ type: 'NEXT_PHASE' });
   });
 
   const sendSeatOrder = (order) => {
     sendBg({ type: 'SHUFFLE_SEATS', order });
   };
 
-  document.getElementById('seat-shuffle-btn')?.addEventListener('click', () => {
+  const shuffleSeats = () => {
     const n = (currentState?.players ?? []).length;
     if (n < 2) return;
     const order = [...Array(n).keys()];
@@ -2290,35 +2570,36 @@ function initSignalPanel() {
       [order[i], order[j]] = [order[j], order[i]];
     }
     sendSeatOrder(order);
-  });
+  };
+  document.getElementById('players-shuffle-btn')?.addEventListener('click', shuffleSeats);
 
   // Direction is a best-effort guess (untested against the real clockwise/counterclockwise
   // labeling) — if a button rotates the wrong way visually, swap these two formulas.
-  document.getElementById('seat-rotate-cw-btn')?.addEventListener('click', () => {
+  document.getElementById('players-rotate-cw-btn')?.addEventListener('click', () => {
     const n = (currentState?.players ?? []).length;
     if (n < 2) return;
     sendSeatOrder(Array.from({ length: n }, (_, j) => (j - 1 + n) % n));
   });
 
-  document.getElementById('seat-rotate-ccw-btn')?.addEventListener('click', () => {
+  document.getElementById('players-rotate-ccw-btn')?.addEventListener('click', () => {
     const n = (currentState?.players ?? []).length;
     if (n < 2) return;
     sendSeatOrder(Array.from({ length: n }, (_, j) => (j + 1) % n));
   });
 
-  document.getElementById('seat-remove-empty-btn')?.addEventListener('click', () => {
+  const removeEmptySeats = () => {
     if (!confirm('Remove all empty seats?')) return;
     sendBg({ type: 'REMOVE_EMPTY_SEATS' });
-  });
+  };
+  document.getElementById('players-remove-empty-btn')?.addEventListener('click', removeEmptySeats);
 
-  document.getElementById('become-st-btn')?.addEventListener('click', () => {
-    sendBg({ type: 'BECOME_STORYTELLER' });
+  document.getElementById('players-nominate-btn')?.addEventListener('click', () => setPlayerActionMode('nominate'));
+  document.getElementById('players-swap-btn')?.addEventListener('click', () => setPlayerActionMode('swap'));
+  document.getElementById('clear-grimoire-btn')?.addEventListener('click', () => {
+    if (!confirm('Clear the grimoire? This removes all roles, reminders, and status from every player.')) return;
+    sendBg({ type: 'CLEAR_GRIMOIRE' });
   });
-
-  document.getElementById('stepdown-st-btn')?.addEventListener('click', () => {
-    if (!confirm('Step down as storyteller?')) return;
-    sendBg({ type: 'STEP_DOWN_STORYTELLER' });
-  });
+  initAddSeatFloatButton();
 
   let pendingScript = null;
   const scriptFileInput = document.getElementById('script-file-input');
@@ -2685,6 +2966,249 @@ function appendWsEvent(payload) {
   if (atBottom) list.scrollTop = list.scrollHeight;
 }
 
+// ── Player list ───────────────────────────────────────────────────────────
+// Seat / player / role table. Role comes from the grimoire token or the
+// notes-grid assignment, honoring the source-of-truth setting.
+
+function playerRoleInfo(p, name) {
+  const meta = playerMeta[name] ?? {};
+  const roleId = (colorSource === 'notes' ? (meta.roleId || p.roleId) : (p.roleId || meta.roleId)) || '';
+  if (!roleId) return null;
+  const role = _roles().find(r => r.id === _normalizeId(roleId));
+  return {
+    name: role?.name ?? meta.roleName ?? p.roleName ?? roleId,
+    team: role?.team ?? meta.roleTeam ?? p.team ?? '',
+    iconUrl: role ? _iconUrl(role) : (meta.roleIconUrl ?? null),
+  };
+}
+
+function renderPlayers() {
+  const table = document.getElementById('player-table');
+  if (!table) return;
+  const players = currentState?.players ?? [];
+  const rows = players.map(p => {
+    const name = displayName(p, p.seat);
+    const role = playerRoleInfo(p, name);
+    const icon = role?.iconUrl ? `<img class="tp-role-icon" src="${esc(role.iconUrl)}" />` : '';
+    const roleHtml = role
+      ? `<span class="role-name ${esc(role.team)}">${icon}${esc(role.name)}</span>`
+      : '<span class="player-role-empty">—</span>';
+    const pronouns = p.pronouns ? ` <span class="player-pronouns">${esc(p.pronouns)}</span>` : '';
+    const sigBtn = p.id ? `<button class="sig-hist-btn" data-uid="${esc(String(p.id))}" title="Signal history">💬</button>` : '';
+    const rowClasses = [
+      p.isDead ? 'dead' : '',
+      playerActionMode ? 'pa-selectable' : '',
+      playerActionMode && playerActionPickedSeat === p.seat ? 'pa-picked' : '',
+    ].filter(Boolean).join(' ');
+    return `<tr${rowClasses ? ` class="${rowClasses}"` : ''} data-seat="${p.seat}">
+      <td class="seat">${p.seat + 1}</td>
+      <td><span class="player-name role-name ${playerTeamByName(name)}" data-player="${esc(name)}">${esc(dn(name))}</span>${pronouns}${p.isDead ? ' 💀' : ''}${sigBtn}</td>
+      <td>${roleHtml}</td>
+      <td><button class="seat-remove-x-btn" data-seat="${p.seat}" data-occupied="${p.id ? '1' : ''}" title="Remove seat">✕</button></td>
+    </tr>`;
+  }).join('');
+  table.innerHTML = `<thead><tr><th>#</th><th>Player</th><th>Role</th><th></th></tr></thead><tbody>${rows}</tbody>`;
+  table.querySelectorAll('.sig-hist-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openSignalPopover(btn.dataset.uid, btn);
+    });
+  });
+  table.querySelectorAll('.seat-remove-x-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const seat = Number(btn.dataset.seat);
+      if (btn.dataset.occupied && !confirm(`Remove seat ${seat + 1} — a player is sitting there. Continue?`)) return;
+      sendBg({ type: 'REMOVE_SEAT', seat });
+    });
+  });
+  table.querySelector('tbody')?.addEventListener('click', (e) => {
+    if (!playerActionMode) return;
+    if (e.target.closest('.sig-hist-btn') || e.target.closest('.seat-remove-x-btn')) return;
+    const tr = e.target.closest('tr[data-seat]');
+    if (!tr) return;
+    handlePlayerActionPick(Number(tr.dataset.seat));
+  });
+  applyHighlights(); applyPinnedHighlights();
+}
+
+// Add-seat button "floats" pinned under the cursor after a click, so mashing
+// it several times in a row (each click grows the table beneath it, which
+// would otherwise shove the button away from the mouse) doesn't require
+// re-aiming. Once the cursor leaves, it eases back to its natural spot.
+function initAddSeatFloatButton() {
+  const btn = document.getElementById('players-add-seat-btn');
+  if (!btn) return;
+  let spacer = null;
+  let floating = false;
+  let returning = false;
+
+  function freezeInPlace() {
+    if (floating || returning) return;
+    const rect = btn.getBoundingClientRect();
+    spacer = document.createElement('div');
+    spacer.style.width = `${rect.width}px`;
+    spacer.style.height = `${rect.height}px`;
+    spacer.style.alignSelf = getComputedStyle(btn).alignSelf;
+    spacer.style.marginTop = getComputedStyle(btn).marginTop;
+    btn.insertAdjacentElement('afterend', spacer);
+    btn.style.transition = 'none';
+    btn.style.position = 'fixed';
+    btn.style.margin = '0';
+    btn.style.left = `${rect.left}px`;
+    btn.style.top = `${rect.top}px`;
+    btn.style.width = `${rect.width}px`;
+    btn.style.zIndex = '50';
+    floating = true;
+  }
+
+  function returnHome() {
+    if (!floating || returning) return;
+    returning = true;
+    const homeRect = spacer.getBoundingClientRect();
+    requestAnimationFrame(() => {
+      btn.style.transition = 'left 0.6s ease, top 0.6s ease';
+      btn.style.left = `${homeRect.left}px`;
+      btn.style.top = `${homeRect.top}px`;
+    });
+    btn.addEventListener('transitionend', () => {
+      btn.style.position = '';
+      btn.style.left = '';
+      btn.style.top = '';
+      btn.style.width = '';
+      btn.style.margin = '';
+      btn.style.transition = '';
+      btn.style.zIndex = '';
+      spacer?.remove();
+      spacer = null;
+      floating = false;
+      returning = false;
+    }, { once: true });
+  }
+
+  btn.addEventListener('click', () => {
+    sendBg({ type: 'ADD_SEAT' });
+    freezeInPlace();
+  });
+  btn.addEventListener('mouseleave', () => {
+    if (floating) returnHome();
+  });
+}
+
+function setPlayerActionMode(mode) {
+  playerActionMode = playerActionMode === mode ? null : mode;
+  playerActionPickedSeat = null;
+  document.getElementById('players-nominate-btn')?.classList.toggle('toggle-btn-active', playerActionMode === 'nominate');
+  document.getElementById('players-swap-btn')?.classList.toggle('toggle-btn-active', playerActionMode === 'swap');
+  renderPlayers();
+}
+
+function handlePlayerActionPick(seat) {
+  if (playerActionMode === 'nominate') {
+    if (playerActionPickedSeat === null) {
+      playerActionPickedSeat = seat; // nominator (can equal the nominee for a self-nomination)
+      renderPlayers();
+      return;
+    }
+    sendBg({ type: 'NOMINATE', nominatorSeat: playerActionPickedSeat, nomineeSeat: seat });
+    setPlayerActionMode('nominate'); // toggles off
+    return;
+  }
+  if (playerActionMode === 'swap') {
+    if (playerActionPickedSeat === null) {
+      playerActionPickedSeat = seat;
+      renderPlayers();
+      return;
+    }
+    if (playerActionPickedSeat === seat) {
+      setPlayerActionMode('swap'); // toggles off
+      return;
+    }
+    const n = (currentState?.players ?? []).length;
+    const order = [...Array(n).keys()];
+    [order[playerActionPickedSeat], order[seat]] = [order[seat], order[playerActionPickedSeat]];
+    sendBg({ type: 'SHUFFLE_SEATS', order });
+    setPlayerActionMode('swap'); // toggles off
+  }
+}
+
+// ── Night order sheet ─────────────────────────────────────────────────────
+// Storyteller reference: script roles in wake order with the players holding
+// them. Order data lives in data/nightOrder.js (canonical bundled role ids).
+
+const _nightOrder = () => (typeof BOTC_NIGHT_ORDER !== 'undefined' ? BOTC_NIGHT_ORDER : { firstNight: [], otherNight: [] });
+
+// normalized role id → [{name, isDead}], honoring the source-of-truth setting:
+// grimoire tokens first (storyteller always sees them), notes-grid role
+// assignments as the override/fallback.
+function playersByRoleId() {
+  const map = {};
+  for (const p of currentState?.players ?? []) {
+    const name = displayName(p, p.seat);
+    const metaRole = playerMeta[name]?.roleId || null;
+    const grimRole = p.roleId || null;
+    const roleId = colorSource === 'notes' ? (metaRole ?? grimRole) : (grimRole ?? metaRole);
+    if (!roleId) continue;
+    (map[_normalizeId(roleId)] ??= []).push({ name, isDead: !!p.isDead, id: p.id });
+  }
+  return map;
+}
+
+function renderNightOrderColumn(night) {
+  const nightLabel = `Night ${night}`;
+  const entries = night === 1 ? _nightOrder().firstNight : _nightOrder().otherNight;
+  const scriptIds = new Set((currentState?.roles ?? []).map(r => _normalizeId(r.id)));
+  const byRole = playersByRoleId();
+
+  const rows = [];
+  for (const e of entries) {
+    if (e.label) {
+      rows.push(`<li class="norder-marker">${esc(e.label)}</li>`);
+      continue;
+    }
+    if (!scriptIds.has(e.id)) continue;
+    const role = _roles().find(r => r.id === e.id);
+    const url = _iconUrl(role ?? { id: e.id });
+    const icon = url ? `<img class="tp-role-icon" src="${esc(url)}" />` : '';
+    const holders = byRole[e.id] ?? [];
+    const names = holders.map(h => {
+      const icon = h.id ? '<span class="sig-hist-icon">💬</span>' : '';
+      const clickAttrs = h.id ? ` data-uid="${esc(String(h.id))}" data-night="${esc(nightLabel)}"` : '';
+      return `<span class="norder-holder${h.id ? ' sig-hist-holder' : ''}"${clickAttrs} title="${h.id ? 'Signals sent this night' : ''}">
+        <span class="role-name ${playerTeamByName(h.name)}${h.isDead ? ' norder-dead' : ''}" data-player="${esc(h.name)}">${h.isDead ? '💀 ' : ''}${esc(dn(h.name))}</span>${icon}
+      </span>`;
+    }).join('<span class="norder-sep">, </span>');
+    rows.push(`
+      <li class="norder-row${holders.length ? '' : ' norder-outofplay'}">
+        <span class="norder-role role-name ${role?.team ?? ''}">${icon}${esc(role?.name ?? e.id)}</span>
+        <span class="norder-players">${names}</span>
+      </li>`);
+  }
+
+  return `<div class="norder-column">
+    <div class="norder-column-header">${esc(nightLabel)}</div>
+    <ol class="norder-list">${rows.join('')}</ol>
+  </div>`;
+}
+
+function renderNightOrder() {
+  const columnsEl = document.getElementById('night-order-columns');
+  if (!columnsEl) return;
+
+  // Day N counts as round N's night, same convention as the signal log — a
+  // new column appears as soon as that round's night phase starts.
+  const totalNights = currentState?.phase ? Math.ceil(currentState.phase / 2) : 1;
+
+  columnsEl.innerHTML = Array.from({ length: totalNights }, (_, i) => renderNightOrderColumn(i + 1)).join('');
+  columnsEl.querySelectorAll('.sig-hist-holder').forEach(holder => {
+    holder.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openSignalPopover(holder.dataset.uid, holder, holder.dataset.night);
+    });
+  });
+  applyHighlights(); applyPinnedHighlights();
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────
 
 document.querySelectorAll('section:not(#ws-section) h2').forEach(h2 => {
@@ -2770,6 +3294,10 @@ function applySettingsToUI() {
 function applyViewRole() {
   const isStoryteller = viewRole === 'storyteller';
   document.getElementById('st-tools-section')?.style.setProperty('display', isStoryteller ? '' : 'none');
+  document.getElementById('night-order-section')?.style.setProperty('display', isStoryteller ? '' : 'none');
+  document.getElementById('players-section')?.style.setProperty('display', isStoryteller ? '' : 'none');
+  document.getElementById('script-wrap')?.style.setProperty('display', isStoryteller ? '' : 'none');
+  document.getElementById('clear-grimoire-btn')?.style.setProperty('display', isStoryteller ? '' : 'none');
   document.getElementById('notes-section')?.style.setProperty('display', isStoryteller ? 'none' : '');
 }
 
@@ -2787,6 +3315,7 @@ document.getElementById('role-switch').addEventListener('click', (e) => {
 loadSettings();
 applySettingsToUI();
 initSignalPanel();
+updateStRoleBtn();
 renderTimerPresets();
 initScriptLibrary();
 
@@ -2807,6 +3336,32 @@ initScriptLibrary();
   });
 })();
 
+document.getElementById('st-role-btn')?.addEventListener('click', () => {
+  if (amIStoryteller()) {
+    if (!confirm('Step down as storyteller?')) return;
+    sendBg({ type: 'STEP_DOWN_STORYTELLER' });
+  } else {
+    sendBg({ type: 'BECOME_STORYTELLER' });
+  }
+});
+
+// Custom script popup (scroll icon): same toggle pattern as settings
+(() => {
+  const btn = document.getElementById('script-btn');
+  const popup = document.getElementById('script-popup');
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = popup.classList.toggle('open');
+    btn.classList.toggle('open', open);
+  });
+  document.addEventListener('click', (e) => {
+    if (!popup.classList.contains('open')) return;
+    if (popup.contains(e.target) || e.target === btn) return;
+    popup.classList.remove('open');
+    btn.classList.remove('open');
+  });
+})();
+
 // Esc closes whatever popover/menu is open
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
@@ -2814,6 +3369,10 @@ document.addEventListener('keydown', (e) => {
   if (chip && chip.style.display !== 'none') closePopover();
   const role = document.getElementById('meta-role-popover');
   if (role && role.style.display !== 'none') role.style.display = 'none';
+  const sigRole = document.getElementById('signal-role-popover');
+  if (sigRole && sigRole.style.display !== 'none') sigRole.style.display = 'none';
+  closeSignalPopover();
+  if (signalHistoryOpen) closeSignalHistoryPanel();
   const settings = document.getElementById('settings-popup');
   if (settings?.classList.contains('open')) {
     settings.classList.remove('open');
@@ -2844,6 +3403,8 @@ document.getElementById('clear-notes').addEventListener('click', () => {
   sendBg({ type: 'CLEAR_TOKENS' });
   lastNotesKey = null;
   renderNotesGrid();
+  renderPlayers();
+  renderNightOrder();
 });
 
 window.__botc = { get state() { return currentState; }, get timeline() { return fullTimeline; }, get roles() { return revealedRoles; } };

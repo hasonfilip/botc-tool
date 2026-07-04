@@ -19,6 +19,8 @@
     catch { return null; }
   };
 
+  const getStore = () => document.querySelector('#main')?.__vue_app__?.config?.globalProperties?.$store;
+
   // Only the keys buildState uses — this runs on every (debounced) DOM
   // mutation, so parsing the whole store would be wasted work
   const STORAGE_KEYS = ['game', 'players', 'roles', 'storytellers', 'edition', 'bluffs', 'reminders', 'timer', 'session', 'token'];
@@ -165,6 +167,13 @@
       reminders: storage.reminders ?? [],
       timer: storage.timer ?? null,
       session: storage.session ?? null,
+      // Signal history lives only in the live Vuex store (session.signals), never
+      // persisted to localStorage — keyed by recipient id, "storyteller" mirrors
+      // outbound-only signals while each specific user id holds the full two-way
+      // conversation with them (both sent and received).
+      // JSON round-trip strips the Vue reactive Proxy wrapper — postMessage's
+      // structured clone can't serialize that directly (DataCloneError).
+      signals: JSON.parse(JSON.stringify(getStore()?.state?.session?.signals ?? {})),
     };
   };
 
@@ -197,6 +206,19 @@
     debounceTimer = setTimeout(sendState, 150);
   };
 
+  // ── Watch the store for signal history ──────────────────────────────────
+  // session.signals lives only in memory (never written to localStorage), so
+  // the localStorage/DOM watchers above never see it change — subscribe to the
+  // specific mutations directly so new sent/received signals show up promptly.
+  const waitForStoreSubscribe = () => {
+    const store = getStore();
+    if (!store) { setTimeout(waitForStoreSubscribe, 500); return; }
+    store.subscribe((mutation) => {
+      if (mutation.type === 'session/addSignal' || mutation.type === 'session/clearSignals') debouncedSend();
+    });
+  };
+  waitForStoreSubscribe();
+
   const _setItem = localStorage.setItem.bind(localStorage);
   localStorage.setItem = function (key, value) {
     _setItem(key, value);
@@ -222,13 +244,13 @@
     if (event.data?.type === 'FORCE_UPDATE') { sendState(); return; }
     if (event.data?.type === 'SEND_SIGNAL') {
       try {
-        const store = document.querySelector('#main')?.__vue_app__?.config?.globalProperties?.$store;
+        const store = getStore();
         if (store) store.commit('session/addSignal', { userIds: event.data.userIds, message: event.data.message, isInbound: false });
       } catch { /* page not ready or store unavailable */ }
     }
     if (event.data?.type === 'SET_TIMER') {
       try {
-        const store = document.querySelector('#main')?.__vue_app__?.config?.globalProperties?.$store;
+        const store = getStore();
         // Store expects an absolute expiration timestamp, not a relative duration —
         // 0 is the sentinel for "no timer running" (produces a negative duration on the wire).
         const expiration = event.data.duration > 0 ? Date.now() + event.data.duration : 0;
@@ -242,31 +264,61 @@
     }
     if (event.data?.type === 'END_GAME') {
       try {
-        const store = document.querySelector('#main')?.__vue_app__?.config?.globalProperties?.$store;
+        const store = getStore();
         if (store) store.commit('game/endGame', event.data.isEvilWin);
       } catch { /* page not ready or store unavailable */ }
     }
     if (event.data?.type === 'GONG') {
       try {
-        const store = document.querySelector('#main')?.__vue_app__?.config?.globalProperties?.$store;
+        const store = getStore();
         if (store) store.dispatch('session/triggerHook', { name: 'attention-gong', delay: 1000 });
+      } catch { /* page not ready or store unavailable */ }
+    }
+    if (event.data?.type === 'NEXT_PHASE') {
+      try {
+        // The real action already guards against accidental double-clicks (a
+        // quick second click reverts instead of advancing) — dispatch it as-is
+        // rather than re-implementing that logic ourselves.
+        const store = getStore();
+        if (store) store.dispatch('game/togglePhase');
       } catch { /* page not ready or store unavailable */ }
     }
     if (event.data?.type === 'ADD_SEAT') {
       try {
-        const store = document.querySelector('#main')?.__vue_app__?.config?.globalProperties?.$store;
+        const store = getStore();
         if (store) store.dispatch('players/addPlayer');
       } catch { /* page not ready or store unavailable */ }
     }
     if (event.data?.type === 'SHUFFLE_SEATS') {
       try {
-        const store = document.querySelector('#main')?.__vue_app__?.config?.globalProperties?.$store;
+        const store = getStore();
         if (store) store.dispatch('players/movePlayers', event.data.order);
+      } catch { /* page not ready or store unavailable */ }
+    }
+    if (event.data?.type === 'NOMINATE') {
+      try {
+        const store = getStore();
+        if (store) store.dispatch('vote/nominatePlayer', [event.data.nominatorSeat, event.data.nomineeSeat]);
+      } catch { /* page not ready or store unavailable */ }
+    }
+    if (event.data?.type === 'CLEAR_GRIMOIRE') {
+      try {
+        const store = getStore();
+        // Dispatched with no payload — mirrors what the real "Clear Grimoire" menu
+        // item does; the app's own action cascades roles/history/signals internally.
+        if (store) store.dispatch('players/clearRoles');
+      } catch { /* page not ready or store unavailable */ }
+    }
+    if (event.data?.type === 'REMOVE_SEAT') {
+      try {
+        const store = getStore();
+        // Same action REMOVE_EMPTY_SEATS uses below, just targeting one arbitrary seat.
+        if (store) store.dispatch('players/removePlayers', [event.data.seat]);
       } catch { /* page not ready or store unavailable */ }
     }
     if (event.data?.type === 'REMOVE_EMPTY_SEATS') {
       try {
-        const store = document.querySelector('#main')?.__vue_app__?.config?.globalProperties?.$store;
+        const store = getStore();
         // Computed fresh from the real store state (id === null marks a vacant seat) rather
         // than our scraped/derived state, which can drift and misidentify a filled seat as empty.
         const indices = (store?.state?.players?.players ?? [])
@@ -277,21 +329,21 @@
     }
     if (event.data?.type === 'BECOME_STORYTELLER') {
       try {
-        const store = document.querySelector('#main')?.__vue_app__?.config?.globalProperties?.$store;
+        const store = getStore();
         const myUserId = getMyUserId();
         if (store && myUserId) store.commit('players/addStoryteller', { id: myUserId });
       } catch { /* page not ready or store unavailable */ }
     }
     if (event.data?.type === 'STEP_DOWN_STORYTELLER') {
       try {
-        const store = document.querySelector('#main')?.__vue_app__?.config?.globalProperties?.$store;
+        const store = getStore();
         const myUserId = getMyUserId();
         if (store && myUserId) store.commit('players/removeStoryteller', { id: myUserId });
       } catch { /* page not ready or store unavailable */ }
     }
     if (event.data?.type === 'LOAD_CUSTOM_SCRIPT') {
       try {
-        const store = document.querySelector('#main')?.__vue_app__?.config?.globalProperties?.$store;
+        const store = getStore();
         if (!store) return;
         store.dispatch('players/clearRoles', { clearNPCs: true });
         store.commit('setCustomRoles', event.data.roles);

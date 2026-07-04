@@ -21,6 +21,16 @@
 			<span id="ws-heartbeat-timer"></span>
 			<span id="ws-heartbeat-msg"></span>
 		</div>
+		<button id="st-role-btn" class="header-icon-btn">🧙 Become Storyteller</button>
+		<button id="clear-grimoire-btn" class="header-icon-btn" style="display:none">🧹 Clear</button>
+		<div id="script-wrap" style="display:none">
+			<button id="script-btn" title="Custom Script" aria-label="Custom Script">📜</button>
+			<div id="script-popup">
+				<input id="script-file-input" type="file" accept="application/json,.json" />
+				<button id="script-load-btn" class="sig-send-btn" disabled>📜 Load Script</button>
+				<button id="script-lib-open-btn" class="sig-clear-btn">📚 Browse Library</button>
+			</div>
+		</div>
 		<div id="settings-wrap">
 			<button id="settings-btn" title="Settings" aria-label="Settings">⚙</button>
 			<div id="settings-popup">
@@ -70,26 +80,48 @@
 						<label class="sig-recipient-all"><input type="checkbox" id="signal-all-check" /> All players</label>
 						<div id="signal-player-list" class="sig-player-list"></div>
 					</div>
-					<div id="signal-token-grid"></div>
+					<div id="signal-token-grid">
+						<div id="sig-col-left" class="sig-token-col"></div>
+						<div id="sig-col-right" class="sig-token-col"></div>
+						<button type="button" id="signal-role-btn" class="sig-select sig-role-select">+ role</button>
+						<select id="signal-player-select" class="sig-select sig-player-select"><option value="">+ player</option></select>
+						<div id="sig-col-center" class="sig-token-col"></div>
+					</div>
 					<div class="sig-special">
-						<select id="signal-role-select" class="sig-select"><option value="">+ role</option></select>
-						<select id="signal-player-select" class="sig-select"><option value="">+ player</option></select>
 						<input id="signal-custom-input" class="sig-custom-input" placeholder="custom…" maxlength="32" />
+						<button id="signal-custom-add-btn" class="sig-custom-add-btn" title="Add custom token">›</button>
 					</div>
 					<div class="sig-preview-row">
 						<div id="signal-preview" class="sig-preview"><span class="sig-empty">No tokens selected</span></div>
 						<button id="signal-clear-btn" class="sig-clear-btn">clear</button>
 					</div>
 					<button id="signal-send-btn" class="sig-send-btn" disabled>Send Signal</button>
+					<button id="signal-history-open-btn" class="sig-send-btn">📜 View Signal History</button>
 				</div>
+				<section id="players-section" style="display:none">
+					<h2><span class="chevron">▾</span> Players
+						<button id="players-nominate-btn" class="toggle-btn">📢 nominate</button>
+						<button id="players-swap-btn" class="toggle-btn">🔀 swap</button>
+					</h2>
+					<div id="player-table-scroll">
+						<table id="player-table"></table>
+					</div>
+					<div id="players-seat-actions">
+						<button id="players-shuffle-btn" class="sig-clear-btn">🔀 Shuffle</button>
+						<button id="players-rotate-ccw-btn" class="sig-clear-btn" title="Rotate counterclockwise">↺</button>
+						<button id="players-add-seat-btn" class="sig-clear-btn">🪑Add Seat</button>
+						<button id="players-rotate-cw-btn" class="sig-clear-btn" title="Rotate clockwise">↻</button>
+						<button id="players-remove-empty-btn" class="sig-clear-btn">🗑️ Remove empty</button>
+					</div>
+				</section>
 				<div id="st-tab-timer" class="st-tab-panel">
-					<div class="st-tab-panel-title">Game End</div>
+					<button id="next-phase-btn" class="sig-send-btn">⏭ Next Phase</button>
+					<div class="st-tab-divider"></div>
 					<div id="endgame-actions">
 						<button id="endgame-good-btn" class="endgame-btn endgame-good">Good Wins</button>
 						<button id="endgame-evil-btn" class="endgame-btn endgame-evil">Evil Wins</button>
 					</div>
 					<div class="st-tab-divider"></div>
-					<div class="st-tab-panel-title">Timer</div>
 					<div id="timer-presets" class="sig-special"></div>
 					<div class="sig-special">
 						<input id="timer-title" class="sig-custom-input" placeholder="timer title…" maxlength="40" />
@@ -105,36 +137,19 @@
 						<button id="timer-set-btn" class="sig-send-btn">Start Timer</button>
 						<button id="timer-clear-btn" class="sig-clear-btn">Clear Timer</button>
 					</div>
-				</div>
-				<div id="st-tab-gong" class="st-tab-panel">
-					<div class="st-tab-panel-title">Attention</div>
+					<div class="st-tab-divider"></div>
 					<button id="gong-btn" class="sig-send-btn">🔔 Gong</button>
-					<div class="st-tab-divider"></div>
-					<div class="st-tab-panel-title">Seats</div>
-					<div id="seats-actions">
-						<button id="seat-add-btn" class="sig-clear-btn">🪑Add</button>
-						<button id="seat-shuffle-btn" class="sig-clear-btn">🔀 Shuffle</button>
-						<button id="seat-rotate-cw-btn" class="sig-clear-btn">↻ Rotate</button>
-						<button id="seat-rotate-ccw-btn" class="sig-clear-btn">↺ Rotate</button>
-						<button id="seat-remove-empty-btn" class="sig-clear-btn">🗑️ Remove empty</button>
-					</div>
-					<div class="st-tab-divider"></div>
-					<div class="st-tab-panel-title">Storyteller Role</div>
-					<div id="role-actions">
-						<button id="become-st-btn" class="sig-send-btn">🧙 Become Storyteller</button>
-						<button id="stepdown-st-btn" class="sig-clear-btn">🚪 Step Down</button>
-					</div>
-				</div>
-				<div id="st-tab-script" class="st-tab-panel">
-					<div class="st-tab-panel-title">Custom Script</div>
-					<input id="script-file-input" type="file" accept="application/json,.json" />
-					<button id="script-load-btn" class="sig-send-btn" disabled>📜 Load Script</button>
-					<button id="script-lib-open-btn" class="sig-clear-btn">📚 Browse Library</button>
 				</div>
 			</div>
 		</section>
 
+		<section id="night-order-section" style="display:none">
+			<h2><span class="chevron">▾</span> Night Order</h2>
+			<div id="night-order-columns"></div>
+		</section>
+
 		<div class="main-grid">
+
 			<section id="timeline-section">
 				<h2><span class="chevron">▾</span> Timeline</h2>
 				<ul id="timeline-log"></ul>
@@ -164,14 +179,23 @@
 		</section>
 	</main>
 
-	<div id="player-timeline-panel">
-		<div id="ptl-header">
-			<span id="ptl-name"></span>
-			<button id="ptl-close">✕</button>
+	<div id="player-timeline-panel" class="side-panel">
+		<div id="ptl-header" class="side-panel-header">
+			<span id="ptl-name" class="side-panel-title"></span>
+			<button id="ptl-close" class="side-panel-close">✕</button>
 		</div>
 		<ul id="ptl-list"></ul>
 	</div>
-	<div id="player-timeline-overlay"></div>
+	<div id="player-timeline-overlay" class="side-panel-overlay"></div>
+
+	<div id="signal-history-panel" class="side-panel">
+		<div class="side-panel-header">
+			<span id="sighist-name" class="side-panel-title"></span>
+			<button id="sighist-close" class="side-panel-close">✕</button>
+		</div>
+		<div id="sighist-body"></div>
+	</div>
+	<div id="signal-history-overlay" class="side-panel-overlay"></div>
 
 	<div id="script-library-overlay" style="display:none">
 		<div id="script-library-backdrop"></div>
@@ -197,6 +221,7 @@
 
 	<script src="../data/roles.js"></script>
 	<script src="../data/chipSpecs.js"></script>
+	<script src="../data/nightOrder.js"></script>
 	<script src="companion.js"></script>
 </body>
 
