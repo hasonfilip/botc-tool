@@ -3,6 +3,19 @@
 
 let companionTabId = null;
 
+// The single botc.app tab whose bridge feeds game state. With several /play
+// tabs open, merging their payloads corrupts state (phantom death diffs,
+// flip-flopping game detection) and fanning commands out executes them once
+// per tab — so one tab is adopted and the rest are ignored until it closes.
+let activeBridgeTabId = null;
+
+async function isActiveBridgeTab(tabId) {
+  if (tabId == null || tabId === activeBridgeTabId) return true;
+  if (activeBridgeTabId === null) { activeBridgeTabId = tabId; return true; }
+  try { await chrome.tabs.get(activeBridgeTabId); return false; }
+  catch { activeBridgeTabId = tabId; return true; }
+}
+
 async function resolveCompanionTabId() {
   if (companionTabId !== null) {
     try { await chrome.tabs.get(companionTabId); return companionTabId; } catch { companionTabId = null; }
@@ -120,7 +133,13 @@ async function handleNominationFrame(eventName, eventData, ts) {
       const [nominatorSeat, nomineeSeat] = eventData.nomination;
       const alive = (latestState?.players ?? []).filter(p => !p.isDead).length;
       const highscore = Math.max(eventData.highscore ?? 0, Math.ceil(alive / 2));
-      const entry = { ts, nominatorSeat, nomineeSeat, highscore, handState: {}, yesSeats: [] };
+      // Snapshot seat→name now: seats get shuffled/rotated later, so resolving
+      // them against the then-current player list would rewrite history.
+      const seatNames = {};
+      for (const p of latestState?.players ?? []) {
+        if (p.name != null) seatNames[p.seat] = p.name;
+      }
+      const entry = { ts, nominatorSeat, nomineeSeat, seatNames, highscore, handState: {}, yesSeats: [] };
       await store.set({ pendingNomination: entry });
     } else if (eventData.nomination === false && pendingNomination) {
       await store.set({ nominations: [...nominations, pendingNomination], pendingNomination: null });
@@ -337,10 +356,11 @@ async function handleStatePayload(payload) {
   // Detect new game: start entry ID changed → reset timeline
   const history = payload.data.history ?? [];
   const startEntry = history.find(h => h.type === 'start');
-  if (startEntry && startEntry.id !== currentGameId) {
+  const isNewGame = startEntry && startEntry.id !== currentGameId;
+  if (isNewGame) {
     timeline.length = 0;
     processedIds.clear();
-    await store.set({ currentGameId: startEntry.id, nominations: [], pendingNomination: null, chatSessions: [], cellTokens: {}, materializedStatus: [], textMessages: [], channelPresence: {} });
+    await store.set({ currentGameId: startEntry.id, nominations: [], pendingNomination: null, chatSessions: [], cellTokens: {}, materializedStatus: [], playerMeta: {}, textMessages: [], channelPresence: {} });
   }
 
   const historyEvents = eventsFromHistory(history, nameMap, processedIds);
@@ -361,6 +381,14 @@ async function handleStatePayload(payload) {
     processedIds: [...processedIds],
     nameMap,
   });
+
+  if (isNewGame) {
+    // FULL_REFRESH makes an open companion drop its in-memory copies of the
+    // old game — otherwise it keeps rendering them and writes them back into
+    // the freshly cleared store on its next materialize/save pass.
+    await pushStateToCompanion();
+    return;
+  }
 
   await sendToCompanion({ type: 'BOTC_UPDATE', payload, nameMap });
   if (newEvents.length > 0) await sendToCompanion({ type: 'TIMELINE_EVENTS', events: newEvents });
@@ -426,12 +454,20 @@ chrome.action.onClicked.addListener(async () => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (tabId === companionTabId) companionTabId = null;
+  if (tabId === activeBridgeTabId) activeBridgeTabId = null;
 });
 
 // Pick up botc.app tabs that were already open when the extension was
 // (re)loaded — content scripts are only auto-injected into new page loads.
 chrome.runtime.onInstalled.addListener(() => { connectToTabs(); });
 chrome.runtime.onStartup.addListener(() => { connectToTabs(); });
+
+// Storyteller commands relayed verbatim to the active botc.app tab's bridge.
+const COMPANION_COMMANDS = new Set([
+  'SEND_SIGNAL', 'SET_TIMER', 'END_GAME', 'GONG',
+  'ADD_SEAT', 'SHUFFLE_SEATS', 'REMOVE_EMPTY_SEATS',
+  'BECOME_STORYTELLER', 'STEP_DOWN_STORYTELLER', 'LOAD_CUSTOM_SCRIPT',
+]);
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Restore companionTabId if service worker restarted
@@ -440,15 +476,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.type === 'BOTC_UPDATE') {
     const payload = message.payload;
-    if (payload.type === 'STATE') {
-      enqueue(() => handleStatePayload(payload));
-      return;
-    }
-    if (payload.type === 'WS_RECV' || payload.type === 'WS_SEND') {
-      enqueue(() => handleWsPayload(payload));
-      return;
-    }
-    sendToCompanion({ type: 'BOTC_UPDATE', payload });
+    const senderTabId = sender.tab?.id ?? null;
+    enqueue(async () => {
+      if (!(await isActiveBridgeTab(senderTabId))) return;
+      if (payload.type === 'STATE') return handleStatePayload(payload);
+      if (payload.type === 'WS_RECV' || payload.type === 'WS_SEND') return handleWsPayload(payload);
+      await sendToCompanion({ type: 'BOTC_UPDATE', payload });
+    });
     return;
   }
 
@@ -481,78 +515,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return;
   }
 
-  if (message.type === 'SEND_SIGNAL') {
+  if (COMPANION_COMMANDS.has(message.type)) {
     (async () => {
+      // Send to the single active bridge tab only — every /play tab executes
+      // the command independently, so fanning out duplicates it (two signals,
+      // two added seats, two shuffles).
       const tabs = await chrome.tabs.query({ url: 'https://botc.app/play*' });
-      for (const tab of tabs) {
-        chrome.tabs.sendMessage(tab.id, { type: 'SEND_SIGNAL', userIds: message.userIds, message: message.message }).catch(() => {});
-      }
-      sendResponse({ ok: true });
-    })();
-    return true;
-  }
-
-  if (message.type === 'SET_TIMER') {
-    (async () => {
-      const tabs = await chrome.tabs.query({ url: 'https://botc.app/play*' });
-      for (const tab of tabs) {
-        chrome.tabs.sendMessage(tab.id, { type: 'SET_TIMER', title: message.title, duration: message.duration, isPausedDuringVotes: message.isPausedDuringVotes, paused: message.paused }).catch(() => {});
-      }
-      sendResponse({ ok: true });
-    })();
-    return true;
-  }
-
-  if (message.type === 'END_GAME') {
-    (async () => {
-      const tabs = await chrome.tabs.query({ url: 'https://botc.app/play*' });
-      for (const tab of tabs) {
-        chrome.tabs.sendMessage(tab.id, { type: 'END_GAME', isEvilWin: message.isEvilWin }).catch(() => {});
-      }
-      sendResponse({ ok: true });
-    })();
-    return true;
-  }
-
-  if (message.type === 'GONG') {
-    (async () => {
-      const tabs = await chrome.tabs.query({ url: 'https://botc.app/play*' });
-      for (const tab of tabs) {
-        chrome.tabs.sendMessage(tab.id, { type: 'GONG' }).catch(() => {});
-      }
-      sendResponse({ ok: true });
-    })();
-    return true;
-  }
-
-  if (message.type === 'ADD_SEAT' || message.type === 'SHUFFLE_SEATS' || message.type === 'REMOVE_EMPTY_SEATS') {
-    (async () => {
-      const tabs = await chrome.tabs.query({ url: 'https://botc.app/play*' });
-      for (const tab of tabs) {
-        chrome.tabs.sendMessage(tab.id, { type: message.type, order: message.order, indices: message.indices }).catch(() => {});
-      }
-      sendResponse({ ok: true });
-    })();
-    return true;
-  }
-
-  if (message.type === 'BECOME_STORYTELLER' || message.type === 'STEP_DOWN_STORYTELLER') {
-    (async () => {
-      const tabs = await chrome.tabs.query({ url: 'https://botc.app/play*' });
-      for (const tab of tabs) {
-        chrome.tabs.sendMessage(tab.id, { type: message.type }).catch(() => {});
-      }
-      sendResponse({ ok: true });
-    })();
-    return true;
-  }
-
-  if (message.type === 'LOAD_CUSTOM_SCRIPT') {
-    (async () => {
-      const tabs = await chrome.tabs.query({ url: 'https://botc.app/play*' });
-      for (const tab of tabs) {
-        chrome.tabs.sendMessage(tab.id, { type: 'LOAD_CUSTOM_SCRIPT', author: message.author, name: message.name, roles: message.roles }).catch(() => {});
-      }
+      const target = tabs.find(t => t.id === activeBridgeTabId) ?? tabs[0];
+      if (target) chrome.tabs.sendMessage(target.id, message).catch(() => {});
       sendResponse({ ok: true });
     })();
     return true;

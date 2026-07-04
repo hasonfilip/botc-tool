@@ -106,6 +106,18 @@ const _iconUrl = (role) => {
 };
 
 
+// Single safe path to the background: chrome.runtime is absent on the dev
+// harness page and goes away when the extension reloads under an open
+// companion tab — neither may throw, and lastError must always be consumed.
+function sendBg(msg, callback) {
+  try {
+    chrome.runtime.sendMessage(msg, (response) => {
+      void chrome.runtime?.lastError;
+      callback?.(response);
+    });
+  } catch { /* dummy mode / extension reloaded */ }
+}
+
 // ── Render ────────────────────────────────────────────────────────────────
 
 function playerName(playerId) {
@@ -351,6 +363,27 @@ function seatName(seat) {
   return displayName(p, seat);
 }
 
+// Seat name for a historical nomination: prefer the seat→name snapshot taken
+// when the nomination happened — resolving against the current player list
+// would rewrite history after a seat shuffle/rotation. Falls back to the live
+// mapping for records saved before snapshots existed (and for default
+// "Seat N" placeholder names, which the snapshot can't disambiguate either).
+function nomSeatName(nom, seat) {
+  const snap = nom.seatNames?.[seat];
+  return (snap && !isDefaultSeatName(snap)) ? snap : seatName(seat);
+}
+
+// The seat `name` occupied at the time of a nomination, per its snapshot;
+// falls back to the player's current seat for pre-snapshot records.
+function nomSeatOf(nom, name) {
+  if (nom.seatNames) {
+    for (const [seat, n] of Object.entries(nom.seatNames)) {
+      if (n === name) return Number(seat);
+    }
+  }
+  return currentState?.players?.find(p => p.name === name)?.seat ?? -1;
+}
+
 function gamePhaseAt(ts) {
   let label = null;
   for (const ev of fullTimeline) {
@@ -405,9 +438,9 @@ function renderNominations() {
       lastDay = day;
     }
 
-    const nominator = seatName(nom.nominatorSeat);
-    const nominee = seatName(nom.nomineeSeat);
-    const yesNames = nom.yesSeats.map(s => seatName(s));
+    const nominator = nomSeatName(nom, nom.nominatorSeat);
+    const nominee = nomSeatName(nom, nom.nomineeSeat);
+    const yesNames = nom.yesSeats.map(s => nomSeatName(nom, s));
     const yesCount = yesNames.length;
     const needed = nom.highscore ?? '?';
 
@@ -582,7 +615,6 @@ function renderMessages() {
 
 function buildPlayerEvents(name) {
   const events = [];
-  const players = currentState?.players ?? [];
   const myId = currentState?.myUserId;
 
   // Deaths, revives, ghost votes from timeline
@@ -591,16 +623,16 @@ function buildPlayerEvents(name) {
     else if (ev.type === 'revive' && ev.name === name) events.push({ ts: ev.ts, type: 'revive', label: 'Revived' });
     else if (ev.type === 'ghostvote' && ev.name === name) {
       const nom = nominationAt(ev.ts);
-      const target = nom ? ` on ${esc(seatName(nom.nomineeSeat))}` : '';
+      const target = nom ? ` on ${esc(nomSeatName(nom, nom.nomineeSeat))}` : '';
       events.push({ ts: ev.ts, type: 'ghostvote', label: `Used ghost vote${target}` });
     }
   }
 
   // Nominations
-  const playerSeat = players.find(p => p.name === name)?.seat ?? -1;
   for (const nom of allNominations) {
-    const nominator = seatName(nom.nominatorSeat);
-    const nominee = seatName(nom.nomineeSeat);
+    const playerSeat = nomSeatOf(nom, name);
+    const nominator = nomSeatName(nom, nom.nominatorSeat);
+    const nominee = nomSeatName(nom, nom.nomineeSeat);
     const yesSeats = new Set(nom.yesSeats);
     const trackedSeats = new Set(Object.keys(nom.handState ?? {}).map(Number));
     const needed = nom.highscore ?? '?';
@@ -620,11 +652,12 @@ function buildPlayerEvents(name) {
       }
     } else if (isNominee) {
       events.push({ ts: nom.ts, type: 'nom-received', label: `Nominated by ${esc(dn(nominator))} (${count})` });
-      const nomineeVoted = wasTracked ? raisedHand : null;
-      if (nomineeVoted === true) {
-        events.push({ ts: nom.ts, type: 'voted-yes', label: `Voted for own execution${ghostSuffix}` });
-      } else {
-        events.push({ ts: nom.ts, type: 'voted-no', label: 'Did not vote for own execution' });
+      // Only when the vote was tracked — an untracked seat means the vote is
+      // unknown (frames missed), not that the nominee declined to vote.
+      if (wasTracked) {
+        events.push(raisedHand
+          ? { ts: nom.ts, type: 'voted-yes', label: `Voted for own execution${ghostSuffix}` }
+          : { ts: nom.ts, type: 'voted-no', label: 'Did not vote for own execution' });
       }
     } else if (wasTracked) {
       events.push({ ts: nom.ts, type: raisedHand ? 'voted-yes' : 'voted-no', label: `${raisedHand ? `Voted yes${ghostSuffix}` : 'Did not vote'} on ${esc(dn(nominator))} → ${esc(dn(nominee))} (${count})` });
@@ -845,13 +878,13 @@ function chipHtml(chip, player, phase, idx) {
     }
     if (chip.type === 'ability') {
       const resolvedUrl = _iconUrl({ id: chip.roleId, iconUrl: chip.iconUrl });
-      const icon = resolvedUrl ? `<img class="tp-role-icon" src="${resolvedUrl}" />` : '';
+      const icon = resolvedUrl ? `<img class="tp-role-icon" src="${esc(resolvedUrl)}" />` : '';
       const badges = abilityValBadges(chip);
       return `<span class="token-chip ability-chip role-name ${chip.roleTeam ?? ''}" title="${esc(chip.roleName)}" ${attrs}>${icon}${badges}</span>`;
     }
     if (chip.type === 'confirmed') {
       const resolvedUrl = _iconUrl({ id: chip.sourceRoleId, iconUrl: chip.iconUrl });
-      const icon = resolvedUrl ? `<img class="tp-role-icon" src="${resolvedUrl}" />` : '';
+      const icon = resolvedUrl ? `<img class="tp-role-icon" src="${esc(resolvedUrl)}" />` : '';
       return `<span class="token-chip confirmed-chip" title="${esc(chip.label ?? '')}" ${attrs}>${icon}✓</span>`;
     }
     return '';
@@ -943,7 +976,7 @@ function materializeStatusChips() {
       }
     }
   }
-  if (keysChanged) chrome.runtime.sendMessage({ type: 'SAVE_MATERIALIZED_STATUS', keys: [...materializedStatus] });
+  if (keysChanged) sendBg({ type: 'SAVE_MATERIALIZED_STATUS', keys: [...materializedStatus] });
   if (touched) lastNotesKey = null; // force the grid to rebuild even if isDead hasn't synced yet
   return touched;
 }
@@ -986,7 +1019,7 @@ function setChip(player, phase, chip, idx) {
 }
 
 function saveTokens(player, phase) {
-  chrome.runtime.sendMessage({ type: 'SAVE_TOKENS', player, phase, tokens: cellTokens[`${player}|${phase}`] ?? [] });
+  sendBg({ type: 'SAVE_TOKENS', player, phase, tokens: cellTokens[`${player}|${phase}`] ?? [] });
 }
 
 // Single global popover
@@ -1554,7 +1587,7 @@ function openPopover(player, phase, anchorEl, chipIdx = null) {
 }
 
 function savePlayerMeta(name) {
-  chrome.runtime.sendMessage({ type: 'SAVE_PLAYER_META', name, meta: playerMeta[name] ?? {} });
+  sendBg({ type: 'SAVE_PLAYER_META', name, meta: playerMeta[name] ?? {} });
 }
 
 function metaNameColor(name) {
@@ -1730,7 +1763,7 @@ function refreshMetaCells(name, { recolorPage = false } = {}) {
   if (row) row.style.background = tint;
   const meta = playerMeta[name] ?? {};
   if (roleCell) {
-    const icon = meta.roleIconUrl ? `<img class="tp-role-icon" src="${meta.roleIconUrl}" />` : '';
+    const icon = meta.roleIconUrl ? `<img class="tp-role-icon" src="${esc(meta.roleIconUrl)}" />` : '';
     const roleColorClass = meta.alignment === 'evil' ? 'demon'
                          : meta.alignment === 'good' ? 'townsfolk'
                          : meta.roleTeam ?? '';
@@ -1884,7 +1917,7 @@ function renderNotesGrid() {
     const usedGhostVote = player.isDead && fullTimeline.some(ev => ev.type === 'ghostvote' && ev.name === name);
     const statusIcons = (player.isDead ? '<span class="pn-status-icon pn-dead" title="Dead">💀</span>' : '')
                       + (usedGhostVote ? '<span class="pn-status-icon pn-voteless" title="Used ghost vote">👻</span>' : '');
-    const icon = meta.roleIconUrl ? `<img class="tp-role-icon" src="${meta.roleIconUrl}" />` : '';
+    const icon = meta.roleIconUrl ? `<img class="tp-role-icon" src="${esc(meta.roleIconUrl)}" />` : '';
     const roleColorClass = meta.alignment === 'evil' ? 'demon'
                          : meta.alignment === 'good' ? 'townsfolk'
                          : meta.roleTeam ?? '';
@@ -2094,9 +2127,7 @@ let customTimerPresets = []; // [{ label, title, minutes, seconds, pause }] — 
 function sendSetTimer({ title, minutes, seconds, isPausedDuringVotes }) {
   const duration = (minutes * 60 + seconds) * 1000;
   if (duration <= 0) return;
-  try {
-    chrome.runtime.sendMessage({ type: 'SET_TIMER', title, duration, isPausedDuringVotes, paused: 0 }, () => void chrome.runtime?.lastError);
-  } catch { /* dummy mode */ }
+  sendBg({ type: 'SET_TIMER', title, duration, isPausedDuringVotes, paused: 0 });
 }
 
 function renderTimerPresets() {
@@ -2200,9 +2231,7 @@ function initSignalPanel() {
   document.getElementById('signal-send-btn')?.addEventListener('click', () => {
     if (!stMessage.length || !stRecipientIds.size) return;
     const userIds = [...stRecipientIds];
-    try {
-      chrome.runtime.sendMessage({ type: 'SEND_SIGNAL', userIds, message: stMessage }, () => void chrome.runtime?.lastError);
-    } catch { /* dummy mode */ }
+    sendBg({ type: 'SEND_SIGNAL', userIds, message: stMessage });
     stMessage = [];
     renderSignalPreview();
     updateSignalSendBtn();
@@ -2219,9 +2248,7 @@ function initSignalPanel() {
 
   document.getElementById('timer-clear-btn')?.addEventListener('click', () => {
     const isPausedDuringVotes = document.getElementById('timer-pause-votes').checked;
-    try {
-      chrome.runtime.sendMessage({ type: 'SET_TIMER', title: '', duration: 0, isPausedDuringVotes, paused: 0 }, () => void chrome.runtime?.lastError);
-    } catch { /* dummy mode */ }
+    sendBg({ type: 'SET_TIMER', title: '', duration: 0, isPausedDuringVotes, paused: 0 });
   });
 
   document.getElementById('timer-save-preset-btn')?.addEventListener('click', () => {
@@ -2237,29 +2264,21 @@ function initSignalPanel() {
 
   const sendEndGame = (isEvilWin) => {
     if (!confirm(`End the game with ${isEvilWin ? 'Evil' : 'Good'} winning?`)) return;
-    try {
-      chrome.runtime.sendMessage({ type: 'END_GAME', isEvilWin }, () => void chrome.runtime?.lastError);
-    } catch { /* dummy mode */ }
+    sendBg({ type: 'END_GAME', isEvilWin });
   };
   document.getElementById('endgame-good-btn')?.addEventListener('click', () => sendEndGame(false));
   document.getElementById('endgame-evil-btn')?.addEventListener('click', () => sendEndGame(true));
 
   document.getElementById('gong-btn')?.addEventListener('click', () => {
-    try {
-      chrome.runtime.sendMessage({ type: 'GONG' }, () => void chrome.runtime?.lastError);
-    } catch { /* dummy mode */ }
+    sendBg({ type: 'GONG' });
   });
 
   document.getElementById('seat-add-btn')?.addEventListener('click', () => {
-    try {
-      chrome.runtime.sendMessage({ type: 'ADD_SEAT' }, () => void chrome.runtime?.lastError);
-    } catch { /* dummy mode */ }
+    sendBg({ type: 'ADD_SEAT' });
   });
 
   const sendSeatOrder = (order) => {
-    try {
-      chrome.runtime.sendMessage({ type: 'SHUFFLE_SEATS', order }, () => void chrome.runtime?.lastError);
-    } catch { /* dummy mode */ }
+    sendBg({ type: 'SHUFFLE_SEATS', order });
   };
 
   document.getElementById('seat-shuffle-btn')?.addEventListener('click', () => {
@@ -2289,22 +2308,16 @@ function initSignalPanel() {
 
   document.getElementById('seat-remove-empty-btn')?.addEventListener('click', () => {
     if (!confirm('Remove all empty seats?')) return;
-    try {
-      chrome.runtime.sendMessage({ type: 'REMOVE_EMPTY_SEATS' }, () => void chrome.runtime?.lastError);
-    } catch { /* dummy mode */ }
+    sendBg({ type: 'REMOVE_EMPTY_SEATS' });
   });
 
   document.getElementById('become-st-btn')?.addEventListener('click', () => {
-    try {
-      chrome.runtime.sendMessage({ type: 'BECOME_STORYTELLER' }, () => void chrome.runtime?.lastError);
-    } catch { /* dummy mode */ }
+    sendBg({ type: 'BECOME_STORYTELLER' });
   });
 
   document.getElementById('stepdown-st-btn')?.addEventListener('click', () => {
     if (!confirm('Step down as storyteller?')) return;
-    try {
-      chrome.runtime.sendMessage({ type: 'STEP_DOWN_STORYTELLER' }, () => void chrome.runtime?.lastError);
-    } catch { /* dummy mode */ }
+    sendBg({ type: 'STEP_DOWN_STORYTELLER' });
   });
 
   let pendingScript = null;
@@ -2352,9 +2365,7 @@ function parseScriptJson(json, fallbackName) {
 }
 
 function sendLoadScript(script) {
-  try {
-    chrome.runtime.sendMessage({ type: 'LOAD_CUSTOM_SCRIPT', author: script.author, name: script.name, roles: script.roles }, () => void chrome.runtime?.lastError);
-  } catch { /* dummy mode */ }
+  sendBg({ type: 'LOAD_CUSTOM_SCRIPT', author: script.author, name: script.name, roles: script.roles });
 }
 
 // ── Script Library ──────────────────────────────────────────────────────────
@@ -2627,9 +2638,7 @@ function touchWsHeartbeat() {
 }
 
 function tryReconnect() {
-  try {
-    chrome.runtime.sendMessage({ type: 'RECONNECT' }, () => void chrome.runtime?.lastError);
-  } catch { /* dummy mode / extension reloaded */ }
+  sendBg({ type: 'RECONNECT' });
 }
 
 (function tickHeartbeat() {
@@ -2832,9 +2841,7 @@ document.getElementById('clear-notes').addEventListener('click', () => {
   playerMeta = {};
   // Keep materializedStatus: cleared death/revive chips stay cleared instead of
   // being recreated from the timeline; only brand-new deaths will reappear.
-  if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
-    chrome.runtime.sendMessage({ type: 'CLEAR_TOKENS' });
-  }
+  sendBg({ type: 'CLEAR_TOKENS' });
   lastNotesKey = null;
   renderNotesGrid();
 });
@@ -2907,7 +2914,7 @@ function showPartialBanner() {
   el.querySelector('#partial-dismiss').addEventListener('click', () => el.remove());
 }
 
-chrome.runtime.sendMessage({ type: 'GET_STATE' }, (response) => {
+sendBg({ type: 'GET_STATE' }, (response) => {
   if (!response) { showReloadPrompt(); return; }
   applyFullRefresh(response);
   const wsEvents = response.wsEvents ?? [];

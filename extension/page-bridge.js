@@ -34,14 +34,16 @@
     return raw;
   };
 
-  // Returns [{name, pronouns}] for players in seat order (grimoire, #center only)
+  // Returns [{name, pronouns}] for players in seat order (grimoire, #center only).
+  // Nameless plates are kept as placeholders — buildState pairs names to seat
+  // tokens by index, so dropping one would shift every later player's name up
+  // a seat. An empty name is normalized to null and resolved downstream.
   const scrapeNameplates = () => {
     return [...document.querySelectorAll('#center .nameplate')]
       .map(el => ({
-        name: el.querySelector('.name')?.innerText?.trim() ?? null,
-        pronouns: el.querySelector('.pronouns')?.innerText?.trim() ?? null,
-      }))
-      .filter(el => el.name);
+        name: el.querySelector('.name')?.innerText?.trim() || null,
+        pronouns: el.querySelector('.pronouns')?.innerText?.trim() || null,
+      }));
   };
 
   const scrapeStorytellersFromDOM = () => {
