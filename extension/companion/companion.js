@@ -143,13 +143,15 @@ function enrichRoles(roles) {
   });
 }
 
-// Sync grimoire roles into playerMeta: grimoire wins in grimoire mode, only
-// fills gaps in notes mode. Auto-synced entries are marked roleAuto so that
-// clearing the grimoire clears them too — manual assignments (popover) stick.
+// Sync grimoire roles & alignments into playerMeta: grimoire wins in grimoire
+// mode, only fills gaps in notes mode. Auto-synced values are marked
+// (roleAuto/alignAuto) so that clearing them in the grimoire clears them here
+// too — manual assignments (popover, alignment cycle) stick.
 function syncPlayerMetaFromGrimoire() {
   for (const player of currentState?.players ?? []) {
     const name = player.name ?? `Seat ${player.seat + 1}`;
-    const meta = playerMeta[name];
+    let meta = playerMeta[name];
+
     if (player.roleId && (colorSource === 'grimoire' || !meta?.roleId)) {
       const roleObj = (currentState.roles ?? []).find(r => r.id === player.roleId);
       playerMeta[name] = {
@@ -162,6 +164,14 @@ function syncPlayerMetaFromGrimoire() {
       };
     } else if (!player.roleId && meta?.roleId && meta.roleAuto) {
       playerMeta[name] = { ...meta, roleId: '', roleName: '', roleTeam: '', roleIconUrl: null, roleAuto: false };
+    }
+
+    meta = playerMeta[name];
+    const alignment = player.alignment || '';
+    if (alignment && (colorSource === 'grimoire' || !meta?.alignment)) {
+      playerMeta[name] = { ...(meta ?? {}), alignment, alignAuto: true };
+    } else if (!alignment && meta?.alignment && meta.alignAuto) {
+      playerMeta[name] = { ...meta, alignment: '', alignAuto: false };
     }
   }
 }
@@ -209,6 +219,7 @@ function renderState(state) {
   renderPlayers();
   renderNightOrder();
   updateStRoleBtn();
+  updateShowNightBtn();
 }
 
 function updateStRoleBtn() {
@@ -216,6 +227,22 @@ function updateStRoleBtn() {
   if (!btn) return;
   const isSt = amIStoryteller();
   btn.textContent = isSt ? '🚪 Step Down' : '🧙 Become Storyteller';
+}
+
+// Night chats are only visible to the storyteller in the real game — hide the
+// toggle (and force it back off) for anyone else, rather than just relying on
+// amIStoryteller() being checked once at load.
+function updateShowNightBtn() {
+  const btn = document.getElementById('toggle-night');
+  if (!btn) return;
+  const isSt = amIStoryteller();
+  btn.style.display = isSt ? '' : 'none';
+  if (!isSt && showNightChats) {
+    showNightChats = false;
+    btn.textContent = 'show night';
+    btn.classList.remove('toggle-btn-active');
+    renderChats();
+  }
 }
 
 // ── Timeline ──────────────────────────────────────────────────────────────
@@ -1872,10 +1899,120 @@ function openSignalRolePopover(anchorEl) {
   search.focus();
 }
 
+// ── Player grimoire role popover — same searchable icon list, but selecting a
+// role commits it to the live game (players/updatePlayer) via SET_PLAYER_PROPERTY,
+// instead of setting Notes meta or a signal token. Kept separate from those
+// two for the same reason: different target/semantics per selection.
+let _gameRolePop = null;
+let _gameRoleSeat = null;
+
+function getGameRolePopover() {
+  if (_gameRolePop) return _gameRolePop;
+  _gameRolePop = document.createElement('div');
+  _gameRolePop.id = 'game-role-popover';
+  _gameRolePop.className = 'mrp-popover';
+  _gameRolePop.innerHTML = `
+    <input class="mrp-search" type="text" placeholder="Search…" />
+    <div class="mrp-list"></div>
+    <button class="mrp-clear">clear role</button>
+  `;
+  document.body.appendChild(_gameRolePop);
+
+  const search = _gameRolePop.querySelector('.mrp-search');
+  const list = _gameRolePop.querySelector('.mrp-list');
+  const clearBtn = _gameRolePop.querySelector('.mrp-clear');
+
+  const closePopover = () => { _gameRolePop.style.display = 'none'; _gameRoleSeat = null; };
+
+  const selectRole = (roleId) => {
+    if (_gameRoleSeat === null) return;
+    sendBg({ type: 'SET_PLAYER_PROPERTY', seat: _gameRoleSeat, property: 'role', roleId });
+    closePopover();
+  };
+
+  const renderList = (filter) => {
+    const roles = (currentState?.roles ?? []).filter(r =>
+      !filter || r.name.toLowerCase().includes(filter.toLowerCase()));
+    list.innerHTML = roles.map(r => {
+      const icon = _iconUrl(r) ? `<img class="tp-role-icon" src="${esc(_iconUrl(r))}" />` : '';
+      return `<div class="mrp-item role-name ${r.team ?? ''}" data-id="${esc(r.id)}" tabindex="-1">${icon}${esc(r.name)}</div>`;
+    }).join('');
+    list.querySelectorAll('.mrp-item').forEach(item => {
+      item.addEventListener('mousedown', (e) => { e.preventDefault(); selectRole(item.dataset.id); });
+    });
+  };
+
+  _gameRolePop._renderList = renderList;
+
+  search.addEventListener('input', () => renderList(search.value));
+
+  search.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      list.querySelector('.mrp-item')?.focus();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const first = list.querySelector('.mrp-item');
+      if (first) selectRole(first.dataset.id);
+    } else if (e.key === 'Escape') {
+      closePopover();
+    }
+  });
+
+  list.addEventListener('keydown', (e) => {
+    const items = [...list.querySelectorAll('.mrp-item')];
+    const idx = items.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      items[idx + 1]?.focus();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (idx > 0) items[idx - 1].focus(); else search.focus();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (idx >= 0) selectRole(items[idx].dataset.id);
+    } else if (e.key === 'Escape') {
+      closePopover();
+    }
+  });
+
+  clearBtn.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    if (_gameRoleSeat === null) return;
+    sendBg({ type: 'SET_PLAYER_PROPERTY', seat: _gameRoleSeat, property: 'role', roleId: null });
+    closePopover();
+  });
+
+  document.addEventListener('mousedown', (e) => {
+    if (_gameRolePop.style.display !== 'none' && !_gameRolePop.contains(e.target) && !e.target.closest('.player-role-btn')) {
+      closePopover();
+    }
+  });
+  return _gameRolePop;
+}
+
+function openGameRolePopover(seat, anchorEl) {
+  const pop = getGameRolePopover();
+  _gameRoleSeat = seat;
+  const search = pop.querySelector('.mrp-search');
+  search.value = '';
+  pop._renderList('');
+  pop.style.display = 'flex';
+
+  const rect = anchorEl.getBoundingClientRect();
+  const spaceBelow = window.innerHeight - rect.bottom;
+  pop.style.top = spaceBelow > 200
+    ? `${rect.bottom + window.scrollY + 2}px`
+    : `${rect.top + window.scrollY - pop.offsetHeight - 2}px`;
+  pop.style.left = `${Math.max(8, Math.min(rect.left + window.scrollX, window.innerWidth - pop.offsetWidth - 8))}px`;
+
+  search.focus();
+}
+
 function toggleAlignment(name) {
   const cycle = { '': 'good', 'good': 'evil', 'evil': '' };
   const cur = playerMeta[name]?.alignment ?? '';
-  playerMeta[name] = { ...(playerMeta[name] ?? {}), alignment: cycle[cur] };
+  playerMeta[name] = { ...(playerMeta[name] ?? {}), alignment: cycle[cur], alignAuto: false };
   savePlayerMeta(name);
   refreshMetaCells(name);
   if (colorSource === 'notes') refreshPageColors();
@@ -2642,11 +2779,28 @@ function parseScriptJson(json, fallbackName) {
   const roles = json
     .filter(r => r !== '_meta' && r?.id !== '_meta')
     .map(r => (typeof r === 'string' ? { id: r } : r));
-  return { author: meta.author ?? '', name: meta.name ?? fallbackName, roles };
+  return {
+    author: meta.author ?? '',
+    name: meta.name ?? fallbackName,
+    roles,
+    background: meta.background ?? null,
+    logo: meta.logo ?? null,
+    almanac: meta.almanac ?? null,
+    bootlegger: meta.bootlegger ?? null,
+  };
 }
 
 function sendLoadScript(script) {
-  sendBg({ type: 'LOAD_CUSTOM_SCRIPT', author: script.author, name: script.name, roles: script.roles });
+  sendBg({
+    type: 'LOAD_CUSTOM_SCRIPT',
+    author: script.author,
+    name: script.name,
+    roles: script.roles,
+    background: script.background,
+    logo: script.logo,
+    almanac: script.almanac,
+    bootlegger: script.bootlegger,
+  });
 }
 
 // ── Script Library ──────────────────────────────────────────────────────────
@@ -2886,7 +3040,6 @@ function initScriptLibrary() {
         e.stopPropagation();
         const script = byCategory[btn.dataset.cat][Number(btn.dataset.idx)];
         sendLoadScript(script);
-        document.getElementById('script-library-overlay').style.display = 'none';
       });
     });
   }
@@ -2982,6 +3135,17 @@ function playerRoleInfo(p, name) {
   };
 }
 
+// Good/evil as 'g'/'e', falling back to the team-implied default for townsfolk/
+// outsider/minion/demon (they're always one or the other) — only travellers can
+// genuinely have no alignment at all.
+function impliedAlignmentGE(p) {
+  if (p.alignment === 'good') return 'g';
+  if (p.alignment === 'evil') return 'e';
+  if (p.team === 'minion' || p.team === 'demon') return 'e';
+  if (p.team === 'townsfolk' || p.team === 'outsider') return 'g';
+  return null;
+}
+
 function renderPlayers() {
   const table = document.getElementById('player-table');
   if (!table) return;
@@ -2993,8 +3157,13 @@ function renderPlayers() {
     const roleHtml = role
       ? `<span class="role-name ${esc(role.team)}">${icon}${esc(role.name)}</span>`
       : '<span class="player-role-empty">—</span>';
-    const pronouns = p.pronouns ? ` <span class="player-pronouns">${esc(p.pronouns)}</span>` : '';
     const sigBtn = p.id ? `<button class="sig-hist-btn" data-uid="${esc(String(p.id))}" title="Signal history">💬</button>` : '';
+    const ge = impliedAlignmentGE(p);
+    const alignClass = ge === 'g' ? 'align-dot-good' : ge === 'e' ? 'align-dot-evil' : 'align-dot-none';
+    const alignBtn = `<button class="align-cycle-btn" data-seat="${p.seat}" title="Cycle alignment"><span class="align-dot ${alignClass}"></span></button>`;
+    // Alignment (good/evil), when set (or team-implied), overrides the role-team
+    // color — it's the ST-controllable axis, and can diverge from the role's team.
+    const nameColorClass = ge === 'g' ? 'townsfolk' : ge === 'e' ? 'demon' : playerTeamByName(name);
     const rowClasses = [
       p.isDead ? 'dead' : '',
       playerActionMode ? 'pa-selectable' : '',
@@ -3002,8 +3171,8 @@ function renderPlayers() {
     ].filter(Boolean).join(' ');
     return `<tr${rowClasses ? ` class="${rowClasses}"` : ''} data-seat="${p.seat}">
       <td class="seat">${p.seat + 1}</td>
-      <td><span class="player-name role-name ${playerTeamByName(name)}" data-player="${esc(name)}">${esc(dn(name))}</span>${pronouns}${p.isDead ? ' 💀' : ''}${sigBtn}</td>
-      <td>${roleHtml}</td>
+      <td><span class="player-name role-name ${nameColorClass}" data-player="${esc(name)}">${esc(dn(name))}</span>${p.isDead ? ' 💀' : ''}${sigBtn}${alignBtn}</td>
+      <td><button class="player-role-btn" data-seat="${p.seat}" title="Set role">${roleHtml}</button></td>
       <td><button class="seat-remove-x-btn" data-seat="${p.seat}" data-occupied="${p.id ? '1' : ''}" title="Remove seat">✕</button></td>
     </tr>`;
   }).join('');
@@ -3012,6 +3181,26 @@ function renderPlayers() {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       openSignalPopover(btn.dataset.uid, btn);
+    });
+  });
+  table.querySelectorAll('.align-cycle-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const seat = Number(btn.dataset.seat);
+      const player = players.find(pl => pl.seat === seat);
+      const cur = impliedAlignmentGE(player ?? {});
+      // Travellers can be truly unset (3-state cycle); every other team is always
+      // one or the other, so just flip between the two.
+      const value = player?.team === 'traveller'
+        ? (cur === null ? 'g' : cur === 'g' ? 'e' : null)
+        : (cur === 'g' ? 'e' : 'g');
+      sendBg({ type: 'SET_PLAYER_PROPERTY', seat, property: 'alignment', value });
+    });
+  });
+  table.querySelectorAll('.player-role-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openGameRolePopover(Number(btn.dataset.seat), btn);
     });
   });
   table.querySelectorAll('.seat-remove-x-btn').forEach(btn => {
@@ -3024,7 +3213,8 @@ function renderPlayers() {
   });
   table.querySelector('tbody')?.addEventListener('click', (e) => {
     if (!playerActionMode) return;
-    if (e.target.closest('.sig-hist-btn') || e.target.closest('.seat-remove-x-btn')) return;
+    if (e.target.closest('.sig-hist-btn') || e.target.closest('.seat-remove-x-btn') ||
+        e.target.closest('.align-cycle-btn') || e.target.closest('.player-role-btn')) return;
     const tr = e.target.closest('tr[data-seat]');
     if (!tr) return;
     handlePlayerActionPick(Number(tr.dataset.seat));
@@ -3066,12 +3256,10 @@ function initAddSeatFloatButton() {
     if (!floating || returning) return;
     returning = true;
     const homeRect = spacer.getBoundingClientRect();
-    requestAnimationFrame(() => {
-      btn.style.transition = 'left 0.6s ease, top 0.6s ease';
-      btn.style.left = `${homeRect.left}px`;
-      btn.style.top = `${homeRect.top}px`;
-    });
-    btn.addEventListener('transitionend', () => {
+    let fallbackTimer = null;
+    const cleanup = () => {
+      clearTimeout(fallbackTimer);
+      btn.removeEventListener('transitionend', cleanup);
       btn.style.position = '';
       btn.style.left = '';
       btn.style.top = '';
@@ -3083,7 +3271,18 @@ function initAddSeatFloatButton() {
       spacer = null;
       floating = false;
       returning = false;
-    }, { once: true });
+    };
+    requestAnimationFrame(() => {
+      btn.style.transition = 'left 0.6s ease, top 0.6s ease';
+      btn.style.left = `${homeRect.left}px`;
+      btn.style.top = `${homeRect.top}px`;
+    });
+    btn.addEventListener('transitionend', cleanup);
+    // If the button was already at its home position (e.g. the seat-add round
+    // trip hadn't reflowed the layout yet), left/top never change, so
+    // transitionend never fires — without this, cleanup would never run and
+    // the button would get stuck "floating" forever, ignoring further clicks.
+    fallbackTimer = setTimeout(cleanup, 700);
   }
 
   btn.addEventListener('click', () => {
@@ -3371,6 +3570,8 @@ document.addEventListener('keydown', (e) => {
   if (role && role.style.display !== 'none') role.style.display = 'none';
   const sigRole = document.getElementById('signal-role-popover');
   if (sigRole && sigRole.style.display !== 'none') sigRole.style.display = 'none';
+  const gameRole = document.getElementById('game-role-popover');
+  if (gameRole && gameRole.style.display !== 'none') gameRole.style.display = 'none';
   closeSignalPopover();
   if (signalHistoryOpen) closeSignalHistoryPanel();
   const settings = document.getElementById('settings-popup');

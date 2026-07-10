@@ -103,6 +103,9 @@
     const storage = readStorage();
     const nameplates = scrapeNameplates();
     const tokens = scrapePlayerTokens();
+    // localStorage's 'players' entry never reflects alignment edits (it's null there
+    // even right after a confirmed store commit) — read it from the live store instead.
+    const storePlayers = getStore()?.state?.players?.players ?? [];
 
     // Nameplates are authoritative — extra .player elements appear when the token picker is open
     const playerCount = Math.min(tokens.length, nameplates.length);
@@ -146,6 +149,15 @@
         const stored = (storage.players ?? [])[i] ?? { seat: i };
         const id = stored.id ?? historyIds[i] ?? null;
         const roleId = token.roleId || stored.role?.id || '';
+        // Read straight from the live store, not the DOM-scraped token class or
+        // localStorage: the grimoire always draws minion/demon tokens evil-red
+        // regardless of their actual alignment field (so the DOM class is not a
+        // reliable "unset" signal for them), and localStorage's mirror of this
+        // field never updates at all. An unset field is genuinely unset — it must
+        // not fall back to the DOM's team-implied color, or a cleared alignment on
+        // an evil-team seat would immediately re-read back as "evil" from the DOM.
+        const rawAlignment = storePlayers[i]?.alignment;
+        const alignment = rawAlignment === 'g' ? 'good' : rawAlignment === 'e' ? 'evil' : '';
         return {
           ...stored,
           id,
@@ -155,6 +167,7 @@
           roleId,
           roleName: roleMap[roleId] ?? null,
           team: token.team || '',
+          alignment,
           isDead: token.isDead || false,
         };
       }),
@@ -229,7 +242,10 @@
 
   const observer = new MutationObserver(() => debouncedSend());
   const startObserver = () => {
-    observer.observe(document.body, { childList: true, subtree: true });
+    // Class changes matter too: alignment rings, death shrouds, and role tokens
+    // are toggled via classes without adding/removing nodes, and not all of
+    // them are mirrored to localStorage where the setItem hook would catch them.
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
   };
 
   if (document.readyState === 'loading') {
@@ -301,6 +317,29 @@
         if (store) store.dispatch('vote/nominatePlayer', [event.data.nominatorSeat, event.data.nomineeSeat]);
       } catch { /* page not ready or store unavailable */ }
     }
+    if (event.data?.type === 'SET_PLAYER_PROPERTY') {
+      try {
+        const store = getStore();
+        const player = store?.state?.players?.players?.[event.data.seat];
+        if (!store || !player) return;
+        // Role edits arrive as a roleId — resolve to the full role object. The
+        // current script's role list (localStorage 'roles') is the source that
+        // actually covers homebrew/custom roles (rolesAvailable is just the
+        // official catalog, ~156 entries, and never has custom script roles);
+        // fall back to rolesAvailable for anything not found there. An
+        // unresolved/cleared id commits an empty object, mirroring clearRoles' output.
+        const value = event.data.property === 'role'
+          ? ((JSON.parse(localStorage.getItem('roles') || '[]').find(r => r?.id === event.data.roleId))
+              ?? store.state.rolesAvailable?.get(event.data.roleId)
+              ?? {})
+          : event.data.value;
+        store.commit('players/updatePlayer', { player, property: event.data.property, value });
+        // Alignment edits on minion/demon seats don't touch the DOM or localStorage
+        // (the grimoire never recolors them), so none of the passive watchers below
+        // would otherwise notice this changed — force a refresh explicitly.
+        debouncedSend();
+      } catch { /* page not ready or store unavailable */ }
+    }
     if (event.data?.type === 'CLEAR_GRIMOIRE') {
       try {
         const store = getStore();
@@ -345,9 +384,25 @@
       try {
         const store = getStore();
         if (!store) return;
-        store.dispatch('players/clearRoles', { clearNPCs: true });
+        // Order matches the real upload flow: roles committed first, then
+        // clearRoles — reversed, clearRoles would wipe the just-set roles.
         store.commit('setCustomRoles', event.data.roles);
-        store.commit('setEdition', { edition: { author: event.data.author, name: event.data.name, isOfficial: false, id: 'custom' }, theme: 0 });
+        store.dispatch('players/clearRoles', { clearNPCs: true });
+        const edition = { author: event.data.author, name: event.data.name, isOfficial: false, id: 'custom' };
+        if (event.data.background) edition.background = event.data.background;
+        if (event.data.logo) edition.logo = event.data.logo;
+        if (event.data.almanac) edition.almanac = event.data.almanac;
+        if (event.data.bootlegger) edition.bootlegger = event.data.bootlegger;
+        store.commit('setEdition', { edition, theme: event.data.background ? 1 : 0 });
+        // Fabled/homebrew "loric" reference roles (Bootlegger, Sentinel, Djinn, etc.)
+        // are listed in the script's role array as bare ids with no data — the real
+        // upload flow resolves them against store.state.npcs (a bundled catalog
+        // distinct from rolesAvailable) and additionally commits them as NPCs, which
+        // is what actually populates the grimoire's reference-card panel.
+        const npcs = (event.data.roles ?? [])
+          .map(r => store.state.npcs?.get(r.id))
+          .filter(Boolean);
+        if (npcs.length) store.commit('players/setNPC', { npc: npcs });
       } catch { /* page not ready or store unavailable */ }
     }
   });
