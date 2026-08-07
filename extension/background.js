@@ -468,6 +468,7 @@ const COMPANION_COMMANDS = new Set([
   'ADD_SEAT', 'SHUFFLE_SEATS', 'REMOVE_EMPTY_SEATS',
   'BECOME_STORYTELLER', 'STEP_DOWN_STORYTELLER', 'LOAD_CUSTOM_SCRIPT',
   'NEXT_PHASE', 'NOMINATE', 'REMOVE_SEAT', 'CLEAR_GRIMOIRE', 'SET_PLAYER_PROPERTY',
+  'JOIN_CHANNEL',
 ]);
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

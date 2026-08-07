@@ -32,6 +32,8 @@ let notesFixedColWidths = null; // { player, role, align } in px — set once, n
 let pinnedPlayers = new Set();
 let stMessage = [];
 let stRecipientIds = new Set();
+let nightSignalQueue = {}; // `${night}|${roleId}|${holderUid}` -> {status, tokens, filled, sentAt}
+let nightSignalUnlocks = new Set(); // `${night}|${blockingRoleId}|${blockingHolderUid}` manually unlocked despite no observed reply
 let viewRole = 'player'; // 'storyteller' | 'player' — auto-follows amIStoryteller() until user toggles explicitly
 let viewRoleUserSet = false;
 
@@ -85,7 +87,7 @@ function registerRoleAlias(r) {
   const id = (r.id ?? '').replace(/^traveller_/, '');
   if (!id || _roleAliases[id] || _roles().some(x => x.id === id)) return;
   // Official wiki icon URL is the most reliable hint: Icon_fortune_teller.png → fortuneteller
-  const m = (r.iconUrl ?? '').match(/Icon_([a-z0-9_]+)\./i);
+  const m = (typeof r.iconUrl === 'string' ? r.iconUrl : '').match(/Icon_([a-z0-9_]+)\./i);
   const guess = m ? m[1].toLowerCase().replace(/_/g, '') : null;
   if (guess && _roles().some(x => x.id === guess)) { _roleAliases[id] = guess; return; }
   // Fallback: longest canonical id the custom id starts with (washerwomancz → washerwoman)
@@ -216,10 +218,29 @@ function renderState(state) {
   renderSignalPlayers();
   refreshSignalHistoryPanel();
   renderTimerPresets();
+  renderSignalPresets();
   renderPlayers();
   renderNightOrder();
   updateStRoleBtn();
   updateShowNightBtn();
+  updateVoiceBtn();
+}
+
+// A channel of our own, so nobody else is ever routed into it — the id only has
+// to be unique on the chat server, it isn't one of the app's own night-/private-
+// prefixed names. Players can still be pulled in with a normal whisper request.
+function soloChannelId() {
+  const myId = currentState?.myUserId;
+  return myId ? `private-solo-${myId}` : null;
+}
+
+function updateVoiceBtn() {
+  const btn = document.getElementById('voice-btn');
+  if (!btn) return;
+  const inCall = !!currentState?.chatChannel;
+  document.getElementById('voice-btn-label').textContent = inCall ? 'Leave Voice' : 'Join Voice';
+  btn.classList.toggle('toggle-btn-active', inCall);
+  btn.disabled = !inCall && !soloChannelId();
 }
 
 function updateStRoleBtn() {
@@ -2286,6 +2307,7 @@ const SIGNAL_TOKEN_DEFS = [
   { id: 'three',      label: '3',                             cls: 'sig-chip-num' },
   { id: 'four',       label: '4',                             cls: 'sig-chip-num' },
   { id: 'five',       label: '5',                             cls: 'sig-chip-num' },
+  { id: 'grimoire',   label: '🗺️ Grimoire Snapshot',          cls: '' },
 ];
 
 // Split into "self report" (You are evil, role X, Bluffs: ...) and "other
@@ -2539,6 +2561,38 @@ const TIMER_PRESETS = [
   { label: 'Private conversations', title: 'Private conversations', pause: null, dynamic: 'halfAlive' },
 ];
 let customTimerPresets = []; // [{ label, title, minutes, seconds, pause }] — user-saved, persisted in settings
+let customSignalPresets = []; // [{ id, message: [{id, data?}, ...] }] — user-saved, persisted in settings
+
+function renderSignalPresets() {
+  const wrap = document.getElementById('signal-presets');
+  if (!wrap) return;
+
+  // Labeled by its own contents (recomputed live via signalTokenLabel, not a
+  // name typed at save time) — so it stays accurate if a referenced role or
+  // player's display name changes later, and there's nothing to type/name.
+  wrap.innerHTML = customSignalPresets.map((preset, i) => {
+    const label = preset.message.map(signalTokenLabel).join(' · ') || '(empty)';
+    return `<button type="button" class="timer-preset-btn" data-i="${i}" title="${esc(label)}">${esc(label)}<span class="timer-preset-remove" data-i="${i}">✕</span></button>`;
+  }).join('') || '<span class="sig-empty">No saved presets yet</span>';
+
+  wrap.querySelectorAll('.timer-preset-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      if (e.target.closest('.timer-preset-remove')) return;
+      const preset = customSignalPresets[Number(btn.dataset.i)];
+      stMessage = preset.message.map(t => ({ ...t }));
+      renderSignalPreview();
+      updateSignalSendBtn();
+    });
+  });
+  wrap.querySelectorAll('.timer-preset-remove').forEach(x => {
+    x.addEventListener('click', (e) => {
+      e.stopPropagation();
+      customSignalPresets = customSignalPresets.filter((_, i) => i !== Number(x.dataset.i));
+      saveSettings();
+      renderSignalPresets();
+    });
+  });
+}
 
 function sendSetTimer({ title, minutes, seconds, isPausedDuringVotes }) {
   const duration = (minutes * 60 + seconds) * 1000;
@@ -2631,6 +2685,16 @@ function initSignalPanel() {
 
   document.getElementById('signal-custom-add-btn')?.addEventListener('click', addCustomSignalToken);
 
+  document.getElementById('signal-grimoire-btn')?.addEventListener('click', () => {
+    // Filled in with a live snapshot by page-bridge right before sending —
+    // the companion page's own scraped state isn't detailed enough (no
+    // per-reminder ids/flags), so this stays a placeholder until send time.
+    if (stMessage.some(t => t.id === 'grimoire')) return;
+    stMessage.push({ id: 'grimoire' });
+    renderSignalPreview();
+    updateSignalSendBtn();
+  });
+
   document.getElementById('signal-clear-btn')?.addEventListener('click', () => {
     stMessage = [];
     renderSignalPreview();
@@ -2644,6 +2708,9 @@ function initSignalPanel() {
   });
 
   document.getElementById('signal-send-btn')?.addEventListener('click', () => {
+    // Catch text left in the custom-token field that never got added as a chip —
+    // sending should use it rather than silently dropping it.
+    addCustomSignalToken();
     if (!stMessage.length || !stRecipientIds.size) return;
     const userIds = [...stRecipientIds];
     sendBg({ type: 'SEND_SIGNAL', userIds, message: stMessage });
@@ -2653,6 +2720,13 @@ function initSignalPanel() {
   });
 
   document.getElementById('signal-history-open-btn')?.addEventListener('click', () => openSignalHistoryPanel());
+
+  document.getElementById('signal-save-preset-btn')?.addEventListener('click', () => {
+    if (!stMessage.length) return;
+    customSignalPresets.push({ id: `${Date.now()}-${Math.random()}`, message: stMessage.map(t => ({ ...t })) });
+    saveSettings();
+    renderSignalPresets();
+  });
 
   document.getElementById('timer-set-btn')?.addEventListener('click', () => {
     sendSetTimer({
@@ -2688,6 +2762,18 @@ function initSignalPanel() {
 
   document.getElementById('gong-btn')?.addEventListener('click', () => {
     sendBg({ type: 'GONG' });
+  });
+
+  document.getElementById('voice-btn')?.addEventListener('click', () => {
+    // Leaving whatever channel we're in takes priority — if a player whispered us
+    // into a night channel, this button is the hang-up for that too.
+    const channel = currentState?.chatChannel ? '' : soloChannelId();
+    if (channel === null) return;
+    sendBg({ type: 'JOIN_CHANNEL', channel });
+    // Optimistic: the store push that confirms the change only lands on the next
+    // WS frame, which can be a second or two out on an idle table.
+    currentState = { ...currentState, chatChannel: channel };
+    updateVoiceBtn();
   });
 
   document.getElementById('next-phase-btn')?.addEventListener('click', () => {
@@ -2732,6 +2818,13 @@ function initSignalPanel() {
 
   document.getElementById('players-nominate-btn')?.addEventListener('click', () => setPlayerActionMode('nominate'));
   document.getElementById('players-swap-btn')?.addEventListener('click', () => setPlayerActionMode('swap'));
+  document.getElementById('players-mark-btn')?.addEventListener('click', () => setPlayerActionMode('mark'));
+  document.getElementById('players-unmark-btn')?.addEventListener('click', () => {
+    const marked = (currentState?.players ?? []).find(pl => (pl.status ?? []).includes('marked'));
+    if (!marked) return;
+    const value = marked.status.filter(s => s !== 'marked');
+    sendBg({ type: 'SET_PLAYER_PROPERTY', seat: marked.seat, property: 'status', value });
+  });
   document.getElementById('clear-grimoire-btn')?.addEventListener('click', () => {
     if (!confirm('Clear the grimoire? This removes all roles, reminders, and status from every player.')) return;
     sendBg({ type: 'CLEAR_GRIMOIRE' });
@@ -2826,7 +2919,7 @@ function classifyScriptRoleTeam(entry) {
 
   if (!canonical) {
     // Wiki-style icon filename: Icon_fortune_teller.png → fortuneteller
-    const iconMatch = (entry?.iconUrl ?? '').match(/Icon_([a-z0-9_]+)\./i);
+    const iconMatch = (typeof entry?.iconUrl === 'string' ? entry.iconUrl : '').match(/Icon_([a-z0-9_]+)\./i);
     if (iconMatch) {
       const guess = iconMatch[1].toLowerCase().replace(/_/g, '');
       canonical = _roles().find(x => x.id === guess);
@@ -2854,6 +2947,10 @@ function classifyScriptRoleTeam(entry) {
     team: explicitTeam || canonical?.team || '',
     name: explicitName ?? canonical?.name ?? id,
     id: canonical?.id ?? null,
+    // Kept separate from `name` (which purposely prefers the script's own,
+    // possibly-translated name for display) — search needs the resolved
+    // canonical English name too, or a translated script's roles never match.
+    canonicalName: canonical?.name ?? null,
   };
 }
 
@@ -2903,14 +3000,21 @@ async function scanScriptDir(dirHandle, category = null) {
         const json = JSON.parse(await file.text());
         const parsed = parseScriptJson(json, name.replace(/\.json$/i, ''));
         const rolesByTeam = {};
+        const roleSearchTerms = new Set();
         for (const r of parsed.roles) {
-          const { team, name: roleName, id: roleId } = classifyScriptRoleTeam(r);
+          const { team, name: roleName, id: roleId, canonicalName } = classifyScriptRoleTeam(r);
           // Fabled and Loric are both non-player special roles — merge into one "NPCs" bucket
           const key = (team === 'fabled' || team === 'loric') ? 'NPCs' : (team || 'unclassified');
           (rolesByTeam[key] ??= []).push({ name: roleName, id: roleId });
+          // Search by the script's own (possibly translated) name AND the
+          // resolved canonical id/English name, so "washerwoman" finds a
+          // Czech script's "Pradlena" too.
+          if (roleName) roleSearchTerms.add(roleName.toLowerCase());
+          if (canonicalName) roleSearchTerms.add(canonicalName.toLowerCase());
+          if (roleId) roleSearchTerms.add(roleId.toLowerCase());
         }
         const roleNames = Object.values(rolesByTeam).flat().map(r => r.name).filter(Boolean);
-        results.push({ ...parsed, category: category ?? 'Uncategorized', rolesByTeam, roleNames });
+        results.push({ ...parsed, category: category ?? 'Uncategorized', rolesByTeam, roleNames, roleSearchTerms: [...roleSearchTerms] });
       } catch { /* not a valid script file — skip it silently, library scan shouldn't halt on one bad file */ }
     }
   }
@@ -2981,7 +3085,7 @@ function initScriptLibrary() {
       if (!q) return true;
       return s.name.toLowerCase().includes(q)
         || s.author.toLowerCase().includes(q)
-        || s.roleNames.some(n => n.toLowerCase().includes(q));
+        || (s.roleSearchTerms ?? s.roleNames).some(n => n.toLowerCase().includes(q));
     });
 
     const byCategory = {};
@@ -3120,18 +3224,34 @@ function appendWsEvent(payload) {
 }
 
 // ── Player list ───────────────────────────────────────────────────────────
-// Seat / player / role table. Role comes from the grimoire token or the
-// notes-grid assignment, honoring the source-of-truth setting.
+// Seat / player / role table. This is the storyteller's own management tool
+// for the live grimoire, so it always reflects ground truth (the actual token
+// on the actual seat) — unlike the Notes grid and the timeline/chat name
+// coloring, it must NOT be affected by the "source of truth" (grimoire/notes)
+// setting. Otherwise a seat swap correctly moves the grimoire token while the
+// Players panel keeps showing the stale notes-cached role for that seat.
 
-function playerRoleInfo(p, name) {
-  const meta = playerMeta[name] ?? {};
-  const roleId = (colorSource === 'notes' ? (meta.roleId || p.roleId) : (p.roleId || meta.roleId)) || '';
+// Every bundled role icon ships both a "_g" (good) and "_e" (evil) token
+// variant, so the art itself can flip with alignment — not just the token
+// ring color. A no-op for anything that isn't one of our own "_g"/"_e"-suffixed
+// bundled icons (e.g. a custom script's externally-hosted iconUrl).
+function alignedIconUrl(url, ge) {
+  if (!url) return url;
+  if (ge === 'e') return url.replace(/_g\.(\w+)$/, '_e.$1');
+  if (ge === 'g') return url.replace(/_e\.(\w+)$/, '_g.$1');
+  return url;
+}
+
+function playerRoleInfo(p) {
+  const roleId = p.roleId || '';
   if (!roleId) return null;
   const role = _roles().find(r => r.id === _normalizeId(roleId));
+  const team = role?.team ?? p.team ?? '';
+  const iconUrl = role ? _iconUrl(role) : null;
   return {
-    name: role?.name ?? meta.roleName ?? p.roleName ?? roleId,
-    team: role?.team ?? meta.roleTeam ?? p.team ?? '',
-    iconUrl: role ? _iconUrl(role) : (meta.roleIconUrl ?? null),
+    name: role?.name ?? p.roleName ?? roleId,
+    team,
+    iconUrl: alignedIconUrl(iconUrl, impliedAlignmentGE(p)),
   };
 }
 
@@ -3146,47 +3266,113 @@ function impliedAlignmentGE(p) {
   return null;
 }
 
+// Per-day nomination limits (by name, not seat, so they stay correct across a
+// mid-day seat swap): each player may nominate once and be nominated once —
+// except nominating a traveller doesn't use up the nominator's own nomination
+// for the day, since travellers are nominated separately from the main pool.
+function nominationLimitsToday() {
+  const nominatedNames = new Set();
+  const usedNominatorNames = new Set();
+  const currentDay = currentState?.phase ? phaseLabel(currentState.phase) : null;
+  if (!currentDay) return { nominatedNames, usedNominatorNames };
+  for (const nom of allNominations) {
+    if (gamePhaseAt(nom.ts) !== currentDay) continue;
+    const nominatorName = nomSeatName(nom, nom.nominatorSeat);
+    const nomineeName = nomSeatName(nom, nom.nomineeSeat);
+    nominatedNames.add(nomineeName);
+    const nomineeTeam = currentState?.players?.find(p => displayName(p, p.seat) === nomineeName)?.team;
+    if (nomineeTeam !== 'traveller') usedNominatorNames.add(nominatorName);
+  }
+  return { nominatedNames, usedNominatorNames };
+}
+
 function renderPlayers() {
   const table = document.getElementById('player-table');
   if (!table) return;
   const players = currentState?.players ?? [];
-  const rows = players.map(p => {
+  const n = players.length;
+  // Seats sit on a ring at 42% radius (see cx/cy below); as more seats are
+  // added, the straight-line gap between adjacent seats' centers (the chord)
+  // shrinks even though the circle's on-screen size doesn't, so labels start
+  // overlapping neighboring tokens. Grow the circle's diameter so that chord
+  // stays >= a fixed pixel budget, keeping label spacing roughly constant
+  // regardless of player count (still bounded by the container's own width).
+  const minChordPx = 100;
+  const neededDiameter = n > 1 ? minChordPx / (0.84 * Math.sin(Math.PI / n)) : 420;
+  table.style.maxWidth = `${Math.round(Math.max(420, Math.min(1100, neededDiameter)))}px`;
+  // Only computed while actively picking a nominator/nominee — cheap to build
+  // (walks allNominations once), but pointless otherwise.
+  const nomLimits = (playerActionMode === 'nominate') ? nominationLimitsToday() : null;
+  const seats = players.map((p, idx) => {
     const name = displayName(p, p.seat);
-    const role = playerRoleInfo(p, name);
-    const icon = role?.iconUrl ? `<img class="tp-role-icon" src="${esc(role.iconUrl)}" />` : '';
-    const roleHtml = role
-      ? `<span class="role-name ${esc(role.team)}">${icon}${esc(role.name)}</span>`
-      : '<span class="player-role-empty">—</span>';
-    const sigBtn = p.id ? `<button class="sig-hist-btn" data-uid="${esc(String(p.id))}" title="Signal history">💬</button>` : '';
+    const role = playerRoleInfo(p);
+    const tokenFill = role?.iconUrl ? ` style="background-image:url('${esc(role.iconUrl)}')"` : '';
+    const tokenLabel = !role?.iconUrl ? esc((role?.name ?? '?').slice(0, 1)) : '';
     const ge = impliedAlignmentGE(p);
     const alignClass = ge === 'g' ? 'align-dot-good' : ge === 'e' ? 'align-dot-evil' : 'align-dot-none';
-    const alignBtn = `<button class="align-cycle-btn" data-seat="${p.seat}" title="Cycle alignment"><span class="align-dot ${alignClass}"></span></button>`;
     // Alignment (good/evil), when set (or team-implied), overrides the role-team
     // color — it's the ST-controllable axis, and can diverge from the role's team.
-    const nameColorClass = ge === 'g' ? 'townsfolk' : ge === 'e' ? 'demon' : playerTeamByName(name);
-    const rowClasses = [
+    // The token icon itself also flips good/evil art (see alignedIconUrl); this
+    // recolors the ring/label to match as a second, redundant visual cue. Falls
+    // back to p.team directly (not playerTeamByName, which honors the notes/
+    // grimoire source-of-truth toggle) — this panel always shows ground truth.
+    const nameColorClass = ge === 'g' ? 'townsfolk' : ge === 'e' ? 'demon' : (p.team || '');
+    const tokenColorClass = role ? nameColorClass : 'token-empty';
+    // Nominate mode: before a nominator is picked, flag whoever has already
+    // used their nomination today; after, flag whoever has already been
+    // nominated today. Visual only — clicking still works either way, since
+    // the storyteller may have a legitimate reason to override (corrections,
+    // house rules, a missed exception).
+    const nomIneligible = nomLimits && (playerActionPickedSeat === null
+      ? nomLimits.usedNominatorNames.has(name)
+      : nomLimits.nominatedNames.has(name));
+    const seatClasses = [
+      'player-seat',
       p.isDead ? 'dead' : '',
       playerActionMode ? 'pa-selectable' : '',
       playerActionMode && playerActionPickedSeat === p.seat ? 'pa-picked' : '',
+      nomIneligible ? 'pa-ineligible' : '',
     ].filter(Boolean).join(' ');
-    return `<tr${rowClasses ? ` class="${rowClasses}"` : ''} data-seat="${p.seat}">
-      <td class="seat">${p.seat + 1}</td>
-      <td><span class="player-name role-name ${nameColorClass}" data-player="${esc(name)}">${esc(dn(name))}</span>${p.isDead ? ' 💀' : ''}${sigBtn}${alignBtn}</td>
-      <td><button class="player-role-btn" data-seat="${p.seat}" title="Set role">${roleHtml}</button></td>
-      <td><button class="seat-remove-x-btn" data-seat="${p.seat}" data-occupied="${p.id ? '1' : ''}" title="Remove seat">✕</button></td>
-    </tr>`;
+    // Seat 1 (index 0) sits at the top of the circle; seats proceed clockwise
+    // from there, matching how a physical grimoire is laid out around the table.
+    const angle = (idx / (n || 1)) * 2 * Math.PI - Math.PI / 2;
+    const cx = (50 + 42 * Math.cos(angle)).toFixed(2);
+    const cy = (50 + 42 * Math.sin(angle)).toFixed(2);
+    const nomIneligibleTitle = nomIneligible
+      ? (playerActionPickedSeat === null ? 'Already nominated someone today' : 'Already nominated today')
+      : '';
+    return `<div class="${seatClasses}" data-seat="${p.seat}" style="left:${cx}%;top:${cy}%"${nomIneligibleTitle ? ` title="${esc(nomIneligibleTitle)}"` : ''}>
+      <div class="seat-token-wrap">
+        <span class="seat-num-badge">${p.seat + 1}</span>
+        <button class="player-role-btn seat-token ${tokenColorClass}" data-seat="${p.seat}" title="${role ? esc(role.name) : 'Set role'}"${tokenFill}>${tokenLabel}</button>
+        <button class="align-cycle-btn seat-align-badge ${alignClass}" data-seat="${p.seat}" title="Cycle alignment"></button>
+        <button class="seat-remove-x-btn seat-remove-badge" data-seat="${p.seat}" data-occupied="${p.id ? '1' : ''}" title="Remove seat">✕</button>
+      </div>
+      <div class="seat-name-row">
+        <span class="player-name role-name ${nameColorClass}" data-player="${esc(name)}">${esc(dn(name))}</span>${p.isDead ? ' 💀' : ''}
+      </div>
+      ${role ? `<div class="seat-role-label ${tokenColorClass}">${esc(role.name)}</div>` : ''}
+    </div>`;
   }).join('');
-  table.innerHTML = `<thead><tr><th>#</th><th>Player</th><th>Role</th><th></th></tr></thead><tbody>${rows}</tbody>`;
-  table.querySelectorAll('.sig-hist-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      openSignalPopover(btn.dataset.uid, btn);
-    });
-  });
+  table.innerHTML = seats;
+
+  // Only one player can be marked (mid-nomination) at a time, but Mark stays
+  // enabled even when someone already has it — picking a new seat just moves
+  // the mark there instead of requiring a manual remove first.
+  const markedPlayer = players.find(pl => (pl.status ?? []).includes('marked'));
+  document.getElementById('players-mark-btn')?.classList.toggle('toggle-btn-active', playerActionMode === 'mark');
+  const unmarkBtn = document.getElementById('players-unmark-btn');
+  if (unmarkBtn) unmarkBtn.disabled = !markedPlayer;
+
+  // While a pick mode (nominate/swap/mark) is active, the whole seat should be
+  // clickable as a single unit — clicking an inner button (role, alignment,
+  // remove-seat) picks the seat instead of running that button's own action,
+  // which would otherwise fire first via bubbling.
   table.querySelectorAll('.align-cycle-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const seat = Number(btn.dataset.seat);
+      if (playerActionMode) { handlePlayerActionPick(seat); return; }
       const player = players.find(pl => pl.seat === seat);
       const cur = impliedAlignmentGE(player ?? {});
       // Travellers can be truly unset (3-state cycle); every other team is always
@@ -3200,6 +3386,7 @@ function renderPlayers() {
   table.querySelectorAll('.player-role-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
+      if (playerActionMode) { handlePlayerActionPick(Number(btn.dataset.seat)); return; }
       openGameRolePopover(Number(btn.dataset.seat), btn);
     });
   });
@@ -3207,18 +3394,22 @@ function renderPlayers() {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const seat = Number(btn.dataset.seat);
+      if (playerActionMode) { handlePlayerActionPick(seat); return; }
       if (btn.dataset.occupied && !confirm(`Remove seat ${seat + 1} — a player is sitting there. Continue?`)) return;
       sendBg({ type: 'REMOVE_SEAT', seat });
     });
   });
-  table.querySelector('tbody')?.addEventListener('click', (e) => {
-    if (!playerActionMode) return;
-    if (e.target.closest('.sig-hist-btn') || e.target.closest('.seat-remove-x-btn') ||
-        e.target.closest('.align-cycle-btn') || e.target.closest('.player-role-btn')) return;
-    const tr = e.target.closest('tr[data-seat]');
-    if (!tr) return;
-    handlePlayerActionPick(Number(tr.dataset.seat));
-  });
+  // `table` is a persistent container (only its innerHTML is replaced above),
+  // so this delegated listener is wired once and reused across re-renders.
+  if (!table.dataset.pickListenerWired) {
+    table.dataset.pickListenerWired = '1';
+    table.addEventListener('click', (e) => {
+      if (!playerActionMode) return;
+      const seatEl = e.target.closest('.player-seat[data-seat]');
+      if (!seatEl) return;
+      handlePlayerActionPick(Number(seatEl.dataset.seat));
+    });
+  }
   applyHighlights(); applyPinnedHighlights();
 }
 
@@ -3328,6 +3519,17 @@ function handlePlayerActionPick(seat) {
     [order[playerActionPickedSeat], order[seat]] = [order[seat], order[playerActionPickedSeat]];
     sendBg({ type: 'SHUFFLE_SEATS', order });
     setPlayerActionMode('swap'); // toggles off
+    return;
+  }
+  if (playerActionMode === 'mark') {
+    const prevMarked = (currentState?.players ?? []).find(pl => pl.seat !== seat && (pl.status ?? []).includes('marked'));
+    if (prevMarked) {
+      sendBg({ type: 'SET_PLAYER_PROPERTY', seat: prevMarked.seat, property: 'status', value: prevMarked.status.filter(s => s !== 'marked') });
+    }
+    const player = (currentState?.players ?? []).find(pl => pl.seat === seat);
+    const value = [...new Set([...(player?.status ?? []), 'marked'])];
+    sendBg({ type: 'SET_PLAYER_PROPERTY', seat, property: 'status', value });
+    setPlayerActionMode('mark'); // toggles off
   }
 }
 
@@ -3336,10 +3538,11 @@ function handlePlayerActionPick(seat) {
 // them. Order data lives in data/nightOrder.js (canonical bundled role ids).
 
 const _nightOrder = () => (typeof BOTC_NIGHT_ORDER !== 'undefined' ? BOTC_NIGHT_ORDER : { firstNight: [], otherNight: [] });
+const _nightSignalScripts = () => (typeof BOTC_NIGHT_SIGNAL_SCRIPTS !== 'undefined' ? BOTC_NIGHT_SIGNAL_SCRIPTS : {});
 
-// normalized role id → [{name, isDead}], honoring the source-of-truth setting:
-// grimoire tokens first (storyteller always sees them), notes-grid role
-// assignments as the override/fallback.
+// normalized role id → [{name, isDead, id, seat}], honoring the source-of-truth
+// setting: grimoire tokens first (storyteller always sees them), notes-grid
+// role assignments as the override/fallback.
 function playersByRoleId() {
   const map = {};
   for (const p of currentState?.players ?? []) {
@@ -3348,9 +3551,144 @@ function playersByRoleId() {
     const grimRole = p.roleId || null;
     const roleId = colorSource === 'notes' ? (metaRole ?? grimRole) : (grimRole ?? metaRole);
     if (!roleId) continue;
-    (map[_normalizeId(roleId)] ??= []).push({ name, isDead: !!p.isDead, id: p.id });
+    (map[_normalizeId(roleId)] ??= []).push({ name, isDead: !!p.isDead, id: p.id, seat: p.seat });
   }
   return map;
+}
+
+// Builds the auto-drafted signal (if any) for one role's holder this night.
+// M1 scope: only fully-automatic builders exist (no blocking/inputs yet), so
+// status is always 'none' (no script / can't build) or 'ready'.
+// A blocking role's downstream rows unlock once a reply from its holder is
+// observed this night (or the storyteller manually unlocks it — some replies
+// arrive out-of-band, e.g. picked in-app rather than sent back as a signal).
+function isBlockingResolved(night, nightLabel, roleId, uid, script) {
+  if (nightSignalUnlocks.has(`${night}|${roleId}|${uid}`)) return true;
+  const entries = currentState?.signals?.[uid] ?? [];
+  return entries.some(en => en.isInbound && signalNightGroup(en.timestamp) === nightLabel && (script.replyMatch ? script.replyMatch(en) : true));
+}
+
+// Tokens from all of the holder's inbound signals this night, flattened —
+// this is how a player's in-app selection (who they poisoned/killed/looked
+// at) reaches the queue engine, same as any other signal.
+function nightlyReplyTokens(uid, night) {
+  const nightLabel = `Night ${night}`;
+  return getPlayerSignalEntries(uid)
+    .filter(en => en.isInbound && signalNightGroup(en.timestamp) === nightLabel)
+    .flatMap(en => en.message ?? []);
+}
+
+// Has the storyteller sent this holder anything at all yet tonight? Used to
+// decide whether a reply-dependent role still needs its opening prompt sent.
+function nightlyOutboundSent(uid, night) {
+  const nightLabel = `Night ${night}`;
+  return getPlayerSignalEntries(uid).some(en => !en.isInbound && signalNightGroup(en.timestamp) === nightLabel);
+}
+
+// Reuses the storyteller's own manually-maintained "droisoned" (drunk/
+// poisoned) notes-grid marker — cause-agnostic, so it doesn't matter which
+// character caused it, unlike registration which is per-character.
+function isHolderDroisoned(player, night) {
+  const name = displayName(player, player.seat);
+  const phase = `Night ${night}`;
+  return (cellTokens[`${name}|${phase}`] ?? []).some(c => c.type === 'cellcolor' && c.id === 'droisoned');
+}
+
+function recomputeNightSignalQueue() {
+  const scripts = _nightSignalScripts();
+  const scriptIds = new Set((currentState?.roles ?? []).map(r => _normalizeId(r.id)));
+  const byRole = playersByRoleId();
+  const totalNights = currentState?.phase ? Math.ceil(currentState.phase / 2) : 1;
+  const next = {};
+
+  for (let night = 1; night <= totalNights; night++) {
+    const nightLabel = `Night ${night}`;
+    const entries = night === 1 ? _nightOrder().firstNight : _nightOrder().otherNight;
+    const blockers = []; // unresolved blocking holders seen so far this night, in wake order
+
+    for (const e of entries) {
+      if (e.label || !scriptIds.has(e.id)) continue;
+      const script = scripts[e.id];
+      if (!script) continue;
+      for (const holder of byRole[e.id] ?? []) {
+        if (!holder.id) continue;
+        const key = `${night}|${e.id}|${holder.id}`;
+        const prev = nightSignalQueue[key];
+
+        if (script.manualOnly) {
+          next[key] = { status: 'manual', tokens: script.template ?? [{ id: 'choice' }] };
+        } else if (prev?.status === 'sent' && prev.stage === 'answer') {
+          // Only the final answer freezes once sent — a sent PROMPT still
+          // needs to progress to "waiting for reply" on the next recompute.
+          next[key] = prev;
+        } else {
+          const player = (currentState?.players ?? []).find(p => p.id === holder.id);
+          if (!player) continue;
+          const replyTokens = nightlyReplyTokens(holder.id, night);
+          const holderDroisoned = isHolderDroisoned(player, night);
+          const built = script.build({ holder: player, players: currentState?.players ?? [], roles: currentState?.roles ?? [], night, replyTokens, holderDroisoned }, prev?.filled);
+          if (!built) continue;
+          let status = built.complete ? 'ready' : (built.needsInput ? 'needs-input' : 'waiting');
+          let tokens = built.tokens;
+          let stage = 'answer';
+          if (status === 'waiting' && script.prompt && !nightlyOutboundSent(holder.id, night)) {
+            status = 'ready';
+            tokens = script.prompt;
+            stage = 'prompt';
+          }
+          next[key] = { status, tokens, filled: prev?.filled, inputHints: built.inputHints, warning: built.warning, stage };
+        }
+
+        if (blockers.length && next[key].status !== 'sent') {
+          next[key] = { ...next[key], status: 'locked', blockedBy: blockers[0] };
+        }
+
+        if (script.blocking && !isBlockingResolved(night, nightLabel, e.id, holder.id, script)) {
+          const roleName = _roles().find(r => r.id === e.id)?.name ?? e.id;
+          blockers.push({ roleId: e.id, uid: holder.id, roleName });
+        }
+      }
+    }
+  }
+  nightSignalQueue = next;
+}
+
+function sendNightSignalDraft(key) {
+  const entry = nightSignalQueue[key];
+  if (!entry || entry.status !== 'ready') return;
+  const [, , uid] = key.split('|');
+  sendBg({ type: 'SEND_SIGNAL', userIds: [uid], message: entry.tokens });
+  entry.status = 'sent';
+  entry.sentAt = Date.now();
+}
+
+function fillNightSignalInput(key, field, value) {
+  const entry = nightSignalQueue[key];
+  if (!entry) return;
+  entry.filled = { ...entry.filled, [field]: value };
+  renderNightOrder();
+}
+
+// Unlocks against the BLOCKING role/holder (entry.blockedBy), not the locked
+// row's own role/holder — a row can be locked by a different role entirely.
+function unlockNightSignalRow(night, blockerRoleId, blockerUid) {
+  nightSignalUnlocks.add(`${night}|${blockerRoleId}|${blockerUid}`);
+  saveSettings();
+  renderNightOrder();
+}
+
+// Seeds the normal Signal-tab composer with a manualOnly role's template and
+// recipient, for the storyteller to fill in judgment-dependent content.
+function composeNightSignalDraft(key) {
+  const entry = nightSignalQueue[key];
+  if (!entry) return;
+  const [, , uid] = key.split('|');
+  stMessage = entry.tokens.map(t => ({ ...t }));
+  stRecipientIds = new Set([uid]);
+  renderSignalPreview();
+  renderSignalPlayers();
+  updateSignalSendBtn();
+  document.getElementById('signal-preview')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 function renderNightOrderColumn(night) {
@@ -3358,6 +3696,7 @@ function renderNightOrderColumn(night) {
   const entries = night === 1 ? _nightOrder().firstNight : _nightOrder().otherNight;
   const scriptIds = new Set((currentState?.roles ?? []).map(r => _normalizeId(r.id)));
   const byRole = playersByRoleId();
+  const nightSignalScripts = _nightSignalScripts();
 
   const rows = [];
   for (const e of entries) {
@@ -3366,6 +3705,7 @@ function renderNightOrderColumn(night) {
       continue;
     }
     if (!scriptIds.has(e.id)) continue;
+    const script = nightSignalScripts[e.id];
     const role = _roles().find(r => r.id === e.id);
     const url = _iconUrl(role ?? { id: e.id });
     const icon = url ? `<img class="tp-role-icon" src="${esc(url)}" />` : '';
@@ -3377,15 +3717,81 @@ function renderNightOrderColumn(night) {
         <span class="role-name ${playerTeamByName(h.name)}${h.isDead ? ' norder-dead' : ''}" data-player="${esc(h.name)}">${h.isDead ? '💀 ' : ''}${esc(dn(h.name))}</span>${icon}
       </span>`;
     }).join('<span class="norder-sep">, </span>');
+    const drafts = holders.map(h => {
+      const key = `${night}|${e.id}|${h.id}`;
+      const entry = nightSignalQueue[key];
+      if (!entry) return '';
+
+      if (entry.status === 'locked') {
+        const label = esc(entry.blockedBy?.roleName ?? '?');
+        return `<div class="norder-draft norder-draft-locked">
+          <span class="norder-draft-name">${esc(dn(h.name))}:</span>
+          <span class="norder-lock-label">🔒 waiting on ${label}</span>
+          <button class="norder-unlock" data-night="${night}" data-blocker-role="${esc(entry.blockedBy?.roleId ?? '')}" data-blocker-uid="${esc(String(entry.blockedBy?.uid ?? ''))}">Unlock anyway</button>
+        </div>`;
+      }
+
+      // 'waiting' has no real draft yet (tokens are just a placeholder for
+      // when the reply lands) — showing them here would look like a queued
+      // outbound message, when nothing is being sent at all.
+      const chips = entry.status === 'waiting' ? '' : entry.tokens.map(t => `<span class="${signalTokenCls(t)}">${esc(signalTokenLabel(t))}</span>`).join('');
+      let controls = '';
+      if (entry.status === 'ready') {
+        let toggle = '';
+        // Only the final answer is a suggestion worth overriding — the
+        // opening prompt (stage 'prompt') is always the same fixed tokens.
+        if (entry.stage === 'answer' && script.override) {
+          const ov = script.override;
+          const current = entry.tokens.find(t => ov.values.includes(t.id))?.id;
+          toggle = ov.values.map(v =>
+            `<button class="norder-override${v === current ? ' active' : ''}" data-key="${esc(key)}" data-field="${esc(ov.field)}" data-value="${esc(v)}">${esc(signalTokenDef(v)?.label ?? v)}</button>`
+          ).join('');
+        }
+        const warning = entry.warning ? `<span class="norder-warning" title="${esc(entry.warning)}">⚠️</span>` : '';
+        controls = `${toggle}<button class="norder-send" data-key="${esc(key)}">Send</button>${warning}`;
+      }
+      else if (entry.status === 'sent') controls = `<span class="norder-sent-label">Sent</span>`;
+      else if (entry.status === 'manual') controls = `<button class="norder-compose" data-key="${esc(key)}">Compose…</button>`;
+      else if (entry.status === 'waiting') controls = `<span class="norder-waiting-label">⏳ waiting for their in-app selection</span>`;
+      else if (entry.status === 'needs-input') {
+        const inputs = script.inputs ?? [];
+        controls = inputs.map((inputSpec) => {
+          const field = inputSpec.type; // 'player' | 'role' -> filled.player / filled.role
+          let options;
+          if (inputSpec.type === 'role') {
+            const hints = entry.inputHints ?? {};
+            options = (currentState?.roles ?? [])
+              .filter(r => (!hints.filterTeams || hints.filterTeams.includes(r.team)) && r.id !== hints.excludeRoleId)
+              .map(r => `<option value="${esc(r.id)}">${esc(r.name ?? r.id)}</option>`).join('');
+          } else {
+            options = (currentState?.players ?? []).map(p =>
+              `<option value="${p.seat}">${esc(dn(displayName(p, p.seat)))}</option>`).join('');
+          }
+          return `<select class="norder-input" data-key="${esc(key)}" data-field="${field}">
+            <option value="">${esc(inputSpec.label)}…</option>${options}
+          </select>`;
+        }).join('');
+      }
+      const sentCls = entry.status === 'sent' ? ' norder-draft-sent' : '';
+      return `<div class="norder-draft${sentCls}"><span class="norder-draft-name">${esc(dn(h.name))}:</span>${chips}${controls}</div>`;
+    }).join('');
     rows.push(`
       <li class="norder-row${holders.length ? '' : ' norder-outofplay'}">
         <span class="norder-role role-name ${role?.team ?? ''}">${icon}${esc(role?.name ?? e.id)}</span>
         <span class="norder-players">${names}</span>
+        ${drafts}
       </li>`);
   }
 
+  const readyKeys = Object.entries(nightSignalQueue)
+    .filter(([k, v]) => k.startsWith(`${night}|`) && v.status === 'ready')
+    .map(([k]) => k);
+  const sendAllBtn = readyKeys.length
+    ? `<button class="norder-send-all" data-night="${night}">Send All Ready (${readyKeys.length})</button>`
+    : '';
+
   return `<div class="norder-column">
-    <div class="norder-column-header">${esc(nightLabel)}</div>
+    <div class="norder-column-header">${esc(nightLabel)}${sendAllBtn}</div>
     <ol class="norder-list">${rows.join('')}</ol>
   </div>`;
 }
@@ -3398,11 +3804,56 @@ function renderNightOrder() {
   // new column appears as soon as that round's night phase starts.
   const totalNights = currentState?.phase ? Math.ceil(currentState.phase / 2) : 1;
 
+  recomputeNightSignalQueue();
   columnsEl.innerHTML = Array.from({ length: totalNights }, (_, i) => renderNightOrderColumn(i + 1)).join('');
   columnsEl.querySelectorAll('.sig-hist-holder').forEach(holder => {
     holder.addEventListener('click', (e) => {
       e.stopPropagation();
       openSignalPopover(holder.dataset.uid, holder, holder.dataset.night);
+    });
+  });
+  columnsEl.querySelectorAll('.norder-send').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      sendNightSignalDraft(btn.dataset.key);
+      renderNightOrder();
+    });
+  });
+  columnsEl.querySelectorAll('.norder-send-all').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const night = Number(btn.dataset.night);
+      Object.entries(nightSignalQueue)
+        .filter(([k, v]) => k.startsWith(`${night}|`) && v.status === 'ready')
+        .forEach(([k]) => sendNightSignalDraft(k));
+      renderNightOrder();
+    });
+  });
+  columnsEl.querySelectorAll('.norder-input').forEach(sel => {
+    sel.addEventListener('click', (e) => e.stopPropagation());
+    sel.addEventListener('change', (e) => {
+      e.stopPropagation();
+      if (sel.value === '') return;
+      const value = sel.dataset.field === 'role' ? sel.value : Number(sel.value);
+      fillNightSignalInput(sel.dataset.key, sel.dataset.field, value);
+    });
+  });
+  columnsEl.querySelectorAll('.norder-override').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      fillNightSignalInput(btn.dataset.key, btn.dataset.field, btn.dataset.value);
+    });
+  });
+  columnsEl.querySelectorAll('.norder-unlock').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      unlockNightSignalRow(Number(btn.dataset.night), btn.dataset.blockerRole, btn.dataset.blockerUid);
+    });
+  });
+  columnsEl.querySelectorAll('.norder-compose').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      composeNightSignalDraft(btn.dataset.key);
     });
   });
   applyHighlights(); applyPinnedHighlights();
@@ -3464,12 +3915,14 @@ function loadSettings() {
       viewRoleUserSet = true;
     }
     if (Array.isArray(s.customTimerPresets)) customTimerPresets = s.customTimerPresets;
+    if (Array.isArray(s.customSignalPresets)) customSignalPresets = s.customSignalPresets;
+    if (Array.isArray(s.nightSignalUnlocks)) nightSignalUnlocks = new Set(s.nightSignalUnlocks);
   } catch { /* localStorage unavailable / corrupt — use defaults */ }
 }
 
 function saveSettings() {
   try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ colorSource, mergePhases, viewRole: viewRoleUserSet ? viewRole : undefined, customTimerPresets }));
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ colorSource, mergePhases, viewRole: viewRoleUserSet ? viewRole : undefined, customTimerPresets, customSignalPresets, nightSignalUnlocks: [...nightSignalUnlocks] }));
   } catch { /* ignore */ }
 }
 
@@ -3516,6 +3969,7 @@ applySettingsToUI();
 initSignalPanel();
 updateStRoleBtn();
 renderTimerPresets();
+renderSignalPresets();
 initScriptLibrary();
 
 // Settings popup (gear): toggle on click, close on outside click

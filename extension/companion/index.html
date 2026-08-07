@@ -4,6 +4,7 @@
 <head>
 	<meta charset="UTF-8" />
 	<title>BOTC Companion</title>
+	<link rel="icon" href="favicon.png" />
 	<link rel="stylesheet" href="style.css" />
 </head>
 
@@ -80,6 +81,9 @@
 						<label class="sig-recipient-all"><input type="checkbox" id="signal-all-check" /> All players</label>
 						<div id="signal-player-list" class="sig-player-list"></div>
 					</div>
+					<div id="signal-presets-label">Presets</div>
+					<div id="signal-presets" class="sig-special"></div>
+					<div class="st-tab-divider"></div>
 					<div id="signal-token-grid">
 						<div id="sig-col-left" class="sig-token-col"></div>
 						<div id="sig-col-right" class="sig-token-col"></div>
@@ -91,54 +95,70 @@
 						<input id="signal-custom-input" class="sig-custom-input" placeholder="custom…" maxlength="32" />
 						<button id="signal-custom-add-btn" class="sig-custom-add-btn" title="Add custom token">›</button>
 					</div>
+					<div class="sig-special">
+						<button id="signal-grimoire-btn" class="sig-clear-btn" title="Attach a live snapshot of the current grimoire"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg> Send Grimoire</button>
+					</div>
 					<div class="sig-preview-row">
 						<div id="signal-preview" class="sig-preview"><span class="sig-empty">No tokens selected</span></div>
 						<button id="signal-clear-btn" class="sig-clear-btn">clear</button>
 					</div>
+					<button id="signal-save-preset-btn" class="sig-clear-btn" title="Save the current message as a preset"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg> save preset</button>
 					<button id="signal-send-btn" class="sig-send-btn" disabled>Send Signal</button>
-					<button id="signal-history-open-btn" class="sig-send-btn">📜 View Signal History</button>
+					<button id="signal-history-open-btn" class="sig-send-btn"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg> View Signal History</button>
 				</div>
 				<section id="players-section" style="display:none">
-					<h2><span class="chevron">▾</span> Players
-						<button id="players-nominate-btn" class="toggle-btn">📢 nominate</button>
-						<button id="players-swap-btn" class="toggle-btn">🔀 swap</button>
-					</h2>
+					<div id="players-top-actions">
+						<button id="players-nominate-btn" class="sig-send-btn"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg> Nominate</button>
+						<button id="players-mark-btn" class="sig-send-btn">💀 Mark</button>
+						<button id="players-unmark-btn" class="sig-send-btn" disabled><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg> Remove Mark</button>
+					</div>
 					<div id="player-table-scroll">
-						<table id="player-table"></table>
+						<div id="player-table" class="player-circle"></div>
 					</div>
 					<div id="players-seat-actions">
-						<button id="players-shuffle-btn" class="sig-clear-btn">🔀 Shuffle</button>
-						<button id="players-rotate-ccw-btn" class="sig-clear-btn" title="Rotate counterclockwise">↺</button>
-						<button id="players-add-seat-btn" class="sig-clear-btn">🪑Add Seat</button>
-						<button id="players-rotate-cw-btn" class="sig-clear-btn" title="Rotate clockwise">↻</button>
-						<button id="players-remove-empty-btn" class="sig-clear-btn">🗑️ Remove empty</button>
+						<div class="seat-actions-group">
+							<button id="players-swap-btn" class="sig-clear-btn" title="Pick two seats to swap their occupants"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 3 3 7 7 11"></polyline><line x1="3" y1="7" x2="21" y2="7"></line><polyline points="17 13 21 17 17 21"></polyline><line x1="21" y1="17" x2="3" y2="17"></line></svg> Swap</button>
+							<button id="players-shuffle-btn" class="sig-clear-btn" title="Shuffle seat order"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"></polyline><line x1="4" y1="20" x2="21" y2="3"></line><polyline points="21 16 21 21 16 21"></polyline><line x1="15" y1="15" x2="21" y2="21"></line><line x1="4" y1="4" x2="9" y2="9"></line></svg> Shuffle</button>
+							<button id="players-rotate-ccw-btn" class="seat-rotate-btn" title="Rotate counterclockwise">↺</button>
+							<button id="players-rotate-cw-btn" class="seat-rotate-btn" title="Rotate clockwise">↻</button>
+						</div>
+						<div class="seat-actions-group">
+							<button id="players-add-seat-btn" class="sig-clear-btn seat-add-btn" title="Add a seat"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><line x1="20" y1="8" x2="20" y2="14"></line><line x1="23" y1="11" x2="17" y2="11"></line></svg> Add Seat</button>
+							<button id="players-remove-empty-btn" class="sig-clear-btn" title="Remove all empty seats"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg> Remove empty</button>
+						</div>
 					</div>
 				</section>
 				<div id="st-tab-timer" class="st-tab-panel">
-					<button id="next-phase-btn" class="sig-send-btn">⏭ Next Phase</button>
+					<button id="gong-btn" class="gong-send-btn"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg> Gong</button>
+					<div class="st-tab-divider"></div>
+					<button id="voice-btn" class="sig-send-btn"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line></svg> <span id="voice-btn-label">Join Voice</span></button>
+					<div class="st-tab-divider"></div>
+					<button id="next-phase-btn" class="sig-send-btn"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19"></line></svg> Next Phase</button>
 					<div class="st-tab-divider"></div>
 					<div id="endgame-actions">
-						<button id="endgame-good-btn" class="endgame-btn endgame-good">Good Wins</button>
-						<button id="endgame-evil-btn" class="endgame-btn endgame-evil">Evil Wins</button>
+						<button id="endgame-good-btn" class="endgame-btn endgame-good"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle></svg> Good Wins</button>
+						<button id="endgame-evil-btn" class="endgame-btn endgame-evil"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="currentColor" stroke="none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg> Evil Wins</button>
 					</div>
 					<div class="st-tab-divider"></div>
-					<div id="timer-presets" class="sig-special"></div>
-					<div class="sig-special">
-						<input id="timer-title" class="sig-custom-input" placeholder="timer title…" maxlength="40" />
-						<button id="timer-save-preset-btn" class="sig-clear-btn" title="Save current settings as a preset">★ save preset</button>
+					<div id="timer-duration-row">
+						<div id="timer-duration-inputs">
+							<input id="timer-minutes" type="number" min="0" max="99" value="1" class="tp-num" title="minutes" />
+							<span class="tp-colon">:</span>
+							<input id="timer-seconds" type="number" min="0" max="59" value="0" class="tp-num" title="seconds" />
+						</div>
+						<label class="tp-check"><input type="checkbox" id="timer-pause-votes" checked /> pause during votes</label>
 					</div>
 					<div class="sig-special">
-						<input id="timer-minutes" type="number" min="0" max="99" value="1" class="tp-num" title="minutes" />
-						<span class="tp-colon">:</span>
-						<input id="timer-seconds" type="number" min="0" max="59" value="0" class="tp-num" title="seconds" />
-						<label class="tp-check"><input type="checkbox" id="timer-pause-votes" checked /> pause during votes</label>
+						<input id="timer-title" class="sig-custom-input" placeholder="timer title…" maxlength="40" />
+						<button id="timer-save-preset-btn" class="sig-clear-btn" title="Save current settings as a preset"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg> save preset</button>
 					</div>
 					<div id="timer-actions">
 						<button id="timer-set-btn" class="sig-send-btn">Start Timer</button>
 						<button id="timer-clear-btn" class="sig-clear-btn">Clear Timer</button>
 					</div>
 					<div class="st-tab-divider"></div>
-					<button id="gong-btn" class="sig-send-btn">🔔 Gong</button>
+					<div id="timer-presets-label">Or launch a saved preset</div>
+					<div id="timer-presets" class="sig-special"></div>
 				</div>
 			</div>
 		</section>
@@ -222,6 +242,7 @@
 	<script src="../data/roles.js"></script>
 	<script src="../data/chipSpecs.js"></script>
 	<script src="../data/nightOrder.js"></script>
+	<script src="../data/nightSignalScripts.js"></script>
 	<script src="companion.js"></script>
 </body>
 

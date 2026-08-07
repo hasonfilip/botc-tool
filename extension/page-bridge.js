@@ -21,6 +21,30 @@
 
   const getStore = () => document.querySelector('#main')?.__vue_app__?.config?.globalProperties?.$store;
 
+  // Matches the shape seen in a real "grimoire" signal token's wire payload:
+  // { players: [{role, reminders:[{id,name,role,flags}]}], storytellers: [...], bluffs: [...] }
+  // Role fields are plain id strings on the wire even though the live store
+  // sometimes holds a full role object — normalize both cases the same way.
+  // Built fresh from the live store (not the companion's own thinner scraped
+  // state) so reminder ids/flags come through accurately, and copied into
+  // plain objects/arrays since store values are reactive Proxies that can't
+  // be sent through postMessage/chrome.runtime messaging as-is.
+  const roleIdOf = (r) => (typeof r === 'string' ? r : r?.id) ?? null;
+  const buildGrimoireSnapshot = (store) => {
+    const mapReminders = (reminders) => (Array.isArray(reminders) ? reminders : []).map(rem => ({
+      id: rem?.id ?? null,
+      name: rem?.name ?? null,
+      role: roleIdOf(rem?.role),
+      flags: Array.isArray(rem?.flags) ? [...rem.flags] : [],
+    }));
+    const mapToken = (p) => ({ role: roleIdOf(p?.role), reminders: mapReminders(p?.reminders) });
+    return {
+      players: (store.state.players?.players ?? []).map(mapToken),
+      storytellers: (store.state.players?.storytellers ?? []).map(mapToken),
+      bluffs: (store.state.bluffs ?? []).map(roleIdOf).filter(Boolean),
+    };
+  };
+
   // Only the keys buildState uses — this runs on every (debounced) DOM
   // mutation, so parsing the whole store would be wasted work
   const STORAGE_KEYS = ['game', 'players', 'roles', 'storytellers', 'edition', 'bluffs', 'reminders', 'timer', 'session', 'token'];
@@ -134,7 +158,8 @@
     const storageRoles = (storage.roles ?? [])
       .map(r => typeof r === 'string'
         ? { id: r, name: null, team: '', iconUrl: null }
-        : (r?.id ? { id: r.id, name: r.name ?? null, team: r.team ?? '', iconUrl: r.image ?? null } : null))
+        // Some custom roles carry image as [goodUrl, evilUrl] instead of a single string.
+        : (r?.id ? { id: r.id, name: r.name ?? null, team: r.team ?? '', iconUrl: (Array.isArray(r.image) ? r.image[0] : r.image) ?? null } : null))
       .filter(Boolean);
 
     return {
@@ -168,6 +193,9 @@
           roleName: roleMap[roleId] ?? null,
           team: token.team || '',
           alignment,
+          // Shallow copy — storePlayers[i].status is a live Vue reactive Proxy(Array),
+          // which throws a DataCloneError if passed straight into postMessage.
+          status: Array.isArray(storePlayers[i]?.status) ? [...storePlayers[i].status] : [],
           isDead: token.isDead || false,
         };
       }),
@@ -187,6 +215,9 @@
       // JSON round-trip strips the Vue reactive Proxy wrapper — postMessage's
       // structured clone can't serialize that directly (DataCloneError).
       signals: JSON.parse(JSON.stringify(getStore()?.state?.session?.signals ?? {})),
+      // Voice channel we are currently in ('' when not in a call) — live store only,
+      // never persisted. Drives the companion's join/leave button state.
+      chatChannel: getStore()?.state?.chat?.channel ?? '',
     };
   };
 
@@ -261,7 +292,20 @@
     if (event.data?.type === 'SEND_SIGNAL') {
       try {
         const store = getStore();
-        if (store) store.commit('session/addSignal', { userIds: event.data.userIds, message: event.data.message, isInbound: false });
+        if (!store) return;
+        const message = (event.data.message ?? []).map(t =>
+          t?.id === 'grimoire' ? { id: 'grimoire', data: buildGrimoireSnapshot(store) } : t);
+        store.commit('session/addSignal', { userIds: event.data.userIds, message, isInbound: false });
+      } catch { /* page not ready or store unavailable */ }
+    }
+    if (event.data?.type === 'JOIN_CHANNEL') {
+      try {
+        const store = getStore();
+        // The app has no join action — a store plugin watches this mutation and
+        // does both halves (emits channelChange on the socket and opens the
+        // local audio connection), so committing it is the whole join. '' leaves.
+        if (store) store.commit('chat/setChannel', event.data.channel ?? '');
+        debouncedSend();
       } catch { /* page not ready or store unavailable */ }
     }
     if (event.data?.type === 'SET_TIMER') {
