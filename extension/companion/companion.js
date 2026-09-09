@@ -2976,7 +2976,36 @@ function classifyScriptRoleTeam(entry) {
 const saveDirHandle = (handle) => PlayerDb.saveDirHandle(handle);
 const loadDirHandle = () => PlayerDb.loadDirHandle();
 
-// ── Recursive scan ───────────────────────────────────────────────────────────
+// ── Scanning ─────────────────────────────────────────────────────────────────
+// Firefox implements only the Origin Private File System half of the File
+// System API and deliberately omits the local-disk pickers, so
+// showDirectoryPicker is undefined there. Two collectors below feed one shared
+// entry builder: the handle-based walk (Chromium, keeps a resumable handle) and
+// a <input webkitdirectory> FileList walk (Firefox, no persistent handle).
+const hasDirectoryPicker = () => typeof window.showDirectoryPicker === 'function';
+
+// Turns one script's JSON into the shape the library UI renders. Shared by both
+// collectors so the two platforms can never drift apart.
+function buildScriptEntry(json, fileName, category) {
+  const parsed = parseScriptJson(json, fileName.replace(/\.json$/i, ''));
+  const rolesByTeam = {};
+  const roleSearchTerms = new Set();
+  for (const r of parsed.roles) {
+    const { team, name: roleName, id: roleId, canonicalName } = classifyScriptRoleTeam(r);
+    // Fabled and Loric are both non-player special roles — merge into one "NPCs" bucket
+    const key = (team === 'fabled' || team === 'loric') ? 'NPCs' : (team || 'unclassified');
+    (rolesByTeam[key] ??= []).push({ name: roleName, id: roleId });
+    // Search by the script's own (possibly translated) name AND the
+    // resolved canonical id/English name, so "washerwoman" finds a
+    // Czech script's "Pradlena" too.
+    if (roleName) roleSearchTerms.add(roleName.toLowerCase());
+    if (canonicalName) roleSearchTerms.add(canonicalName.toLowerCase());
+    if (roleId) roleSearchTerms.add(roleId.toLowerCase());
+  }
+  const roleNames = Object.values(rolesByTeam).flat().map(r => r.name).filter(Boolean);
+  return { ...parsed, category: category ?? 'Uncategorized', rolesByTeam, roleNames, roleSearchTerms: [...roleSearchTerms] };
+}
+
 async function scanScriptDir(dirHandle, category = null) {
   const results = [];
   for await (const [name, handle] of dirHandle.entries()) {
@@ -2985,31 +3014,31 @@ async function scanScriptDir(dirHandle, category = null) {
     } else if (name.toLowerCase().endsWith('.json')) {
       try {
         const file = await handle.getFile();
-        const json = JSON.parse(await file.text());
-        const parsed = parseScriptJson(json, name.replace(/\.json$/i, ''));
-        const rolesByTeam = {};
-        const roleSearchTerms = new Set();
-        for (const r of parsed.roles) {
-          const { team, name: roleName, id: roleId, canonicalName } = classifyScriptRoleTeam(r);
-          // Fabled and Loric are both non-player special roles — merge into one "NPCs" bucket
-          const key = (team === 'fabled' || team === 'loric') ? 'NPCs' : (team || 'unclassified');
-          (rolesByTeam[key] ??= []).push({ name: roleName, id: roleId });
-          // Search by the script's own (possibly translated) name AND the
-          // resolved canonical id/English name, so "washerwoman" finds a
-          // Czech script's "Pradlena" too.
-          if (roleName) roleSearchTerms.add(roleName.toLowerCase());
-          if (canonicalName) roleSearchTerms.add(canonicalName.toLowerCase());
-          if (roleId) roleSearchTerms.add(roleId.toLowerCase());
-        }
-        const roleNames = Object.values(rolesByTeam).flat().map(r => r.name).filter(Boolean);
-        results.push({ ...parsed, category: category ?? 'Uncategorized', rolesByTeam, roleNames, roleSearchTerms: [...roleSearchTerms] });
+        results.push(buildScriptEntry(JSON.parse(await file.text()), name, category));
       } catch { /* not a valid script file — skip it silently, library scan shouldn't halt on one bad file */ }
     }
   }
   return results;
 }
 
+// Firefox path. `webkitRelativePath` is "<pickedFolder>/<subdirs…>/<file>";
+// the picked folder's own name is dropped so categories match the handle walk,
+// which starts numbering them from the first level *inside* the chosen folder.
+async function scanScriptFileList(fileList) {
+  const results = [];
+  for (const file of fileList) {
+    if (!file.name.toLowerCase().endsWith('.json')) continue;
+    const segments = (file.webkitRelativePath || file.name).split('/');
+    const category = segments.slice(1, -1).join('/') || null;
+    try {
+      results.push(buildScriptEntry(JSON.parse(await file.text()), file.name, category));
+    } catch { /* not a valid script file — skip it silently */ }
+  }
+  return results;
+}
+
 // ── UI ────────────────────────────────────────────────────────────────────────
+const SCRIPT_LIB_CACHE_KEY = 'scriptLibrary';
 let scriptLibrary = [];
 let collapsedScriptCategories = new Set();
 
@@ -3017,6 +3046,7 @@ function initScriptLibrary() {
   const pickBtn = document.getElementById('script-lib-pick-btn');
   const resumeBtn = document.getElementById('script-lib-resume-btn');
   const rescanBtn = document.getElementById('script-lib-rescan-btn');
+  const dirInput = document.getElementById('script-lib-dir-input');
   const statusEl = document.getElementById('script-lib-status');
   const filtersEl = document.getElementById('script-library-filters');
   const searchInput = document.getElementById('script-lib-search');
@@ -3039,18 +3069,59 @@ function initScriptLibrary() {
     }
   }
 
-  async function pickDirectory() {
+  // Chromium: pick a handle we can keep and re-walk later.
+  async function pickDirectoryHandle() {
+    let handle;
     try {
-      const handle = await window.showDirectoryPicker({ mode: 'read' });
-      currentDirHandle = handle;
-      await saveDirHandle(handle);
-      resumeBtn.style.display = 'none';
-      await runScan(handle);
-    } catch { /* user cancelled the picker */ }
+      handle = await window.showDirectoryPicker({ mode: 'read' });
+    } catch (e) {
+      // Only a genuine cancel is silent — anything else used to be swallowed
+      // here too, which is why a failing picker looked like a dead button.
+      if (e?.name !== 'AbortError') {
+        setStatus('Could not open the folder picker.');
+        console.error('botc-tool: showDirectoryPicker failed', e);
+      }
+      return;
+    }
+    currentDirHandle = handle;
+    await saveDirHandle(handle);
+    resumeBtn.style.display = 'none';
+    await runScan(handle);
   }
 
+  // Firefox: no picker API and no persistent handle, so the folder is read
+  // through a webkitdirectory input and the parsed result is cached instead.
+  function pickDirectoryInput() {
+    dirInput.value = '';   // re-picking the same folder must still fire `change`
+    dirInput.click();
+  }
+
+  const pickDirectory = () => hasDirectoryPicker() ? pickDirectoryHandle() : pickDirectoryInput();
+
+  dirInput?.addEventListener('change', async () => {
+    const files = [...(dirInput.files ?? [])];
+    if (files.length === 0) return;
+    setStatus('Scanning…');
+    try {
+      scriptLibrary = await scanScriptFileList(files);
+      filtersEl.style.display = '';
+      rescanBtn.style.display = '';
+      setStatus(`${scriptLibrary.length} scripts`);
+      renderResults();
+      // Survives a companion reload; Firefox can't re-read the folder unattended.
+      await PlayerDb.setCached(SCRIPT_LIB_CACHE_KEY, scriptLibrary);
+    } catch (e) {
+      setStatus('Scan failed — could not read that folder.');
+      console.error('botc-tool: script folder scan failed', e);
+    }
+  });
+
   pickBtn?.addEventListener('click', pickDirectory);
-  rescanBtn?.addEventListener('click', () => { if (currentDirHandle) runScan(currentDirHandle); });
+  // Without a handle there is nothing to re-walk, so a rescan means re-picking.
+  rescanBtn?.addEventListener('click', () => {
+    if (currentDirHandle) runScan(currentDirHandle);
+    else pickDirectory();
+  });
 
   resumeBtn?.addEventListener('click', async () => {
     if (!currentDirHandle) return;
@@ -3140,6 +3211,18 @@ function initScriptLibrary() {
 
   (async () => {
     try {
+      if (!hasDirectoryPicker()) {
+        // Firefox: replay the last scan. The folder can't be reopened without
+        // the user picking it again, so Rescan re-prompts.
+        const cached = await PlayerDb.getCached(SCRIPT_LIB_CACHE_KEY);
+        if (!cached?.length) return;
+        scriptLibrary = cached;
+        filtersEl.style.display = '';
+        rescanBtn.style.display = '';
+        setStatus(`${cached.length} scripts (cached)`);
+        renderResults();
+        return;
+      }
       const handle = await loadDirHandle();
       if (!handle) return;
       currentDirHandle = handle;
@@ -3150,7 +3233,7 @@ function initScriptLibrary() {
         setStatus('Script folder remembered — resume access to rescan.');
         resumeBtn.style.display = '';
       }
-    } catch { /* no stored handle, or IndexedDB unavailable — user can pick fresh */ }
+    } catch { /* no stored handle or cache — user can pick fresh */ }
   })();
 }
 

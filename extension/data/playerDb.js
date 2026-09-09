@@ -11,12 +11,13 @@
 // the two writers can never clobber each other's half of a record.
 (function (global) {
   const DB_NAME = 'botc-companion-db';
-  const DB_VERSION = 2;
+  const DB_VERSION = 3;
 
   const HANDLES = 'handles';           // pre-existing: FileSystemDirectoryHandle for the script library
   const PLAYERS = 'players';           // key: account id
   const PARTICIPATIONS = 'participations'; // key: `${playerId}|${gameId}`
   const GAMES = 'games';               // key: game id (the history 'start' entry id)
+  const CACHE = 'cache';               // key: arbitrary string — derived data worth not recomputing
 
   const DEFAULT_SCORE = 5;
 
@@ -47,6 +48,7 @@
           s.createIndex('by-player', 'playerId');
           s.createIndex('by-game', 'gameId');
         }
+        if (!db.objectStoreNames.contains(CACHE)) db.createObjectStore(CACHE);
         if (!db.objectStoreNames.contains(GAMES)) {
           const s = db.createObjectStore(GAMES, { keyPath: 'id' });
           s.createIndex('by-ts', 'ts');
@@ -89,6 +91,24 @@
     const tx = db.transaction(HANDLES, 'readonly');
     const result = await reqDone(tx.objectStore(HANDLES).get('scriptLibraryDir'));
     return result ?? null;
+  }
+
+  // ── Derived-data cache ────────────────────────────────────────────────────
+
+  // Firefox has no persistent directory handle (no showDirectoryPicker), so the
+  // scanned script library is cached here instead — otherwise reloading the
+  // companion loses the library and the folder has to be picked again.
+  async function setCached(key, value) {
+    const db = await openDb();
+    const tx = db.transaction(CACHE, 'readwrite');
+    tx.objectStore(CACHE).put(value, key);
+    await txDone(tx);
+  }
+
+  async function getCached(key) {
+    const db = await openDb();
+    const tx = db.transaction(CACHE, 'readonly');
+    return (await reqDone(tx.objectStore(CACHE).get(key))) ?? null;
   }
 
   // ── Automatic capture (service worker) ────────────────────────────────────
@@ -247,6 +267,8 @@
     openDb,
     saveDirHandle,
     loadDirHandle,
+    setCached,
+    getCached,
     recordGame,
     updatePlayer,
     getAllPlayers,
