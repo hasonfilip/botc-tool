@@ -22,8 +22,10 @@
 			<span id="ws-heartbeat-timer"></span>
 			<span id="ws-heartbeat-msg"></span>
 		</div>
+		<button id="bug-hand-btn" class="header-icon-btn" title="Raise the bug hand">🐛</button>
 		<button id="st-role-btn" class="header-icon-btn">🧙 Become Storyteller</button>
 		<button id="clear-grimoire-btn" class="header-icon-btn" style="display:none">🧹 Clear</button>
+		<button id="player-db-btn" class="header-icon-btn" title="Players you have played with">👥 Players</button>
 		<div id="script-wrap" style="display:none">
 			<button id="script-btn" title="Custom Script" aria-label="Custom Script">📜</button>
 			<div id="script-popup">
@@ -217,6 +219,29 @@
 	</div>
 	<div id="signal-history-overlay" class="side-panel-overlay"></div>
 
+	<div id="player-db-overlay" style="display:none">
+		<div id="player-db-backdrop"></div>
+		<div id="player-db-panel">
+			<div id="player-db-header">
+				<span>Players</span>
+				<button id="player-db-close">✕</button>
+			</div>
+			<div id="player-db-body">
+				<div id="player-db-toolbar">
+					<input id="player-db-search" class="sig-custom-input" placeholder="search name or note…" />
+					<select id="player-db-sort" class="sig-custom-input">
+						<option value="score">sort: score</option>
+						<option value="games">sort: games played</option>
+						<option value="recent">sort: recently seen</option>
+						<option value="name">sort: name</option>
+					</select>
+					<span id="player-db-status" class="script-lib-status"></span>
+				</div>
+				<div id="player-db-results"></div>
+			</div>
+		</div>
+	</div>
+
 	<div id="script-library-overlay" style="display:none">
 		<div id="script-library-backdrop"></div>
 		<div id="script-library-panel">
@@ -239,10 +264,12 @@
 		</div>
 	</div>
 
+	<script src="../data/playerDb.js"></script>
 	<script src="../data/roles.js"></script>
 	<script src="../data/chipSpecs.js"></script>
 	<script src="../data/nightOrder.js"></script>
 	<script src="../data/nightSignalScripts.js"></script>
+	<script src="../data/nominationAlerts.js"></script>
 	<script src="companion.js"></script>
 </body>
 

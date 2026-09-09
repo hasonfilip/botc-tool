@@ -30,13 +30,13 @@
   // plain objects/arrays since store values are reactive Proxies that can't
   // be sent through postMessage/chrome.runtime messaging as-is.
   const roleIdOf = (r) => (typeof r === 'string' ? r : r?.id) ?? null;
+  const mapReminders = (reminders) => (Array.isArray(reminders) ? reminders : []).map(rem => ({
+    id: rem?.id ?? null,
+    name: rem?.name ?? null,
+    role: roleIdOf(rem?.role),
+    flags: Array.isArray(rem?.flags) ? [...rem.flags] : [],
+  }));
   const buildGrimoireSnapshot = (store) => {
-    const mapReminders = (reminders) => (Array.isArray(reminders) ? reminders : []).map(rem => ({
-      id: rem?.id ?? null,
-      name: rem?.name ?? null,
-      role: roleIdOf(rem?.role),
-      flags: Array.isArray(rem?.flags) ? [...rem.flags] : [],
-    }));
     const mapToken = (p) => ({ role: roleIdOf(p?.role), reminders: mapReminders(p?.reminders) });
     return {
       players: (store.state.players?.players ?? []).map(mapToken),
@@ -196,6 +196,10 @@
           // Shallow copy — storePlayers[i].status is a live Vue reactive Proxy(Array),
           // which throws a DataCloneError if passed straight into postMessage.
           status: Array.isArray(storePlayers[i]?.status) ? [...storePlayers[i].status] : [],
+          // Reminder tokens on this seat, from the live store — localStorage's
+          // mirror of them is unreliable. Nomination alerts read these to tell a
+          // spent ability from a live one ('No Ability' on the Virgin, etc).
+          reminders: mapReminders(storePlayers[i]?.reminders),
           isDead: token.isDead || false,
         };
       }),
@@ -296,6 +300,20 @@
         const message = (event.data.message ?? []).map(t =>
           t?.id === 'grimoire' ? { id: 'grimoire', data: buildGrimoireSnapshot(store) } : t);
         store.commit('session/addSignal', { userIds: event.data.userIds, message, isInbound: false });
+      } catch { /* page not ready or store unavailable */ }
+    }
+    if (event.data?.type === 'RAISE_HAND') {
+      try {
+        const store = getStore();
+        const myUserId = getMyUserId();
+        if (!store || !myUserId) return;
+        // Same two commits the app's own hand menu makes, in the same order:
+        // the icon is stored first, then raiseHand is what a store plugin turns
+        // into ["message","raise-hand",<icon>] on the wire. The app lowers the
+        // hand itself a beat later (the wire shows a trailing null), so there's
+        // no separate lower command to send.
+        store.commit('session/setHandIcon', event.data.icon ?? null);
+        store.commit('session/raiseHand', { userId: myUserId });
       } catch { /* page not ready or store unavailable */ }
     }
     if (event.data?.type === 'JOIN_CHANNEL') {

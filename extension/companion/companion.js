@@ -15,6 +15,10 @@ let fullTimeline = [];
 let currentState = null;
 let revealedRoles = {}; // playerId → roleId, populated from end entry
 let allNominations = [];
+// The nomination currently on the floor, before its closing frame lands. Kept
+// apart from allNominations so it can't reach the log or vote maths half-built —
+// the per-day nominate-once limits are the one place it has to count.
+let pendingNomination = null;
 let allChatSessions = [];
 let allTextMessages = [];
 let nameMap = {};
@@ -25,6 +29,7 @@ let openPlayerTimelineName = null;
 let cellTokens = {};
 let playerActionMode = null; // null | 'nominate' | 'swap'
 let playerActionPickedSeat = null; // first seat picked during 'swap'/'nominate' mode
+let hoveredSeat = null; // seat under the cursor, for the nomination hand preview
 let materializedStatus = new Set(); // event keys already turned into a status chip — never recreate, even after edit/delete
 let playerMeta = {}; // { name: { roleId, roleName, roleTeam, roleIconUrl, alignment } }
 let lastNotesKey = '';
@@ -83,6 +88,12 @@ const _normalizeId = (id) => {
   return _roleAliases[base] ?? base;
 };
 
+// Longest trailing chunk a localized id may add to a canonical one ('cz', 'pt').
+// Two, because that's what a language tag is — every extra character allowed
+// here is another real homebrew name that gets mistaken for a canonical role
+// plus a suffix (at 3, 'baroness' resolves to Baron).
+const LOCALE_SUFFIX_MAX = 2;
+
 function registerRoleAlias(r) {
   const id = (r.id ?? '').replace(/^traveller_/, '');
   if (!id || _roleAliases[id] || _roles().some(x => x.id === id)) return;
@@ -90,10 +101,13 @@ function registerRoleAlias(r) {
   const m = (typeof r.iconUrl === 'string' ? r.iconUrl : '').match(/Icon_([a-z0-9_]+)\./i);
   const guess = m ? m[1].toLowerCase().replace(/_/g, '') : null;
   if (guess && _roles().some(x => x.id === guess)) { _roleAliases[id] = guess; return; }
-  // Fallback: longest canonical id the custom id starts with (washerwomancz → washerwoman)
+  // Fallback: longest canonical id the custom id starts with (washerwomancz → washerwoman).
+  // The leftover must be language-tag sized — without that cap any homebrew whose
+  // id merely happens to start with a canonical one gets swallowed by it
+  // (powdermonkey → po, hermitcrab → hermit).
   let best = null;
   for (const x of _roles()) {
-    if (id.startsWith(x.id) && (!best || x.id.length > best.length)) best = x.id;
+    if (id.startsWith(x.id) && id.length - x.id.length <= LOCALE_SUFFIX_MAX && (!best || x.id.length > best.length)) best = x.id;
   }
   if (best) _roleAliases[id] = best;
 }
@@ -2954,39 +2968,13 @@ function classifyScriptRoleTeam(entry) {
   };
 }
 
-// ── IndexedDB: persist the picked FileSystemDirectoryHandle (not string-serializable,
-// so it can't go through the localStorage-based settings like everything else here) ──
-const SCRIPT_LIB_DB = 'botc-companion-db';
-const SCRIPT_LIB_STORE = 'handles';
-
-function openScriptLibDb() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(SCRIPT_LIB_DB, 1);
-    req.onupgradeneeded = () => req.result.createObjectStore(SCRIPT_LIB_STORE);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function saveDirHandle(handle) {
-  const db = await openScriptLibDb();
-  await new Promise((resolve, reject) => {
-    const tx = db.transaction(SCRIPT_LIB_STORE, 'readwrite');
-    tx.objectStore(SCRIPT_LIB_STORE).put(handle, 'scriptLibraryDir');
-    tx.oncomplete = resolve;
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-async function loadDirHandle() {
-  const db = await openScriptLibDb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(SCRIPT_LIB_STORE, 'readonly');
-    const req = tx.objectStore(SCRIPT_LIB_STORE).get('scriptLibraryDir');
-    req.onsuccess = () => resolve(req.result ?? null);
-    req.onerror = () => reject(req.error);
-  });
-}
+// ── Script library directory handle ─────────────────────────────────────────
+// The FileSystemDirectoryHandle is not string-serializable, so it can't go
+// through the localStorage-based settings like everything else here. It lives
+// in the same IndexedDB as the player database — see data/playerDb.js, which
+// owns the schema and the single versioned opener.
+const saveDirHandle = (handle) => PlayerDb.saveDirHandle(handle);
+const loadDirHandle = () => PlayerDb.loadDirHandle();
 
 // ── Recursive scan ───────────────────────────────────────────────────────────
 async function scanScriptDir(dirHandle, category = null) {
@@ -3273,9 +3261,16 @@ function impliedAlignmentGE(p) {
 function nominationLimitsToday() {
   const nominatedNames = new Set();
   const usedNominatorNames = new Set();
-  const currentDay = currentState?.phase ? phaseLabel(currentState.phase) : null;
-  if (!currentDay) return { nominatedNames, usedNominatorNames };
-  for (const nom of allNominations) {
+  // "Today" comes from the timeline — the same source the nominations below are
+  // bucketed against — rather than from phaseLabel(currentState.phase). Those
+  // two disagree whenever a storyteller doesn't work the day/night toggle: the
+  // phase sticks at 0 with no phase events recorded, so this side said 'Day 0'
+  // while every nomination said 'Game started' and none of them counted. (Phase
+  // 0 also read as falsy, which bailed out before any of that even mattered.)
+  // Deriving both sides identically degrades gracefully instead: with no phases
+  // tracked at all, the whole game is one bucket.
+  const currentDay = gamePhaseAt(Date.now());
+  for (const nom of pendingNomination ? [...allNominations, pendingNomination] : allNominations) {
     if (gamePhaseAt(nom.ts) !== currentDay) continue;
     const nominatorName = nomSeatName(nom, nom.nominatorSeat);
     const nomineeName = nomSeatName(nom, nom.nomineeSeat);
@@ -3284,6 +3279,128 @@ function nominationLimitsToday() {
     if (nomineeTeam !== 'traveller') usedNominatorNames.add(nominatorName);
   }
   return { nominatedNames, usedNominatorNames };
+}
+
+// Seat geometry, shared by the seat layout and the nomination hand overlay so
+// the two can't drift apart. Seat 1 (index 0) sits at the top of the circle and
+// the rest run clockwise, matching a physical grimoire.
+const SEAT_R = 42;        // seat centres, in the 0-100 coordinate space
+const HAND_R = 33;        // nominator hand — stops short of the seat tokens
+const HAND_R_NOMINEE = 26; // shorter, so a self-nomination shows both hands
+const seatAngle = (idx, n) => (idx / (n || 1)) * 2 * Math.PI - Math.PI / 2;
+const seatPos = (idx, n, r) => {
+  const a = seatAngle(idx, n);
+  return { x: 50 + r * Math.cos(a), y: 50 + r * Math.sin(a) };
+};
+
+// One clock hand from the hub out towards a seat, with an arrowhead on the tip.
+function nomHand(idx, n, r, cls) {
+  const a = seatAngle(idx, n);
+  const at = (rad) => ({ x: 50 + rad * Math.cos(a), y: 50 + rad * Math.sin(a) });
+  const from = at(0), line = at(r), tip = at(r + 5);
+  // Perpendicular to the hand, for the arrowhead's base corners
+  const px = -Math.sin(a) * 3, py = Math.cos(a) * 3;
+  const base = at(r - 0.5);
+  const pts = `${tip.x.toFixed(2)},${tip.y.toFixed(2)} `
+    + `${(base.x + px).toFixed(2)},${(base.y + py).toFixed(2)} `
+    + `${(base.x - px).toFixed(2)},${(base.y - py).toFixed(2)}`;
+  return `<line class="nom-hand-line ${cls}" x1="${from.x}" y1="${from.y}" x2="${line.x.toFixed(2)}" y2="${line.y.toFixed(2)}" />`
+    + `<polygon class="nom-hand-head ${cls}" points="${pts}" />`;
+}
+
+// Redraws the overlay only — cheap enough to run on every hover, unlike a full
+// renderPlayers (which rebuilds all the seat markup and would kill the hover).
+const _nomAlerts = () => (typeof BOTC_NOM_ALERTS !== 'undefined' ? BOTC_NOM_ALERTS : []);
+
+// Reminder tokens are per-seat and come from the live store via page-bridge.
+// Matched on role + name, the pair the grimoire actually uses as an identity —
+// the numeric token id is stable per token but says nothing on its own.
+//
+// A flipped token is one the storyteller turned face down to mark the ability as
+// droisoned, so it doesn't count — in either direction. A flipped 'Cursed' means
+// the Witch's curse won't kill; a flipped 'No Ability' on the Virgin means that
+// mark is itself void, so the Virgin's ability reads as live again.
+// Ghost vote already spent. Like death, this is a token in the status array
+// rather than a field of its own.
+const isVoteless = (p) => (p?.status ?? []).includes('voteless');
+
+const hasReminder = (p, roleId, name) =>
+  (p?.reminders ?? []).some(r =>
+    r.role === roleId && r.name === name && !(r.flags ?? []).includes('flipped'));
+
+// Alerts for the nomination being assembled. nominee is null until it's picked,
+// so 'nominee'/'pair' rules simply don't fire yet.
+function nominationAlerts(nominatorSeat, nomineeSeat) {
+  const players = currentState?.players ?? [];
+  const bySeat = (seat) => {
+    if (seat === null || seat === undefined) return null;
+    const p = players.find(pl => pl.seat === seat);
+    return p ? { ...p, label: dn(displayName(p, p.seat)) } : null;
+  };
+  const ctx = {
+    nominator: bySeat(nominatorSeat),
+    nominee: bySeat(nomineeSeat),
+    rem: hasReminder,
+    alive: players.filter(p => !p.isDead).length,
+  };
+  if (!ctx.nominator && !ctx.nominee) return [];
+  return _nomAlerts()
+    .filter(rule => {
+      if (rule.side === 'nominator' && !ctx.nominator) return false;
+      if (rule.side === 'nominee' && !ctx.nominee) return false;
+      if (rule.side === 'pair' && !(ctx.nominator && ctx.nominee)) return false;
+      try { return rule.test(ctx); } catch { return false; }
+    })
+    .map(rule => ({ id: rule.id, level: rule.level, role: rule.role, label: rule.label }));
+}
+
+function renderNomAlerts() {
+  const box = document.getElementById('nom-alerts');
+  if (!box) return;
+  // The hovered seat stands in for the seat about to be picked, so the reminder
+  // shows before the click rather than after the nomination is already in.
+  const alerts = playerActionMode === 'nominate'
+    ? (playerActionPickedSeat === null
+        ? nominationAlerts(hoveredSeat, null)
+        : nominationAlerts(playerActionPickedSeat, hoveredSeat))
+    : [];
+  box.innerHTML = alerts.map(a => {
+    // Icon comes from the bundled role art by id — the role whose ability is
+    // firing, which is not necessarily a role anyone at the table can see (the
+    // Witch's curse shows the Witch, on the cursed player's own nomination).
+    const icon = _iconUrl({ id: a.role });
+    const roleName = _roles().find(r => r.id === a.role)?.name ?? a.role;
+    return `<div class="nom-alert nom-alert-${a.level}" title="${esc(roleName)}">`
+      + (icon ? `<img class="nom-alert-icon" src="${esc(icon)}" alt="${esc(roleName)}" />` : '')
+      + `<span class="nom-alert-label">${esc(a.label)}</span></div>`;
+  }).join('');
+  box.style.display = alerts.length ? '' : 'none';
+}
+
+function renderNomHands() {
+  const svg = document.getElementById('nom-hands');
+  if (!svg) return;
+  const players = currentState?.players ?? [];
+  const n = players.length;
+  const idxOf = (seat) => players.findIndex(pl => pl.seat === seat);
+
+  const hands = [];
+  if (playerActionMode === 'nominate') {
+    if (playerActionPickedSeat !== null) {
+      hands.push({ idx: idxOf(playerActionPickedSeat), r: HAND_R, cls: 'nom-hand-nominator' });
+    }
+    // The hovered seat previews whichever hand the next click would place. Not
+    // skipped when it equals the picked seat: that's a self-nomination, and the
+    // shorter nominee hand stays visible inside the nominator's.
+    if (hoveredSeat !== null) {
+      hands.push(playerActionPickedSeat === null
+        ? { idx: idxOf(hoveredSeat), r: HAND_R, cls: 'nom-hand-nominator nom-hand-preview' }
+        : { idx: idxOf(hoveredSeat), r: HAND_R_NOMINEE, cls: 'nom-hand-nominee nom-hand-preview' });
+    }
+  }
+
+  svg.innerHTML = hands.filter(h => h.idx >= 0).map(h => nomHand(h.idx, n, h.r, h.cls)).join('')
+    + (hands.length ? '<circle class="nom-hand-hub" cx="50" cy="50" r="2.4" />' : '');
 }
 
 function renderPlayers() {
@@ -3303,6 +3420,11 @@ function renderPlayers() {
   // Only computed while actively picking a nominator/nominee — cheap to build
   // (walks allNominations once), but pointless otherwise.
   const nomLimits = (playerActionMode === 'nominate') ? nominationLimitsToday() : null;
+  // Locked out while a seat-pick mode is running: pointer-events:none in CSS
+  // means a stray click lands on the seat and picks it, the same as clicking any
+  // other part of the seat, instead of killing someone by accident.
+  const badgeLock = playerActionMode ? ' seat-badge-locked' : '';
+  const badgeDisabled = playerActionMode ? ' disabled' : '';
   const seats = players.map((p, idx) => {
     const name = displayName(p, p.seat);
     const role = playerRoleInfo(p);
@@ -3333,11 +3455,9 @@ function renderPlayers() {
       playerActionMode && playerActionPickedSeat === p.seat ? 'pa-picked' : '',
       nomIneligible ? 'pa-ineligible' : '',
     ].filter(Boolean).join(' ');
-    // Seat 1 (index 0) sits at the top of the circle; seats proceed clockwise
-    // from there, matching how a physical grimoire is laid out around the table.
-    const angle = (idx / (n || 1)) * 2 * Math.PI - Math.PI / 2;
-    const cx = (50 + 42 * Math.cos(angle)).toFixed(2);
-    const cy = (50 + 42 * Math.sin(angle)).toFixed(2);
+    const pos = seatPos(idx, n, SEAT_R);
+    const cx = pos.x.toFixed(2);
+    const cy = pos.y.toFixed(2);
     const nomIneligibleTitle = nomIneligible
       ? (playerActionPickedSeat === null ? 'Already nominated someone today' : 'Already nominated today')
       : '';
@@ -3347,6 +3467,8 @@ function renderPlayers() {
         <button class="player-role-btn seat-token ${tokenColorClass}" data-seat="${p.seat}" title="${role ? esc(role.name) : 'Set role'}"${tokenFill}>${tokenLabel}</button>
         <button class="align-cycle-btn seat-align-badge ${alignClass}" data-seat="${p.seat}" title="Cycle alignment"></button>
         <button class="seat-remove-x-btn seat-remove-badge" data-seat="${p.seat}" data-occupied="${p.id ? '1' : ''}" title="Remove seat">✕</button>
+        <button class="seat-life-btn seat-life-badge${badgeLock}" data-seat="${p.seat}" data-kill="${p.isDead ? '' : '1'}"${badgeDisabled} title="${p.isDead ? 'Revive' : 'Kill'}">${p.isDead ? '✚' : '💀'}</button>
+        ${p.isDead ? `<button class="seat-vote-btn seat-vote-badge${badgeLock}" data-seat="${p.seat}" data-spend="${isVoteless(p) ? '' : '1'}"${badgeDisabled} title="${isVoteless(p) ? 'Return ghost vote' : 'Remove ghost vote'}">${isVoteless(p) ? '✋' : '⊘'}</button>` : ''}
       </div>
       <div class="seat-name-row">
         <span class="player-name role-name ${nameColorClass}" data-player="${esc(name)}">${esc(dn(name))}</span>${p.isDead ? ' 💀' : ''}
@@ -3354,7 +3476,13 @@ function renderPlayers() {
       ${role ? `<div class="seat-role-label ${tokenColorClass}">${esc(role.name)}</div>` : ''}
     </div>`;
   }).join('');
-  table.innerHTML = seats;
+  // Hands first so the seats paint over them, alert chips last so they win over
+  // both; pointer-events:none in CSS keeps either out of the way of seat clicks.
+  // Both live inside the circle, absolutely positioned, so showing them can't
+  // shift the layout around them.
+  table.innerHTML = `<svg id="nom-hands" viewBox="0 0 100 100" aria-hidden="true"></svg>`
+    + seats
+    + `<div id="nom-alerts" style="display:none"></div>`;
 
   // Only one player can be marked (mid-nomination) at a time, but Mark stays
   // enabled even when someone already has it — picking a new seat just moves
@@ -3399,6 +3527,37 @@ function renderPlayers() {
       sendBg({ type: 'REMOVE_SEAT', seat });
     });
   });
+  table.querySelectorAll('.seat-life-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (playerActionMode) return;
+      const seat = Number(btn.dataset.seat);
+      const player = players.find(pl => pl.seat === seat);
+      // Death lives in the status array, not a boolean — same channel the Mark
+      // button uses. Filtering/merging rather than replacing keeps any other
+      // token on the seat ('marked') intact.
+      const status = player?.status ?? [];
+      const value = btn.dataset.kill
+        ? [...new Set([...status, 'dead'])]
+        // Reviving drops 'voteless' too: a living player votes normally, and the
+        // vote badge only exists on dead seats — left behind, that token would be
+        // unreachable from here.
+        : status.filter(t => t !== 'dead' && t !== 'voteless');
+      sendBg({ type: 'SET_PLAYER_PROPERTY', seat, property: 'status', value });
+    });
+  });
+  table.querySelectorAll('.seat-vote-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (playerActionMode) return;
+      const seat = Number(btn.dataset.seat);
+      const status = players.find(pl => pl.seat === seat)?.status ?? [];
+      const value = btn.dataset.spend
+        ? [...new Set([...status, 'voteless'])]
+        : status.filter(t => t !== 'voteless');
+      sendBg({ type: 'SET_PLAYER_PROPERTY', seat, property: 'status', value });
+    });
+  });
   // `table` is a persistent container (only its innerHTML is replaced above),
   // so this delegated listener is wired once and reused across re-renders.
   if (!table.dataset.pickListenerWired) {
@@ -3407,9 +3566,34 @@ function renderPlayers() {
       if (!playerActionMode) return;
       const seatEl = e.target.closest('.player-seat[data-seat]');
       if (!seatEl) return;
+      // Marked for the document-level handlers further up the bubble path: this
+      // click has been spent on a seat pick. The mark travels with the event
+      // instead of being read back off playerActionMode, because completing a
+      // pick clears that mode — so by the time the click reaches document, the
+      // "are we picking?" answer would already be stale. Not stopPropagation():
+      // the popup closers on document still want to see this click.
+      e.botcSeatPick = true;
       handlePlayerActionPick(Number(seatEl.dataset.seat));
     });
+    // Hover drives the hand preview. On the table rather than the seats, so it
+    // survives the innerHTML rewrite every renderPlayers does.
+    table.addEventListener('mouseover', (e) => {
+      const seatEl = e.target.closest('.player-seat[data-seat]');
+      const seat = seatEl ? Number(seatEl.dataset.seat) : null;
+      if (seat === hoveredSeat) return;
+      hoveredSeat = seat;
+      renderNomHands();
+      renderNomAlerts();
+    });
+    table.addEventListener('mouseleave', () => {
+      if (hoveredSeat === null) return;
+      hoveredSeat = null;
+      renderNomHands();
+      renderNomAlerts();
+    });
   }
+  renderNomHands();
+  renderNomAlerts();
   applyHighlights(); applyPinnedHighlights();
 }
 
@@ -3966,11 +4150,229 @@ document.getElementById('role-switch').addEventListener('click', (e) => {
 
 loadSettings();
 applySettingsToUI();
+// ── Player database panel ────────────────────────────────────────────────────
+// Browses the persistent record of everyone played with (data/playerDb.js).
+// The worker writes the automatic half (aliases, games); this owns the fields
+// the user sets by hand — the name they know them by, a 0-10 score, and a note.
+
+let playerDbRows = [];                       // [{...player, games: n}]
+let playerDbExpanded = new Set();            // player ids with their history open
+const playerDbGamesCache = new Map();        // player id → joined participation rows
+
+// Score colour ramp: 0 red → 5 neutral → 10 green, so the column scans at a glance.
+function playerScoreHue(score) {
+  return Math.round((Math.max(0, Math.min(10, score)) / 10) * 120);
+}
+
+function playerDbRoleMeta(roleId) {
+  if (!roleId) return null;
+  const r = _roles().find(x => x.id === _normalizeId(roleId));
+  return { name: r?.name ?? roleId, team: r?.team ?? '', iconUrl: _iconUrl({ id: roleId }) };
+}
+
+const playerDbDate = (ts) => ts ? new Date(ts).toLocaleDateString() : '—';
+
+function renderPlayerDbGames(playerId) {
+  const rows = playerDbGamesCache.get(playerId);
+  if (!rows) return '<div class="pdb-games-loading">loading…</div>';
+  if (rows.length === 0) return '<div class="pdb-games-empty">no games recorded</div>';
+
+  return `<table class="pdb-games">${rows.map(row => {
+    const meta = playerDbRoleMeta(row.roleId);
+    const icon = meta?.iconUrl ? `<img class="tp-role-icon" src="${esc(meta.iconUrl)}" />` : '';
+    const side = row.alignment || ((row.team === 'minion' || row.team === 'demon') ? 'evil' : 'good');
+    const outcome = row.isStoryteller ? '<span class="pdb-st">storyteller</span>'
+      : row.won === null ? '<span class="pdb-unknown">—</span>'
+      : row.won ? '<span class="pdb-won">won</span>'
+      : '<span class="pdb-lost">lost</span>';
+    return `<tr>
+      <td class="pdb-g-date">${esc(playerDbDate(row.ts))}</td>
+      <td class="pdb-g-edition">${esc(row.edition ?? '')}</td>
+      <td class="pdb-g-role">${row.isStoryteller ? '' : `${icon}<span class="pdb-align-${esc(side)}">${esc(meta?.name ?? '')}</span>`}</td>
+      <td class="pdb-g-state">${row.isStoryteller ? '' : (row.isDead ? 'died' : 'survived')}</td>
+      <td class="pdb-g-outcome">${outcome}</td>
+      <td class="pdb-g-alongside">${row.name && row.name !== playerDbRows.find(p => p.id === playerId)?.commonName ? `as “${esc(row.name)}”` : ''}</td>
+    </tr>`;
+  }).join('')}</table>`;
+}
+
+function renderPlayerDb() {
+  const resultsEl = document.getElementById('player-db-results');
+  const statusEl = document.getElementById('player-db-status');
+  if (!resultsEl) return;
+
+  const q = (document.getElementById('player-db-search')?.value ?? '').trim().toLowerCase();
+  const sort = document.getElementById('player-db-sort')?.value ?? 'score';
+
+  const filtered = playerDbRows.filter(p => {
+    if (!q) return true;
+    return (p.commonName ?? '').toLowerCase().includes(q)
+      || (p.note ?? '').toLowerCase().includes(q)
+      || (p.names ?? []).some(n => (n.name ?? '').toLowerCase().includes(q));
+  });
+
+  const cmp = {
+    // Ties within a score band are far more useful ordered by how much you've
+    // actually played together than alphabetically.
+    score: (a, b) => (b.score ?? 5) - (a.score ?? 5) || (b.games ?? 0) - (a.games ?? 0),
+    games: (a, b) => (b.games ?? 0) - (a.games ?? 0),
+    recent: (a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0),
+    name: (a, b) => (a.commonName ?? '').localeCompare(b.commonName ?? ''),
+  }[sort] ?? (() => 0);
+  filtered.sort(cmp);
+
+  statusEl.textContent = playerDbRows.length === 0 ? 'no players recorded yet'
+    : `${filtered.length}${filtered.length === playerDbRows.length ? '' : ` of ${playerDbRows.length}`} players`;
+
+  if (playerDbRows.length === 0) {
+    resultsEl.innerHTML = '<div class="pdb-empty">Players are recorded automatically when a game ends.</div>';
+    return;
+  }
+
+  resultsEl.innerHTML = filtered.map(p => {
+    const open = playerDbExpanded.has(p.id);
+    const score = p.score ?? PlayerDb.DEFAULT_SCORE;
+    const aliases = (p.names ?? []).map(n => n.name).filter(n => n && n !== p.commonName);
+    return `<div class="pdb-entry${open ? ' open' : ''}" data-id="${esc(p.id)}">
+      <div class="pdb-row">
+        <button class="pdb-expand" data-act="expand" title="game history">${open ? '▾' : '▸'}</button>
+        <input class="pdb-name" data-act="name" value="${esc(p.commonName ?? p.id)}" title="the name you know them by" />
+        <div class="pdb-score">
+          <input type="range" min="0" max="10" step="1" value="${score}" data-act="score"
+                 style="--pdb-hue:${playerScoreHue(score)}" />
+          <span class="pdb-score-val" style="--pdb-hue:${playerScoreHue(score)}">${score}</span>
+        </div>
+        <span class="pdb-games-count" title="games together">${p.games ?? 0}${(p.games ?? 0) === 1 ? ' game' : ' games'}</span>
+        <span class="pdb-lastseen" title="last seen">${esc(playerDbDate(p.lastSeen))}</span>
+      </div>
+      <div class="pdb-row-2">
+        <input class="pdb-note" data-act="note" value="${esc(p.note ?? '')}" placeholder="note…" />
+        ${aliases.length ? `<span class="pdb-aliases" title="other names seen">aka ${aliases.map(esc).join(', ')}</span>` : ''}
+      </div>
+      ${open ? `<div class="pdb-history">${renderPlayerDbGames(p.id)}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+async function reloadPlayerDb() {
+  if (typeof PlayerDb === 'undefined') return;
+  try {
+    const players = await PlayerDb.getAllPlayers();
+    playerDbRows = players;
+    // A record open in the panel may have just gained a game — drop its cached
+    // history so the next render refetches.
+    for (const id of playerDbExpanded) playerDbGamesCache.delete(id);
+    renderPlayerDb();
+    for (const id of playerDbExpanded) loadPlayerDbGames(id);
+  } catch (e) {
+    console.error('botc-tool: reading player db failed', e);
+  }
+}
+
+async function loadPlayerDbGames(playerId) {
+  if (playerDbGamesCache.has(playerId)) return;
+  try {
+    playerDbGamesCache.set(playerId, await PlayerDb.getPlayerGames(playerId));
+    renderPlayerDb();
+  } catch (e) {
+    console.error('botc-tool: reading player games failed', e);
+  }
+}
+
+function initPlayerDb() {
+  const overlay = document.getElementById('player-db-overlay');
+  const openBtn = document.getElementById('player-db-btn');
+  const closeBtn = document.getElementById('player-db-close');
+  const backdrop = document.getElementById('player-db-backdrop');
+  const resultsEl = document.getElementById('player-db-results');
+  if (!overlay || !openBtn) return;
+
+  // Not available on the dev harness page, which has no extension origin.
+  if (typeof PlayerDb === 'undefined' || typeof indexedDB === 'undefined') {
+    openBtn.style.display = 'none';
+    return;
+  }
+
+  const close = () => { overlay.style.display = 'none'; };
+  openBtn.addEventListener('click', () => { overlay.style.display = ''; reloadPlayerDb(); });
+  closeBtn?.addEventListener('click', close);
+  backdrop?.addEventListener('click', close);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && overlay.style.display !== 'none') close();
+  });
+
+  document.getElementById('player-db-search')?.addEventListener('input', renderPlayerDb);
+  document.getElementById('player-db-sort')?.addEventListener('change', renderPlayerDb);
+
+  const idOf = (el) => el.closest('.pdb-entry')?.dataset.id ?? null;
+
+  // Local write-through: patch the in-memory row so re-rendering (which the
+  // score slider does on every drag) doesn't wait on the database round trip.
+  const patchRow = (id, fields) => {
+    const row = playerDbRows.find(p => p.id === id);
+    if (row) Object.assign(row, fields);
+  };
+
+  const save = (id, fields) => {
+    patchRow(id, fields);
+    PlayerDb.updatePlayer(id, fields).catch(e =>
+      console.error('botc-tool: saving player failed', e));
+  };
+
+  resultsEl?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-act="expand"]');
+    if (!btn) return;
+    const id = idOf(btn);
+    if (!id) return;
+    if (playerDbExpanded.has(id)) playerDbExpanded.delete(id);
+    else { playerDbExpanded.add(id); loadPlayerDbGames(id); }
+    renderPlayerDb();
+  });
+
+  // Live feedback while dragging, one write when released.
+  resultsEl?.addEventListener('input', (e) => {
+    const el = e.target;
+    const id = idOf(el);
+    if (!id) return;
+    if (el.dataset.act === 'score') {
+      const val = Number(el.value);
+      patchRow(id, { score: val });
+      const entry = el.closest('.pdb-entry');
+      const hue = playerScoreHue(val);
+      el.style.setProperty('--pdb-hue', hue);
+      const out = entry.querySelector('.pdb-score-val');
+      out.textContent = val;
+      out.style.setProperty('--pdb-hue', hue);
+    }
+  });
+
+  resultsEl?.addEventListener('change', (e) => {
+    const el = e.target;
+    const id = idOf(el);
+    if (!id) return;
+    if (el.dataset.act === 'score') save(id, { score: Number(el.value) });
+  });
+
+  // Name and note commit on blur (or Enter) rather than per keystroke.
+  resultsEl?.addEventListener('blur', (e) => {
+    const el = e.target;
+    const id = idOf(el);
+    if (!id) return;
+    if (el.dataset.act === 'name') save(id, { commonName: el.value });
+    if (el.dataset.act === 'note') save(id, { note: el.value });
+  }, true);
+
+  resultsEl?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.target.dataset.act === 'name' || e.target.dataset.act === 'note')) e.target.blur();
+  });
+}
+
 initSignalPanel();
 updateStRoleBtn();
 renderTimerPresets();
 renderSignalPresets();
 initScriptLibrary();
+initPlayerDb();
 
 // Settings popup (gear): toggle on click, close on outside click
 (() => {
@@ -3988,6 +4390,12 @@ initScriptLibrary();
     btn.classList.remove('open');
   });
 })();
+
+// Deliberately outside applyViewRole's show/hide — flagging a bug is useful to
+// storytellers and players alike, so this stays visible in both views.
+document.getElementById('bug-hand-btn')?.addEventListener('click', () => {
+  sendBg({ type: 'RAISE_HAND', icon: 'i-bug' });
+});
 
 document.getElementById('st-role-btn')?.addEventListener('click', () => {
   if (amIStoryteller()) {
@@ -4101,6 +4509,11 @@ document.addEventListener('mouseout', e => {
 
 document.addEventListener('click', e => {
   if (e.target.closest('#notes-table') && !e.target.closest('.notes-player-name-text')) return;
+  // A click already spent on a seat pick (nominate/swap/mark) means "pick this
+  // one" and nothing else. The inner buttons stopPropagation to get that, but
+  // the name span isn't a button — so without this, every pick made by clicking
+  // a name also throws the detail panel open over it.
+  if (e.botcSeatPick) return;
   const el = e.target.closest('[data-player]');
   if (el) openPlayerTimeline(el.dataset.player);
 });
@@ -4117,17 +4530,6 @@ function showReloadPrompt() {
     banner.innerHTML = 'The botc.app tab was open before the extension loaded. <strong>Please reload the botc.app tab</strong> to connect.';
     banner.style.display = '';
   }, 300);
-}
-
-// Shown when the bridge was injected into an already-open tab: game state
-// flows, but the WebSocket hook missed the existing connection.
-function showPartialBanner() {
-  if (document.getElementById('partial-banner')) return;
-  const el = document.createElement('div');
-  el.id = 'partial-banner';
-  el.innerHTML = 'Connected to an already-open botc.app tab — game state works, but live events (nominations, chats, messages) need a <strong>botc.app tab reload</strong>. <button id="partial-dismiss" type="button">dismiss</button>';
-  document.body.insertBefore(el, document.querySelector('main'));
-  el.querySelector('#partial-dismiss').addEventListener('click', () => el.remove());
 }
 
 sendBg({ type: 'GET_STATE' }, (response) => {
@@ -4150,6 +4552,7 @@ function applyFullRefresh(response) {
   renderState(response.state);
   if (response.timeline?.length) addTimelineEvents(response.timeline);
   allNominations = response.nominations ?? [];
+  pendingNomination = response.pendingNomination ?? null;
   renderNominations();
   allChatSessions = response.chatSessions ?? [];
   renderChats();
@@ -4184,8 +4587,8 @@ chrome.runtime.onMessage.addListener((message) => {
     showReloadPrompt();
     return;
   }
-  if (message.type === 'PARTIAL_CONNECT') {
-    showPartialBanner();
+  if (message.type === 'PLAYER_DB_UPDATED') {
+    if (document.getElementById('player-db-overlay')?.style.display !== 'none') reloadPlayerDb();
     return;
   }
   if (message.type === 'TIMELINE_EVENTS') {
@@ -4195,8 +4598,12 @@ chrome.runtime.onMessage.addListener((message) => {
   }
   if (message.type === 'NOMINATIONS_UPDATE') {
     allNominations = message.nominations ?? [];
+    pendingNomination = message.pendingNomination ?? null;
     renderNominations();
     refreshPlayerTimeline();
+    // Limit flags are baked into the seat markup, so they only pick up a new
+    // nomination on a re-render
+    renderPlayers();
   }
   if (message.type === 'CHAT_SESSIONS_UPDATE') {
     allChatSessions = message.sessions ?? [];

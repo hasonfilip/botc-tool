@@ -248,30 +248,6 @@ main { padding: 14px 20px; display: flex; flex-direction: column; gap: 14px; }
 
 #no-data-banner strong { color: var(--text); }
 
-#partial-banner {
-  margin: 10px 20px 0;
-  padding: 10px 16px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  font-size: 13px;
-  color: var(--muted);
-  text-align: center;
-}
-
-#partial-banner strong { color: var(--text); }
-
-#partial-banner button {
-  margin-left: 10px;
-  padding: 2px 10px;
-  background: none;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--muted);
-  font-size: 12px;
-  cursor: pointer;
-}
-
 .main-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -344,6 +320,87 @@ section.collapsed > *:not(h2) { display: none; }
   border: 2px solid var(--border);
   border-radius: 50%;
 }
+
+/* Nomination alerts: what the storyteller has to resolve the moment this
+   nomination goes in. Sits above the circle, in the eyeline between the
+   Nominate button and the seats being picked. */
+/* Parked in the middle of the circle: absolutely positioned, so chips appearing
+   and disappearing mid-nomination never move the seats or anything below them. */
+#nom-alerts {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: 60%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* Chips, not sentences: read in the half-second before the click lands. */
+.nom-alert {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px 3px 4px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  backdrop-filter: blur(2px);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.45);
+}
+
+.nom-alert-icon {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.nom-alert-danger {
+  background: rgba(58,26,26,0.92);
+  border-color: rgba(224,82,82,0.6);
+  color: #ff8f8f;
+}
+
+.nom-alert-info {
+  background: rgba(46,40,22,0.92);
+  border-color: rgba(255,193,7,0.4);
+  color: #ffd35c;
+  font-weight: 500;
+}
+
+/* Nomination hands: clock hands drawn from the hub out to the nominator and
+   nominee. Square parent (aspect-ratio 1/1) means the 0-100 viewBox maps
+   straight onto the seats' own percentage positions. */
+#nom-hands {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.nom-hand-line {
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+
+.nom-hand-nominator { stroke: #ffc107; fill: #ffc107; }
+.nom-hand-nominee { stroke: #e05252; fill: #e05252; }
+
+/* Dashes mark a hand the next click would place, not one already placed. Only
+   the line dashes — the arrowhead is filled, so it stays solid either way. */
+.nom-hand-preview.nom-hand-line { stroke-dasharray: 4 3; opacity: 0.6; }
+.nom-hand-preview.nom-hand-head { opacity: 0.6; }
+
+.nom-hand-hub { fill: var(--border); }
 
 .player-seat {
   position: absolute;
@@ -468,6 +525,42 @@ section.collapsed > *:not(h2) { display: none; }
 .player-seat:hover .seat-remove-badge,
 .seat-remove-badge:focus-visible { opacity: 1; }
 .seat-remove-badge:hover { color: #e05252; border-color: #e05252; }
+
+/* Life / ghost-vote badges. Same hover-to-reveal treatment as the remove badge
+   so the circle stays quiet at rest, and the same corners are kept clear: seat
+   number top-left, remove top-right, alignment bottom-right. */
+.seat-life-btn.seat-life-badge,
+.seat-vote-btn.seat-vote-badge {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1;
+  padding: 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+  cursor: pointer;
+  z-index: 3;
+}
+
+.seat-life-badge { bottom: -6px; left: -6px; }
+.seat-vote-badge { top: 50%; left: -8px; transform: translateY(-50%); }
+
+.player-seat:hover .seat-life-badge,
+.player-seat:hover .seat-vote-badge,
+.seat-life-badge:focus-visible,
+.seat-vote-badge:focus-visible { opacity: 1; }
+
+.seat-life-badge:hover { color: #e05252; border-color: #e05252; }
+.seat-vote-badge:hover { color: #ffc107; border-color: #ffc107; }
+
+/* Dimmed and click-through while nominating or swapping */
+.player-seat:hover .seat-badge-locked { opacity: 0.25; }
+.seat-badge-locked { pointer-events: none; }
 
 /* At high player counts, seats sit close enough together that a neighboring
    token can visually overlap this text — a backing pill + always-on-top
@@ -2393,3 +2486,193 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
   break-inside: avoid;
   break-after: avoid;
 }
+
+/* ── Player database panel ─────────────────────────────────────────────────── */
+#player-db-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 210;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#player-db-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+}
+#player-db-panel {
+  position: relative;
+  /* Wider than the script library: rows carry a name, score, counts and a note. */
+  width: 720px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 60px);
+  background: #1e2240;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 12px 48px rgba(0,0,0,0.6);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#player-db-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--accent);
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+#player-db-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 16px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+#player-db-close:hover { color: var(--text); background: var(--border); }
+#player-db-body {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+#player-db-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+#player-db-search { flex: 1; }
+#player-db-sort { flex-shrink: 0; }
+
+.pdb-empty, .pdb-games-empty, .pdb-games-loading {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 8px 2px;
+}
+
+.pdb-entry {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  background: rgba(255,255,255,0.02);
+}
+.pdb-entry.open { background: rgba(255,255,255,0.05); }
+
+.pdb-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pdb-row-2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  /* Line the note up under the name, past the expand chevron. */
+  padding-left: 26px;
+}
+
+.pdb-expand {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  width: 18px;
+  flex-shrink: 0;
+  padding: 0;
+}
+.pdb-expand:hover { color: var(--text); }
+
+.pdb-name, .pdb-note {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  padding: 2px 5px;
+  min-width: 0;
+}
+.pdb-name { flex: 0 0 150px; font-weight: 600; }
+.pdb-note { flex: 1; font-size: 12px; color: var(--muted); }
+.pdb-name:hover, .pdb-note:hover { border-color: var(--border); }
+.pdb-name:focus, .pdb-note:focus {
+  border-color: var(--accent);
+  background: rgba(0,0,0,0.25);
+  color: var(--text);
+  outline: none;
+}
+
+.pdb-score {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.pdb-score input[type=range] {
+  width: 96px;
+  accent-color: hsl(var(--pdb-hue) 65% 50%);
+  cursor: pointer;
+}
+.pdb-score-val {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  width: 16px;
+  text-align: right;
+  color: hsl(var(--pdb-hue) 65% 62%);
+}
+
+.pdb-games-count, .pdb-lastseen {
+  font-size: 11px;
+  color: var(--muted);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.pdb-games-count { width: 62px; text-align: right; }
+.pdb-lastseen { width: 74px; text-align: right; }
+.pdb-aliases {
+  font-size: 11px;
+  color: var(--muted);
+  opacity: 0.75;
+  flex-shrink: 0;
+}
+
+.pdb-history {
+  margin: 6px 0 2px 26px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+table.pdb-games {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+table.pdb-games td {
+  padding: 2px 6px 2px 0;
+  color: var(--muted);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.pdb-g-date { font-variant-numeric: tabular-nums; }
+.pdb-g-edition { max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
+.pdb-g-role { color: var(--text); }
+.pdb-g-role .tp-role-icon { width: 16px; height: 16px; vertical-align: -3px; margin-right: 3px; }
+.pdb-align-good { color: #7fb2ff; }
+.pdb-align-evil { color: #ff8080; }
+.pdb-won { color: #6fcf7f; font-weight: 600; }
+.pdb-lost { color: #d0707a; }
+.pdb-st { color: var(--accent); }
+.pdb-unknown { opacity: 0.5; }
