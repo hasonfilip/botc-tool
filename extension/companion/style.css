@@ -2213,6 +2213,10 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
   display: inline-flex;
   align-items: center;
   gap: 3px;
+  /* Custom tokens are free text of any length (the app imposes no limit), so a
+     single chip must wrap inside itself rather than overflow the preview row. */
+  max-width: 100%;
+  overflow-wrap: anywhere;
   background: rgba(126,200,227,0.1);
   border: 1px solid rgba(126,200,227,0.25);
   color: var(--accent);

@@ -160,15 +160,16 @@ function enrichRoles(roles) {
 }
 
 // Sync grimoire roles & alignments into playerMeta: grimoire wins in grimoire
-// mode, only fills gaps in notes mode. Auto-synced values are marked
-// (roleAuto/alignAuto) so that clearing them in the grimoire clears them here
-// too — manual assignments (popover, alignment cycle) stick.
+// mode; in notes mode it fills gaps and keeps auto-synced values tracking the
+// grimoire. Auto-synced values are marked (roleAuto/alignAuto) so that changing
+// or clearing them in the grimoire updates them here too — manual assignments
+// (popover, alignment cycle) stick.
 function syncPlayerMetaFromGrimoire() {
   for (const player of currentState?.players ?? []) {
     const name = player.name ?? `Seat ${player.seat + 1}`;
     let meta = playerMeta[name];
 
-    if (player.roleId && (colorSource === 'grimoire' || !meta?.roleId)) {
+    if (player.roleId && (colorSource === 'grimoire' || !meta?.roleId || meta.roleAuto)) {
       const roleObj = (currentState.roles ?? []).find(r => r.id === player.roleId);
       playerMeta[name] = {
         ...(meta ?? {}),
@@ -184,7 +185,7 @@ function syncPlayerMetaFromGrimoire() {
 
     meta = playerMeta[name];
     const alignment = player.alignment || '';
-    if (alignment && (colorSource === 'grimoire' || !meta?.alignment)) {
+    if (alignment && (colorSource === 'grimoire' || !meta?.alignment || meta.alignAuto)) {
       playerMeta[name] = { ...(meta ?? {}), alignment, alignAuto: true };
     } else if (!alignment && meta?.alignment && meta.alignAuto) {
       playerMeta[name] = { ...meta, alignment: '', alignAuto: false };
@@ -2254,6 +2255,9 @@ function renderNotesGrid() {
     requestAnimationFrame(() => {
       const ths = table.querySelectorAll('thead tr th');
       if (ths.length < 3) return;
+      // Hidden (e.g. ST view on load) → everything measures 0. Wait until the
+      // grid is shown; applyViewRole re-renders it then.
+      if (!table.offsetParent) return;
       notesFixedColWidths = {
         player: ths[0].offsetWidth,
         role: Math.max(ths[1].offsetWidth, measureMaxRoleChipWidth()),
@@ -4218,6 +4222,7 @@ function applyViewRole() {
   document.getElementById('script-wrap')?.style.setProperty('display', isStoryteller ? '' : 'none');
   document.getElementById('clear-grimoire-btn')?.style.setProperty('display', isStoryteller ? '' : 'none');
   document.getElementById('notes-section')?.style.setProperty('display', isStoryteller ? 'none' : '');
+  if (!isStoryteller && !notesFixedColWidths) { lastNotesKey = null; renderNotesGrid(); }
 }
 
 document.getElementById('role-switch').addEventListener('click', (e) => {
