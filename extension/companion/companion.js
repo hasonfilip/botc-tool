@@ -2969,6 +2969,11 @@ function classifyScriptRoleTeam(entry) {
     // possibly-translated name for display) — search needs the resolved
     // canonical English name too, or a translated script's roles never match.
     canonicalName: canonical?.name ?? null,
+    edition: canonical?.edition ?? null,
+    // Homebrew often borrows an official id prefix or icon (`foolunatic` →
+    // Fool) but names its own set here, which is the only tell it isn't the
+    // official character. Base-3 detection needs it.
+    declaredEdition: typeof entry === 'object' && entry.edition ? String(entry.edition) : null,
   };
 }
 
@@ -2995,10 +3000,10 @@ function buildScriptEntry(json, fileName, category) {
   const rolesByTeam = {};
   const roleSearchTerms = new Set();
   for (const r of parsed.roles) {
-    const { team, name: roleName, id: roleId, canonicalName } = classifyScriptRoleTeam(r);
+    const { team, name: roleName, id: roleId, canonicalName, edition, declaredEdition } = classifyScriptRoleTeam(r);
     // Fabled and Loric are both non-player special roles — merge into one "NPCs" bucket
     const key = (team === 'fabled' || team === 'loric') ? 'NPCs' : (team || 'unclassified');
-    (rolesByTeam[key] ??= []).push({ name: roleName, id: roleId });
+    (rolesByTeam[key] ??= []).push({ name: roleName, id: roleId, edition, declaredEdition });
     // Search by the script's own (possibly translated) name AND the
     // resolved canonical id/English name, so "washerwoman" finds a
     // Czech script's "Pradlena" too.
@@ -3039,6 +3044,91 @@ async function scanScriptFileList(fileList) {
     } catch { /* not a valid script file — skip it silently */ }
   }
   return results;
+}
+
+// Script-declared edition values that are consistent with a role being the
+// official character it resolved to. 'OfficialCustoms' is the script tool's
+// label for an official character with custom (e.g. translated) text. Anything
+// else (`lmr`, `HSoM`, …) names a homebrew set that merely borrowed an official
+// id prefix or icon, like `foolunatic` → Fool.
+const OFFICIAL_DECLARED_EDITIONS = new Set(['tb', 'bmr', 'snv', 'carousel', 'fabled', 'loric', 'officialcustoms']);
+const isOfficialRole = (r) => !!r.edition
+  && (!r.declaredEdition || OFFICIAL_DECLARED_EDITIONS.has(r.declaredEdition.toLowerCase()));
+
+// Travellers and NPCs (Fabled/Loric) don't count toward Base 3 or complexity.
+const NON_PLAYER_TEAMS = new Set(['traveller', 'traveler', 'NPCs']);
+const playerRoles = (rolesByTeam) => Object.entries(rolesByTeam)
+  .filter(([team]) => !NON_PLAYER_TEAMS.has(team))
+  .flatMap(([, roles]) => roles);
+
+// Base 3 = every Townsfolk/Outsider/Minion/Demon is an official TB, BMR or S&V character.
+const BASE3_EDITIONS = new Set(['tb', 'bmr', 'snv']);
+function isBase3Script(rolesByTeam) {
+  const roles = playerRoles(rolesByTeam);
+  return roles.length > 0 && roles.every(r => isOfficialRole(r) && BASE3_EDITIONS.has(r.edition));
+}
+
+// Estimated player difficulty from data/complexity.js facts, 1–5.
+//
+// Measures what a typical *game* on the script holds, not how big the script
+// is — TPI rates an 11-character teensy (Laissez un Faire) among its hardest.
+// Each character is weighted by how likely it is to be in play: its depth +
+// chaos count when it is, and its presence counts by how *uncertain* that is —
+// a lone Demon is known to be in play, so its threat by presence is mostly
+// priced in; with four Demons on the script each has to be played around.
+// The per-player average is mapped linearly onto 1–5, fitted against TPI's
+// published Player Complexity scores (No Greater Joy 1.5, Over the River 3,
+// Hide & Seek 3, One In One Out 3, A Grimm Chorus 3.5, Lunar Eclipse 3.5,
+// Laissez un Faire 4.5, The Passage of Time 4.5) plus TB ≈ 1.75, BMR ≈ 3 and
+// S&V ≈ 3.25; typical error against those is ±0.45.
+// Returns null when too few characters are rated (mostly-homebrew scripts).
+const COMPLEXITY_MIN_COVERAGE = 0.6;
+// Typical number of each team in play, for a full game and for teensyville.
+const EXPECTED_IN_PLAY = { townsfolk: 6, outsider: 1, minion: 1.5, demon: 1 };
+const EXPECTED_IN_PLAY_TEENSY = { townsfolk: 3.5, outsider: 0.6, minion: 1, demon: 1 };
+const TEENSY_MAX_CHARACTERS = 14;
+const PRESENCE_WEIGHT = 0.25;
+// Presence still counts somewhat when a character is surely in play.
+const PRESENCE_FLOOR = 0.3;
+const COMPLEXITY_FIT = { intercept: -1.649, slope: 1.885 };
+function scriptComplexity(rolesByTeam) {
+  const teams = Object.entries(rolesByTeam).filter(([team]) => !NON_PLAYER_TEAMS.has(team));
+  const total = teams.reduce((n, [, roles]) => n + roles.length, 0);
+  const expected = total <= TEENSY_MAX_CHARACTERS ? EXPECTED_IN_PLAY_TEENSY : EXPECTED_IN_PLAY;
+  let rated = 0, inPlay = 0, load = 0;
+  for (const [team, roles] of teams) {
+    const pInPlay = Math.min(1, (expected[team] ?? 1) / roles.length);
+    const presenceWeight = PRESENCE_FLOOR + (1 - PRESENCE_FLOOR) * (1 - pInPlay);
+    for (const r of roles) {
+      const facts = isOfficialRole(r) ? ROLE_COMPLEXITY[r.id] : null;
+      if (!facts) continue;
+      const [, depth, chaos, presence] = facts;
+      rated++;
+      inPlay += pInPlay;
+      load += pInPlay * (depth + chaos) + PRESENCE_WEIGHT * presenceWeight * presence;
+    }
+  }
+  if (!rated || rated / total < COMPLEXITY_MIN_COVERAGE) return null;
+  const score = COMPLEXITY_FIT.intercept + COMPLEXITY_FIT.slope * (load / inPlay);
+  return { score: Math.min(5, Math.max(1, score)), rated, total };
+}
+
+// Difficulty filter buckets on TPI's scale (1.5 beginner, 3 intermediate,
+// 4.5 hard): TB and simple teensies are easy, BMR medium, S&V right at the
+// hard line, Laissez un Faire / Passage of Time / Lunar Eclipse hard.
+const DIFFICULTY_LEVELS = [
+  { key: 'easy', max: 2.5 },
+  { key: 'medium', max: 3.5 },
+  { key: 'hard', max: Infinity },
+];
+const difficultyLevel = (score) => DIFFICULTY_LEVELS.find(l => score < l.max).key;
+
+// Short green→red bar tag.
+function complexityTagHtml(c) {
+  const t = (c.score - 1) / 4;
+  const partial = c.rated < c.total ? ` (${c.rated}/${c.total} characters rated)` : '';
+  return `<span class="script-lib-tag script-lib-cx" title="Difficulty ${c.score.toFixed(1)} / 5${esc(partial)}">`
+    + `<span class="script-lib-cx-bar"><span style="width:${Math.max(Math.round(t * 100), 6)}%;background:hsl(${Math.round(120 - t * 120)},70%,50%)"></span></span></span>`;
 }
 
 // ── UI ────────────────────────────────────────────────────────────────────────
@@ -3144,7 +3234,14 @@ function initScriptLibrary() {
 
   function renderResults() {
     const q = (searchInput.value ?? '').trim().toLowerCase();
-    const filtered = scriptLibrary.filter(s => {
+    const filtered = scriptLibrary.map(s => ({
+      ...s,
+      base3: isBase3Script(s.rolesByTeam),
+      cx: scriptComplexity(s.rolesByTeam),
+    })).filter(s => {
+      if (base3Only && !s.base3) return false;
+      // Unrated scripts can't be placed in a bucket, so any difficulty filter hides them.
+      if (difficultyFilter.size && !(s.cx && difficultyFilter.has(difficultyLevel(s.cx.score)))) return false;
       if (!q) return true;
       return s.name.toLowerCase().includes(q)
         || s.author.toLowerCase().includes(q)
@@ -3153,7 +3250,11 @@ function initScriptLibrary() {
 
     const byCategory = {};
     for (const s of filtered) (byCategory[s.category] ??= []).push(s);
-    for (const cat of Object.keys(byCategory)) byCategory[cat].sort((a, b) => a.name.localeCompare(b.name));
+    // Unrated scripts sort after rated ones in either difficulty direction.
+    const byName = (a, b) => a.name.localeCompare(b.name);
+    const byDifficulty = (dir) => (a, b) => (!a.cx - !b.cx) || (a.cx && dir * (a.cx.score - b.cx.score)) || byName(a, b);
+    const compare = sortMode === 'easiest' ? byDifficulty(1) : sortMode === 'hardest' ? byDifficulty(-1) : byName;
+    for (const cat of Object.keys(byCategory)) byCategory[cat].sort(compare);
 
     resultsEl.innerHTML = Object.keys(byCategory).sort().map(cat => {
       const items = byCategory[cat].map((s, i) => {
@@ -3169,7 +3270,9 @@ function initScriptLibrary() {
           <div class="script-lib-row" data-cat="${esc(cat)}" data-idx="${i}">
             <span class="script-lib-expand">▸</span>
             <span class="script-lib-name">${esc(s.name)}</span>
-            <span class="script-lib-author">${esc(s.author)}</span>
+            <span class="script-lib-author" title="${esc(s.author)}">${esc(s.author)}</span>
+            ${s.base3 ? '<span class="script-lib-tag" title="Only Trouble Brewing, Bad Moon Rising and Sects &amp; Violets characters">Base 3</span>' : ''}
+            ${s.cx ? complexityTagHtml(s.cx) : ''}
             <span class="script-lib-role-count">${s.roleNames.length} roles</span>
             <button type="button" class="script-lib-apply" data-cat="${esc(cat)}" data-idx="${i}">Apply</button>
           </div>
@@ -3212,6 +3315,34 @@ function initScriptLibrary() {
   }
 
   searchInput?.addEventListener('input', renderResults);
+
+  // Base 3 is a plain on/off; difficulty buttons are multi-select and none
+  // selected means no difficulty filtering.
+  let base3Only = false;
+  let sortMode = 'name';
+  const sortBtns = document.querySelectorAll('.script-lib-sort-btn');
+  sortBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      sortMode = btn.dataset.sort;
+      sortBtns.forEach(b => b.classList.toggle('toggle-btn-active', b === btn));
+      renderResults();
+    });
+  });
+  const difficultyFilter = new Set();
+  const base3Btn = document.getElementById('script-lib-base3-btn');
+  base3Btn?.addEventListener('click', () => {
+    base3Only = !base3Only;
+    base3Btn.classList.toggle('toggle-btn-active', base3Only);
+    renderResults();
+  });
+  document.querySelectorAll('.script-lib-diff-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const level = btn.dataset.level;
+      if (difficultyFilter.has(level)) difficultyFilter.delete(level); else difficultyFilter.add(level);
+      btn.classList.toggle('toggle-btn-active', difficultyFilter.has(level));
+      renderResults();
+    });
+  });
 
   (async () => {
     try {

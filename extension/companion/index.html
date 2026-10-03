@@ -259,6 +259,19 @@
 				</div>
 				<div id="script-library-filters" style="display:none">
 					<input id="script-lib-search" class="sig-custom-input" placeholder="search name, author, or role…" />
+					<div class="script-lib-filter-row">
+						<button id="script-lib-base3-btn" type="button" class="toggle-btn" title="Only Trouble Brewing, Bad Moon Rising and Sects &amp; Violets characters">Base 3</button>
+						<span class="script-lib-filter-sep"></span>
+						<span class="script-lib-filter-label">Difficulty</span>
+						<button type="button" class="toggle-btn script-lib-diff-btn" data-level="easy">Easy</button>
+						<button type="button" class="toggle-btn script-lib-diff-btn" data-level="medium">Medium</button>
+						<button type="button" class="toggle-btn script-lib-diff-btn" data-level="hard">Hard</button>
+						<span class="script-lib-filter-sep"></span>
+						<span class="script-lib-filter-label">Sort</span>
+						<button type="button" class="toggle-btn toggle-btn-active script-lib-sort-btn" data-sort="name">A–Z</button>
+						<button type="button" class="toggle-btn script-lib-sort-btn" data-sort="easiest">Easiest</button>
+						<button type="button" class="toggle-btn script-lib-sort-btn" data-sort="hardest">Hardest</button>
+					</div>
 				</div>
 				<div id="script-library-results"></div>
 			</div>
@@ -267,6 +280,7 @@
 
 	<script src="../data/playerDb.js"></script>
 	<script src="../data/roles.js"></script>
+	<script src="../data/complexity.js"></script>
 	<script src="../data/chipSpecs.js"></script>
 	<script src="../data/nightOrder.js"></script>
 	<script src="../data/nightSignalScripts.js"></script>
