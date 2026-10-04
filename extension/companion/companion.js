@@ -2849,30 +2849,26 @@ function initSignalPanel() {
   });
   initAddSeatFloatButton();
 
-  let pendingScript = null;
+  // One-off script file: picking it is the confirmation, so it loads straight away.
   const scriptFileInput = document.getElementById('script-file-input');
-  const scriptLoadBtn = document.getElementById('script-load-btn');
-
+  document.getElementById('script-file-btn')?.addEventListener('click', () => {
+    scriptFileInput.value = '';   // re-picking the same file must still fire `change`
+    scriptFileInput.click();
+  });
   scriptFileInput?.addEventListener('change', async () => {
     const file = scriptFileInput.files?.[0];
-    pendingScript = null;
-    scriptLoadBtn.disabled = true;
     if (!file) return;
     try {
-      pendingScript = parseScriptJson(JSON.parse(await file.text()), file.name.replace(/\.json$/i, ''));
-      scriptLoadBtn.disabled = false;
+      const script = parseScriptJson(JSON.parse(await file.text()), file.name.replace(/\.json$/i, ''));
+      sendLoadScript(script);
     } catch {
       alert('Could not parse this file as a script (expected the script-tool JSON export format).');
     }
   });
 
-  scriptLoadBtn?.addEventListener('click', () => {
-    if (!pendingScript) return;
-    sendLoadScript(pendingScript);
-  });
-
+  // The scroll icon in the header opens the library directly.
   const scriptLibOverlay = document.getElementById('script-library-overlay');
-  document.getElementById('script-lib-open-btn')?.addEventListener('click', () => {
+  document.getElementById('script-btn')?.addEventListener('click', () => {
     scriptLibOverlay.style.display = '';
   });
   document.getElementById('script-library-close')?.addEventListener('click', () => {
@@ -2980,10 +2976,10 @@ function classifyScriptRoleTeam(entry) {
 // ── Script library directory handle ─────────────────────────────────────────
 // The FileSystemDirectoryHandle is not string-serializable, so it can't go
 // through the localStorage-based settings like everything else here. It lives
-// in the same IndexedDB as the player database — see data/playerDb.js, which
-// owns the schema and the single versioned opener.
-const saveDirHandle = (handle) => PlayerDb.saveDirHandle(handle);
-const loadDirHandle = () => PlayerDb.loadDirHandle();
+// in IndexedDB instead — see data/companionDb.js, which owns the schema and
+// the single versioned opener.
+const saveDirHandle = (handle) => CompanionDb.saveDirHandle(handle);
+const loadDirHandle = () => CompanionDb.loadDirHandle();
 
 // ── Scanning ─────────────────────────────────────────────────────────────────
 // Firefox implements only the Origin Private File System half of the File
@@ -3203,7 +3199,7 @@ function initScriptLibrary() {
       setStatus(`${scriptLibrary.length} scripts`);
       renderResults();
       // Survives a companion reload; Firefox can't re-read the folder unattended.
-      await PlayerDb.setCached(SCRIPT_LIB_CACHE_KEY, scriptLibrary);
+      await CompanionDb.setCached(SCRIPT_LIB_CACHE_KEY, scriptLibrary);
     } catch (e) {
       setStatus('Scan failed — could not read that folder.');
       console.error('botc-tool: script folder scan failed', e);
@@ -3349,7 +3345,7 @@ function initScriptLibrary() {
       if (!hasDirectoryPicker()) {
         // Firefox: replay the last scan. The folder can't be reopened without
         // the user picking it again, so Rescan re-prompts.
-        const cached = await PlayerDb.getCached(SCRIPT_LIB_CACHE_KEY);
+        const cached = await CompanionDb.getCached(SCRIPT_LIB_CACHE_KEY);
         if (!cached?.length) return;
         scriptLibrary = cached;
         filtersEl.style.display = '';
@@ -4369,229 +4365,11 @@ document.getElementById('role-switch').addEventListener('click', (e) => {
 
 loadSettings();
 applySettingsToUI();
-// ── Player database panel ────────────────────────────────────────────────────
-// Browses the persistent record of everyone played with (data/playerDb.js).
-// The worker writes the automatic half (aliases, games); this owns the fields
-// the user sets by hand — the name they know them by, a 0-10 score, and a note.
-
-let playerDbRows = [];                       // [{...player, games: n}]
-let playerDbExpanded = new Set();            // player ids with their history open
-const playerDbGamesCache = new Map();        // player id → joined participation rows
-
-// Score colour ramp: 0 red → 5 neutral → 10 green, so the column scans at a glance.
-function playerScoreHue(score) {
-  return Math.round((Math.max(0, Math.min(10, score)) / 10) * 120);
-}
-
-function playerDbRoleMeta(roleId) {
-  if (!roleId) return null;
-  const r = _roles().find(x => x.id === _normalizeId(roleId));
-  return { name: r?.name ?? roleId, team: r?.team ?? '', iconUrl: _iconUrl({ id: roleId }) };
-}
-
-const playerDbDate = (ts) => ts ? new Date(ts).toLocaleDateString() : '—';
-
-function renderPlayerDbGames(playerId) {
-  const rows = playerDbGamesCache.get(playerId);
-  if (!rows) return '<div class="pdb-games-loading">loading…</div>';
-  if (rows.length === 0) return '<div class="pdb-games-empty">no games recorded</div>';
-
-  return `<table class="pdb-games">${rows.map(row => {
-    const meta = playerDbRoleMeta(row.roleId);
-    const icon = meta?.iconUrl ? `<img class="tp-role-icon" src="${esc(meta.iconUrl)}" />` : '';
-    const side = row.alignment || ((row.team === 'minion' || row.team === 'demon') ? 'evil' : 'good');
-    const outcome = row.isStoryteller ? '<span class="pdb-st">storyteller</span>'
-      : row.won === null ? '<span class="pdb-unknown">—</span>'
-      : row.won ? '<span class="pdb-won">won</span>'
-      : '<span class="pdb-lost">lost</span>';
-    return `<tr>
-      <td class="pdb-g-date">${esc(playerDbDate(row.ts))}</td>
-      <td class="pdb-g-edition">${esc(row.edition ?? '')}</td>
-      <td class="pdb-g-role">${row.isStoryteller ? '' : `${icon}<span class="pdb-align-${esc(side)}">${esc(meta?.name ?? '')}</span>`}</td>
-      <td class="pdb-g-state">${row.isStoryteller ? '' : (row.isDead ? 'died' : 'survived')}</td>
-      <td class="pdb-g-outcome">${outcome}</td>
-      <td class="pdb-g-alongside">${row.name && row.name !== playerDbRows.find(p => p.id === playerId)?.commonName ? `as “${esc(row.name)}”` : ''}</td>
-    </tr>`;
-  }).join('')}</table>`;
-}
-
-function renderPlayerDb() {
-  const resultsEl = document.getElementById('player-db-results');
-  const statusEl = document.getElementById('player-db-status');
-  if (!resultsEl) return;
-
-  const q = (document.getElementById('player-db-search')?.value ?? '').trim().toLowerCase();
-  const sort = document.getElementById('player-db-sort')?.value ?? 'score';
-
-  const filtered = playerDbRows.filter(p => {
-    if (!q) return true;
-    return (p.commonName ?? '').toLowerCase().includes(q)
-      || (p.note ?? '').toLowerCase().includes(q)
-      || (p.names ?? []).some(n => (n.name ?? '').toLowerCase().includes(q));
-  });
-
-  const cmp = {
-    // Ties within a score band are far more useful ordered by how much you've
-    // actually played together than alphabetically.
-    score: (a, b) => (b.score ?? 5) - (a.score ?? 5) || (b.games ?? 0) - (a.games ?? 0),
-    games: (a, b) => (b.games ?? 0) - (a.games ?? 0),
-    recent: (a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0),
-    name: (a, b) => (a.commonName ?? '').localeCompare(b.commonName ?? ''),
-  }[sort] ?? (() => 0);
-  filtered.sort(cmp);
-
-  statusEl.textContent = playerDbRows.length === 0 ? 'no players recorded yet'
-    : `${filtered.length}${filtered.length === playerDbRows.length ? '' : ` of ${playerDbRows.length}`} players`;
-
-  if (playerDbRows.length === 0) {
-    resultsEl.innerHTML = '<div class="pdb-empty">Players are recorded automatically when a game ends.</div>';
-    return;
-  }
-
-  resultsEl.innerHTML = filtered.map(p => {
-    const open = playerDbExpanded.has(p.id);
-    const score = p.score ?? PlayerDb.DEFAULT_SCORE;
-    const aliases = (p.names ?? []).map(n => n.name).filter(n => n && n !== p.commonName);
-    return `<div class="pdb-entry${open ? ' open' : ''}" data-id="${esc(p.id)}">
-      <div class="pdb-row">
-        <button class="pdb-expand" data-act="expand" title="game history">${open ? '▾' : '▸'}</button>
-        <input class="pdb-name" data-act="name" value="${esc(p.commonName ?? p.id)}" title="the name you know them by" />
-        <div class="pdb-score">
-          <input type="range" min="0" max="10" step="1" value="${score}" data-act="score"
-                 style="--pdb-hue:${playerScoreHue(score)}" />
-          <span class="pdb-score-val" style="--pdb-hue:${playerScoreHue(score)}">${score}</span>
-        </div>
-        <span class="pdb-games-count" title="games together">${p.games ?? 0}${(p.games ?? 0) === 1 ? ' game' : ' games'}</span>
-        <span class="pdb-lastseen" title="last seen">${esc(playerDbDate(p.lastSeen))}</span>
-      </div>
-      <div class="pdb-row-2">
-        <input class="pdb-note" data-act="note" value="${esc(p.note ?? '')}" placeholder="note…" />
-        ${aliases.length ? `<span class="pdb-aliases" title="other names seen">aka ${aliases.map(esc).join(', ')}</span>` : ''}
-      </div>
-      ${open ? `<div class="pdb-history">${renderPlayerDbGames(p.id)}</div>` : ''}
-    </div>`;
-  }).join('');
-}
-
-async function reloadPlayerDb() {
-  if (typeof PlayerDb === 'undefined') return;
-  try {
-    const players = await PlayerDb.getAllPlayers();
-    playerDbRows = players;
-    // A record open in the panel may have just gained a game — drop its cached
-    // history so the next render refetches.
-    for (const id of playerDbExpanded) playerDbGamesCache.delete(id);
-    renderPlayerDb();
-    for (const id of playerDbExpanded) loadPlayerDbGames(id);
-  } catch (e) {
-    console.error('botc-tool: reading player db failed', e);
-  }
-}
-
-async function loadPlayerDbGames(playerId) {
-  if (playerDbGamesCache.has(playerId)) return;
-  try {
-    playerDbGamesCache.set(playerId, await PlayerDb.getPlayerGames(playerId));
-    renderPlayerDb();
-  } catch (e) {
-    console.error('botc-tool: reading player games failed', e);
-  }
-}
-
-function initPlayerDb() {
-  const overlay = document.getElementById('player-db-overlay');
-  const openBtn = document.getElementById('player-db-btn');
-  const closeBtn = document.getElementById('player-db-close');
-  const backdrop = document.getElementById('player-db-backdrop');
-  const resultsEl = document.getElementById('player-db-results');
-  if (!overlay || !openBtn) return;
-
-  // Not available on the dev harness page, which has no extension origin.
-  if (typeof PlayerDb === 'undefined' || typeof indexedDB === 'undefined') {
-    openBtn.style.display = 'none';
-    return;
-  }
-
-  const close = () => { overlay.style.display = 'none'; };
-  openBtn.addEventListener('click', () => { overlay.style.display = ''; reloadPlayerDb(); });
-  closeBtn?.addEventListener('click', close);
-  backdrop?.addEventListener('click', close);
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && overlay.style.display !== 'none') close();
-  });
-
-  document.getElementById('player-db-search')?.addEventListener('input', renderPlayerDb);
-  document.getElementById('player-db-sort')?.addEventListener('change', renderPlayerDb);
-
-  const idOf = (el) => el.closest('.pdb-entry')?.dataset.id ?? null;
-
-  // Local write-through: patch the in-memory row so re-rendering (which the
-  // score slider does on every drag) doesn't wait on the database round trip.
-  const patchRow = (id, fields) => {
-    const row = playerDbRows.find(p => p.id === id);
-    if (row) Object.assign(row, fields);
-  };
-
-  const save = (id, fields) => {
-    patchRow(id, fields);
-    PlayerDb.updatePlayer(id, fields).catch(e =>
-      console.error('botc-tool: saving player failed', e));
-  };
-
-  resultsEl?.addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-act="expand"]');
-    if (!btn) return;
-    const id = idOf(btn);
-    if (!id) return;
-    if (playerDbExpanded.has(id)) playerDbExpanded.delete(id);
-    else { playerDbExpanded.add(id); loadPlayerDbGames(id); }
-    renderPlayerDb();
-  });
-
-  // Live feedback while dragging, one write when released.
-  resultsEl?.addEventListener('input', (e) => {
-    const el = e.target;
-    const id = idOf(el);
-    if (!id) return;
-    if (el.dataset.act === 'score') {
-      const val = Number(el.value);
-      patchRow(id, { score: val });
-      const entry = el.closest('.pdb-entry');
-      const hue = playerScoreHue(val);
-      el.style.setProperty('--pdb-hue', hue);
-      const out = entry.querySelector('.pdb-score-val');
-      out.textContent = val;
-      out.style.setProperty('--pdb-hue', hue);
-    }
-  });
-
-  resultsEl?.addEventListener('change', (e) => {
-    const el = e.target;
-    const id = idOf(el);
-    if (!id) return;
-    if (el.dataset.act === 'score') save(id, { score: Number(el.value) });
-  });
-
-  // Name and note commit on blur (or Enter) rather than per keystroke.
-  resultsEl?.addEventListener('blur', (e) => {
-    const el = e.target;
-    const id = idOf(el);
-    if (!id) return;
-    if (el.dataset.act === 'name') save(id, { commonName: el.value });
-    if (el.dataset.act === 'note') save(id, { note: el.value });
-  }, true);
-
-  resultsEl?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && (e.target.dataset.act === 'name' || e.target.dataset.act === 'note')) e.target.blur();
-  });
-}
-
 initSignalPanel();
 updateStRoleBtn();
 renderTimerPresets();
 renderSignalPresets();
 initScriptLibrary();
-initPlayerDb();
 
 // Settings popup (gear): toggle on click, close on outside click
 (() => {
@@ -4624,23 +4402,6 @@ document.getElementById('st-role-btn')?.addEventListener('click', () => {
     sendBg({ type: 'BECOME_STORYTELLER' });
   }
 });
-
-// Custom script popup (scroll icon): same toggle pattern as settings
-(() => {
-  const btn = document.getElementById('script-btn');
-  const popup = document.getElementById('script-popup');
-  btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const open = popup.classList.toggle('open');
-    btn.classList.toggle('open', open);
-  });
-  document.addEventListener('click', (e) => {
-    if (!popup.classList.contains('open')) return;
-    if (popup.contains(e.target) || e.target === btn) return;
-    popup.classList.remove('open');
-    btn.classList.remove('open');
-  });
-})();
 
 // Esc closes whatever popover/menu is open
 document.addEventListener('keydown', (e) => {
@@ -4804,10 +4565,6 @@ chrome.runtime.onMessage.addListener((message) => {
   }
   if (message.type === 'NEEDS_RELOAD') {
     showReloadPrompt();
-    return;
-  }
-  if (message.type === 'PLAYER_DB_UPDATED') {
-    if (document.getElementById('player-db-overlay')?.style.display !== 'none') reloadPlayerDb();
     return;
   }
   if (message.type === 'TIMELINE_EVENTS') {

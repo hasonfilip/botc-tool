@@ -1,10 +1,6 @@
 // Service worker: relays game state from content script to companion tab.
 // Uses chrome.storage.session to survive MV3 service worker restarts.
 
-// Firefox's MV3 background is an event page (no importScripts) and gets this
-// from manifest background.scripts; Chrome's service worker imports it here.
-if (typeof PlayerDb === 'undefined') importScripts('data/playerDb.js');
-
 let companionTabId = null;
 
 // The single botc.app tab whose bridge feeds game state. With several /play
@@ -331,77 +327,6 @@ async function pushStateToCompanion() {
 
 // ── Message handlers ──────────────────────────────────────────────────────
 
-// ── Player database ───────────────────────────────────────────────────────
-
-// Which side a seat won with. `alignment` is the storyteller-editable truth and
-// wins over the team implied by the role (a Recluse registering evil still wins
-// with good), so it is only fallen back on when unset.
-function sideOf(seat) {
-  if (seat.alignment === 'good' || seat.alignment === 'evil') return seat.alignment;
-  return (seat.team === 'minion' || seat.team === 'demon') ? 'evil' : 'good';
-}
-
-// Called once per game, when the history 'end' entry first appears. Writes
-// every seat and storyteller into the persistent player database. Failures are
-// logged and swallowed — losing a history row must never break live state.
-async function recordFinishedGame(state, gameId, endEvent, revealEvent, nameMap) {
-  if (!gameId) return;
-  const isEvilWin = endEvent.isEvilWin ?? null;
-
-  // The end entry reveals every seat's true role; prefer it over the grimoire
-  // token, which for a player-view client was never showing real roles at all.
-  const revealed = {};
-  for (const r of revealEvent?.roles ?? []) {
-    if (r?.id) revealed[String(r.id)] = typeof r.role === 'string' ? r.role : (r.role?.id ?? null);
-  }
-
-  const participants = [];
-  for (const seat of state.players ?? []) {
-    if (!seat.id) continue;
-    const side = sideOf(seat);
-    participants.push({
-      playerId: String(seat.id),
-      name: seat.name ?? nameMap[seat.id] ?? null,
-      // roleName/team are resolved at render time from the companion's bundled
-      // role data, so the worker does not need to load it.
-      roleId: revealed[String(seat.id)] ?? seat.roleId ?? null,
-      team: seat.team ?? null,
-      alignment: seat.alignment ?? null,
-      isDead: !!seat.isDead,
-      isStoryteller: false,
-      won: isEvilWin === null ? null : ((side === 'evil') === !!isEvilWin),
-    });
-  }
-
-  const stIds = new Set();
-  for (const st of state.storytellers ?? []) {
-    if (!st?.id) continue;
-    const id = String(st.id);
-    stIds.add(id);
-    participants.push({
-      playerId: id,
-      name: nameMap[id] ?? null,
-      roleId: null, team: null, alignment: null,
-      isDead: false, isStoryteller: true,
-      won: null,
-    });
-  }
-
-  try {
-    await PlayerDb.recordGame({
-      gameId,
-      ts: endEvent.ts ?? Date.now(),
-      edition: state.edition?.edition?.name ?? state.edition?.name ?? null,
-      isEvilWin,
-      iWasStoryteller: !!(state.myUserId && stIds.has(String(state.myUserId))),
-      participants,
-    });
-    await sendToCompanion({ type: 'PLAYER_DB_UPDATED' });
-  } catch (e) {
-    console.error('botc-tool: recording game into player db failed', e);
-  }
-}
-
 async function handleStatePayload(payload) {
   const { latestState, timeline, processedIds, nameMap, currentGameId } = await store.get();
 
@@ -446,18 +371,6 @@ async function handleStatePayload(payload) {
   const domEvents = diffDeaths(latestState?.players, payload.data.players, processedIds, nameMap);
   const newEvents = [...historyEvents, ...domEvents];
 
-  // The 'end' entry passes through eventsFromHistory only once (processedIds),
-  // so this fires a single time per game.
-  const endEvent = newEvents.find(ev => ev.type === 'end');
-  if (endEvent) {
-    await recordFinishedGame(
-      payload.data,
-      startEntry?.id ?? currentGameId,
-      endEvent,
-      newEvents.find(ev => ev.type === 'roles_revealed'),
-      nameMap,
-    );
-  }
   const merged = [...timeline, ...newEvents].sort((a, b) => a.ts - b.ts);
   const seen = new Set();
   const newTimeline = merged.filter(ev => {

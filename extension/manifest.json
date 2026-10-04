@@ -16,7 +16,7 @@
 
   "background": {
     "service_worker": "background.js",
-    "scripts": ["data/playerDb.js", "background.js"]
+    "scripts": ["background.js"]
   },
 
   "content_scripts": [

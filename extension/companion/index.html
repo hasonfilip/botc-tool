@@ -25,14 +25,8 @@
 		<button id="bug-hand-btn" class="header-icon-btn" title="Raise the bug hand">🐛</button>
 		<button id="st-role-btn" class="header-icon-btn">🧙 Become Storyteller</button>
 		<button id="clear-grimoire-btn" class="header-icon-btn" style="display:none">🧹 Clear</button>
-		<button id="player-db-btn" class="header-icon-btn" title="Players you have played with">👥 Players</button>
 		<div id="script-wrap" style="display:none">
-			<button id="script-btn" title="Custom Script" aria-label="Custom Script">📜</button>
-			<div id="script-popup">
-				<input id="script-file-input" type="file" accept="application/json,.json" />
-				<button id="script-load-btn" class="sig-send-btn" disabled>📜 Load Script</button>
-				<button id="script-lib-open-btn" class="sig-clear-btn">📚 Browse Library</button>
-			</div>
+			<button id="script-btn" title="Script Library" aria-label="Script Library">📜</button>
 		</div>
 		<div id="settings-wrap">
 			<button id="settings-btn" title="Settings" aria-label="Settings">⚙</button>
@@ -219,29 +213,6 @@
 	</div>
 	<div id="signal-history-overlay" class="side-panel-overlay"></div>
 
-	<div id="player-db-overlay" style="display:none">
-		<div id="player-db-backdrop"></div>
-		<div id="player-db-panel">
-			<div id="player-db-header">
-				<span>Players</span>
-				<button id="player-db-close">✕</button>
-			</div>
-			<div id="player-db-body">
-				<div id="player-db-toolbar">
-					<input id="player-db-search" class="sig-custom-input" placeholder="search name or note…" />
-					<select id="player-db-sort" class="sig-custom-input">
-						<option value="score">sort: score</option>
-						<option value="games">sort: games played</option>
-						<option value="recent">sort: recently seen</option>
-						<option value="name">sort: name</option>
-					</select>
-					<span id="player-db-status" class="script-lib-status"></span>
-				</div>
-				<div id="player-db-results"></div>
-			</div>
-		</div>
-	</div>
-
 	<div id="script-library-overlay" style="display:none">
 		<div id="script-library-backdrop"></div>
 		<div id="script-library-panel">
@@ -256,6 +227,8 @@
 					<button id="script-lib-resume-btn" class="sig-clear-btn" style="display:none">🔓 Resume Access</button>
 					<button id="script-lib-rescan-btn" class="sig-clear-btn" style="display:none">🔄 Rescan</button>
 					<span id="script-lib-status" class="script-lib-status"></span>
+					<button id="script-file-btn" class="sig-clear-btn" title="Load a single script-tool JSON export">📄 Upload JSON</button>
+					<input id="script-file-input" type="file" accept="application/json,.json" hidden />
 				</div>
 				<div id="script-library-filters" style="display:none">
 					<input id="script-lib-search" class="sig-custom-input" placeholder="search name, author, or role…" />
@@ -278,7 +251,7 @@
 		</div>
 	</div>
 
-	<script src="../data/playerDb.js"></script>
+	<script src="../data/companionDb.js"></script>
 	<script src="../data/roles.js"></script>
 	<script src="../data/complexity.js"></script>
 	<script src="../data/chipSpecs.js"></script>

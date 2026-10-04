@@ -102,7 +102,7 @@ header h1 { font-size: 16px; color: var(--accent); letter-spacing: 2px; white-sp
 }
 #settings-popup.open { display: flex; }
 
-/* ── Custom script popup (scroll icon) ── */
+/* ── Script library button (scroll icon) ── */
 #script-wrap { position: relative; display: flex; align-items: center; }
 #script-btn {
   background: none;
@@ -116,24 +116,6 @@ header h1 { font-size: 16px; color: var(--accent); letter-spacing: 2px; white-sp
   transition: background 0.1s, border-color 0.1s;
 }
 #script-btn:hover { background: rgba(255,255,255,0.06); }
-#script-btn.open { background: rgba(255,255,255,0.08); border-color: var(--accent); }
-
-#script-popup {
-  display: none;
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 6px 24px rgba(0,0,0,0.5);
-  padding: 12px 14px;
-  flex-direction: column;
-  gap: 10px;
-  z-index: 1002;
-  min-width: 220px;
-}
-#script-popup.open { display: flex; }
 
 .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .settings-row-col { flex-direction: column; align-items: flex-start; gap: 6px; }
@@ -1860,31 +1842,6 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 .gong-send-btn:hover { background: rgba(240,180,60,0.2); }
 
 
-#script-file-input {
-  color: var(--muted);
-  font-size: 11px;
-  max-width: 100%;
-}
-#script-file-input::file-selector-button,
-#script-file-input::-webkit-file-upload-button {
-  background: rgba(255,255,255,0.05);
-  border: 1px solid var(--border);
-  color: var(--text);
-  padding: 5px 10px;
-  border-radius: 6px;
-  font-size: 11px;
-  font-family: inherit;
-  font-weight: 600;
-  cursor: pointer;
-  margin-right: 8px;
-  transition: background 0.1s, border-color 0.1s;
-}
-#script-file-input::file-selector-button:hover,
-#script-file-input::-webkit-file-upload-button:hover {
-  background: rgba(255,255,255,0.1);
-  border-color: var(--accent);
-}
-
 /* ── Script Library (modal overlay) ── */
 #script-library-overlay {
   position: fixed;
@@ -1944,6 +1901,7 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 }
 #script-library-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .script-lib-status { color: var(--muted); font-size: 12px; }
+#script-file-btn { margin-left: auto; }
 #script-library-filters { display: flex; flex-direction: column; gap: 8px; }
 .script-lib-filter-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .script-lib-filter-label { color: var(--muted); font-size: 11px; }
@@ -2507,193 +2465,3 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
   break-inside: avoid;
   break-after: avoid;
 }
-
-/* ── Player database panel ─────────────────────────────────────────────────── */
-#player-db-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 210;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-#player-db-backdrop {
-  position: absolute;
-  inset: 0;
-  background: rgba(0,0,0,0.55);
-}
-#player-db-panel {
-  position: relative;
-  /* Wider than the script library: rows carry a name, score, counts and a note. */
-  width: 720px;
-  max-width: calc(100vw - 32px);
-  max-height: calc(100vh - 60px);
-  background: #1e2240;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  box-shadow: 0 12px 48px rgba(0,0,0,0.6);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-#player-db-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 16px 10px;
-  border-bottom: 1px solid var(--border);
-  font-weight: 600;
-  font-size: 14px;
-  color: var(--accent);
-  letter-spacing: 0.5px;
-  flex-shrink: 0;
-}
-#player-db-close {
-  background: none;
-  border: none;
-  color: var(--muted);
-  font-size: 16px;
-  cursor: pointer;
-  line-height: 1;
-  padding: 2px 4px;
-  border-radius: 4px;
-}
-#player-db-close:hover { color: var(--text); background: var(--border); }
-#player-db-body {
-  padding: 14px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  overflow-y: auto;
-}
-#player-db-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-#player-db-search { flex: 1; }
-#player-db-sort { flex-shrink: 0; }
-
-.pdb-empty, .pdb-games-empty, .pdb-games-loading {
-  color: var(--muted);
-  font-size: 12px;
-  padding: 8px 2px;
-}
-
-.pdb-entry {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 6px 8px;
-  margin-bottom: 6px;
-  background: rgba(255,255,255,0.02);
-}
-.pdb-entry.open { background: rgba(255,255,255,0.05); }
-
-.pdb-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.pdb-row-2 {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 4px;
-  /* Line the note up under the name, past the expand chevron. */
-  padding-left: 26px;
-}
-
-.pdb-expand {
-  background: none;
-  border: none;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 12px;
-  width: 18px;
-  flex-shrink: 0;
-  padding: 0;
-}
-.pdb-expand:hover { color: var(--text); }
-
-.pdb-name, .pdb-note {
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  color: var(--text);
-  font: inherit;
-  font-size: 13px;
-  padding: 2px 5px;
-  min-width: 0;
-}
-.pdb-name { flex: 0 0 150px; font-weight: 600; }
-.pdb-note { flex: 1; font-size: 12px; color: var(--muted); }
-.pdb-name:hover, .pdb-note:hover { border-color: var(--border); }
-.pdb-name:focus, .pdb-note:focus {
-  border-color: var(--accent);
-  background: rgba(0,0,0,0.25);
-  color: var(--text);
-  outline: none;
-}
-
-.pdb-score {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-}
-.pdb-score input[type=range] {
-  width: 96px;
-  accent-color: hsl(var(--pdb-hue) 65% 50%);
-  cursor: pointer;
-}
-.pdb-score-val {
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  width: 16px;
-  text-align: right;
-  color: hsl(var(--pdb-hue) 65% 62%);
-}
-
-.pdb-games-count, .pdb-lastseen {
-  font-size: 11px;
-  color: var(--muted);
-  flex-shrink: 0;
-  font-variant-numeric: tabular-nums;
-}
-.pdb-games-count { width: 62px; text-align: right; }
-.pdb-lastseen { width: 74px; text-align: right; }
-.pdb-aliases {
-  font-size: 11px;
-  color: var(--muted);
-  opacity: 0.75;
-  flex-shrink: 0;
-}
-
-.pdb-history {
-  margin: 6px 0 2px 26px;
-  border-top: 1px solid var(--border);
-  padding-top: 6px;
-}
-table.pdb-games {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 11px;
-}
-table.pdb-games td {
-  padding: 2px 6px 2px 0;
-  color: var(--muted);
-  vertical-align: middle;
-  white-space: nowrap;
-}
-.pdb-g-date { font-variant-numeric: tabular-nums; }
-.pdb-g-edition { max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
-.pdb-g-role { color: var(--text); }
-.pdb-g-role .tp-role-icon { width: 16px; height: 16px; vertical-align: -3px; margin-right: 3px; }
-.pdb-align-good { color: #7fb2ff; }
-.pdb-align-evil { color: #ff8080; }
-.pdb-won { color: #6fcf7f; font-weight: 600; }
-.pdb-lost { color: #d0707a; }
-.pdb-st { color: var(--accent); }
-.pdb-unknown { opacity: 0.5; }
