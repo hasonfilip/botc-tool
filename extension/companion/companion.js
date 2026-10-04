@@ -4388,12 +4388,6 @@ initScriptLibrary();
   });
 })();
 
-// Deliberately outside applyViewRole's show/hide — flagging a bug is useful to
-// storytellers and players alike, so this stays visible in both views.
-document.getElementById('bug-hand-btn')?.addEventListener('click', () => {
-  sendBg({ type: 'RAISE_HAND', icon: 'i-bug' });
-});
-
 document.getElementById('st-role-btn')?.addEventListener('click', () => {
   if (amIStoryteller()) {
     if (!confirm('Step down as storyteller?')) return;

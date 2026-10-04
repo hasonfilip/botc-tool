@@ -290,6 +290,7 @@
   }
 
   // ── Handle commands from injector ────────────────────────────────────────
+  // Every command and the store call behind it is documented in docs/botc-app-commands.md
   window.addEventListener('message', (event) => {
     if (event.source !== window || event.data?.source !== 'botc-bridge-cmd') return;
     if (event.data?.type === 'FORCE_UPDATE') { sendState(); return; }
@@ -300,20 +301,6 @@
         const message = (event.data.message ?? []).map(t =>
           t?.id === 'grimoire' ? { id: 'grimoire', data: buildGrimoireSnapshot(store) } : t);
         store.commit('session/addSignal', { userIds: event.data.userIds, message, isInbound: false });
-      } catch { /* page not ready or store unavailable */ }
-    }
-    if (event.data?.type === 'RAISE_HAND') {
-      try {
-        const store = getStore();
-        const myUserId = getMyUserId();
-        if (!store || !myUserId) return;
-        // Same two commits the app's own hand menu makes, in the same order:
-        // the icon is stored first, then raiseHand is what a store plugin turns
-        // into ["message","raise-hand",<icon>] on the wire. The app lowers the
-        // hand itself a beat later (the wire shows a trailing null), so there's
-        // no separate lower command to send.
-        store.commit('session/setHandIcon', event.data.icon ?? null);
-        store.commit('session/raiseHand', { userId: myUserId });
       } catch { /* page not ready or store unavailable */ }
     }
     if (event.data?.type === 'JOIN_CHANNEL') {
