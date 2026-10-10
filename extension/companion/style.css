@@ -828,10 +828,10 @@ section.collapsed > *:not(h2) { display: none; }
 
 .chat-participants { font-weight: 500; flex: 1; }
 
-#chats-filter { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
-#chats-filter:empty, #chats-filter.chat-filter-hidden { display: none; }
+.player-filter { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.player-filter:empty, .player-filter.player-filter-hidden { display: none; }
 /* Deliberately unlike the chips/toggle buttons: a borderless red text action. */
-.chat-filter-clear {
+.player-filter-clear {
   background: none;
   border: none;
   color: #e74c3c;
@@ -840,8 +840,8 @@ section.collapsed > *:not(h2) { display: none; }
   padding: 3px 4px;
   opacity: 0.8;
 }
-.chat-filter-clear:hover { opacity: 1; text-decoration: underline; }
-.chat-filter-chip {
+.player-filter-clear:hover { opacity: 1; text-decoration: underline; }
+.player-filter-chip {
   background: rgba(255,255,255,0.04);
   border: 1px solid var(--border);
   color: var(--muted);
@@ -850,9 +850,9 @@ section.collapsed > *:not(h2) { display: none; }
   cursor: pointer;
   font-size: 11px;
 }
-.chat-filter-chip:hover { border-color: var(--accent); color: var(--accent); }
-.chat-filter-chip.active { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
-.chat-filter-empty { color: var(--muted); font-style: italic; padding: 4px 2px; }
+.player-filter-chip:hover { border-color: var(--accent); color: var(--accent); }
+.player-filter-chip.active { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
+.player-filter-empty { color: var(--muted); font-style: italic; padding: 4px 2px; }
 .chat-st  { color: #4ade80; font-style: italic; }
 
 #header-storytellers { display: flex; align-items: center; gap: 4px; font-size: 13px; }

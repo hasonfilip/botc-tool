@@ -23,9 +23,6 @@ let allChatSessions = [];
 let allTextMessages = [];
 let nameMap = {};
 let showNightChats = false;
-let chatPlayerFilter = new Set(); // player names; empty = show every conversation
-let lastChatFilterKey = null;
-let showChatFilter = false; // chip row toggled from the Conversations header
 let mergePhases = true; // notes grid: one column per round (Night N + Day N) instead of per phase
 let colorSource = 'grimoire'; // 'grimoire' | 'notes'
 let openPlayerTimelineName = null;
@@ -241,7 +238,8 @@ function renderState(state) {
   renderNightOrder();
   updateStRoleBtn();
   updateShowNightBtn();
-  renderChatFilter();
+  chatFilter.render();
+  messageFilter.render();
   updateVoiceBtn();
 }
 
@@ -631,39 +629,66 @@ function formatParticipant(userId) {
   return `<span class="role-name ${team}" data-player="${esc(name)}">${esc(dn(name))}</span>`;
 }
 
-// Player chips above the list. Rebuilt only when the roster or selection
-// changes, since renderState calls this on every state push. Picked names stay
-// listed even if they drop out of currentState.players, so a reconnect with an
-// empty roster doesn't silently wipe the filter.
-function renderChatFilter() {
-  const bar = document.getElementById('chats-filter');
-  if (!bar) return;
-  // A class, not style.display: collapsing/expanding the section resets every
-  // child's inline display, which would re-show a hidden bar.
-  bar.classList.toggle('chat-filter-hidden', !showChatFilter);
-  document.getElementById('toggle-chat-filter').classList.toggle('toggle-btn-active', showChatFilter);
-  const clearBtn = document.getElementById('clear-chat-filter');
-  clearBtn.style.display = chatPlayerFilter.size ? '' : 'none';
-  clearBtn.textContent = `✕ clear ${chatPlayerFilter.size}`;
-  const names = [...new Set([...(currentState?.players ?? []).map(p => p.name).filter(Boolean), ...chatPlayerFilter])];
-  const key = JSON.stringify([names.map(n => [n, dn(n)]), [...chatPlayerFilter]]);
-  if (key === lastChatFilterKey) return;
-  lastChatFilterKey = key;
-  if (!names.length) { bar.innerHTML = ''; return; }
-  const chips = names.map(n =>
-    `<button class="chat-filter-chip${chatPlayerFilter.has(n) ? ' active' : ''}" data-filter-player="${esc(n)}">${esc(dn(n))}</button>`
-  ).join('');
-  bar.innerHTML = chips;
+// Player chip filter for a log section: a header button shows/hides the chip
+// row, a header "clear" appears while anything is picked. Empty pick = show
+// everything; otherwise an entry matches if any picked player is in it. The
+// row is rebuilt only when the roster or selection changes, since renderState
+// calls render() on every state push. Picked names stay listed even if they
+// drop out of currentState.players, so a reconnect with an empty roster
+// doesn't silently wipe the filter.
+function createPlayerFilter({ barId, toggleId, clearId, onChange }) {
+  const picked = new Set();
+  let shown = false;
+  let lastKey = null;
+  const bar = document.getElementById(barId);
+  const toggleBtn = document.getElementById(toggleId);
+  const clearBtn = document.getElementById(clearId);
+
+  function render() {
+    // A class, not style.display: collapsing/expanding the section resets every
+    // child's inline display, which would re-show a hidden bar.
+    bar.classList.toggle('player-filter-hidden', !shown);
+    toggleBtn.classList.toggle('toggle-btn-active', shown);
+    clearBtn.style.display = picked.size ? '' : 'none';
+    clearBtn.textContent = `✕ clear ${picked.size}`;
+    const names = [...new Set([...(currentState?.players ?? []).map(p => p.name).filter(Boolean), ...picked])];
+    const key = JSON.stringify([names.map(n => [n, dn(n)]), [...picked]]);
+    if (key === lastKey) return;
+    lastKey = key;
+    bar.innerHTML = names.map(n =>
+      `<button class="player-filter-chip${picked.has(n) ? ' active' : ''}" data-filter-player="${esc(n)}">${esc(dn(n))}</button>`
+    ).join('');
+  }
+
+  bar.addEventListener('click', (e) => {
+    const chip = e.target.closest('[data-filter-player]');
+    if (!chip) return;
+    const name = chip.dataset.filterPlayer;
+    if (picked.has(name)) picked.delete(name);
+    else picked.add(name);
+    onChange();
+  });
+  toggleBtn.addEventListener('click', () => { shown = !shown; render(); });
+  clearBtn.addEventListener('click', () => { picked.clear(); onChange(); });
+
+  return {
+    render,
+    get active() { return picked.size > 0; },
+    matches: (names) => !picked.size || names.some(n => picked.has(n)),
+  };
 }
 
-function chatMatchesFilter(session) {
-  if (!chatPlayerFilter.size) return true;
-  const present = new Set(session.participants.map(resolveParticipant));
-  return [...chatPlayerFilter].some(n => present.has(n));
-}
+const chatFilter = createPlayerFilter({
+  barId: 'chats-filter', toggleId: 'toggle-chat-filter', clearId: 'clear-chat-filter',
+  onChange: () => renderChats(),
+});
+const messageFilter = createPlayerFilter({
+  barId: 'messages-filter', toggleId: 'toggle-msg-filter', clearId: 'clear-msg-filter',
+  onChange: () => renderMessages(),
+});
 
 function renderChats() {
-  renderChatFilter();
+  chatFilter.render();
   const list = document.getElementById('chats-log');
   const savedTop = list.scrollTop;
   const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
@@ -671,9 +696,9 @@ function renderChats() {
   list.innerHTML = '';
 
   let lastPhase = null;
-  const sessions = allChatSessions.filter(s => (showNightChats || s.type !== 'night') && chatMatchesFilter(s));
-  if (!sessions.length && chatPlayerFilter.size) {
-    list.innerHTML = '<li class="chat-filter-empty">No conversations with the picked players</li>';
+  const sessions = allChatSessions.filter(s => (showNightChats || s.type !== 'night') && chatFilter.matches(s.participants.map(resolveParticipant)));
+  if (!sessions.length && chatFilter.active) {
+    list.innerHTML = '<li class="player-filter-empty">No conversations with the picked players</li>';
   }
   for (const session of sessions) {
     const phase = gamePhaseAt(session.ts);
@@ -712,13 +737,19 @@ function renderChats() {
 // ── Text messages ────────────────────────────────────────────────────────
 
 function renderMessages() {
+  messageFilter.render();
   const list = document.getElementById('messages-log');
   const savedTop = list.scrollTop;
   const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
   const collapsedPhases = new Set([...list.querySelectorAll('.nom-day-sep.collapsed')].map(el => el.textContent));
   list.innerHTML = '';
   let lastPhase = null;
-  for (const msg of allTextMessages) {
+  const messages = allTextMessages.filter(m =>
+    messageFilter.matches([m.senderId, m.recipientId].filter(Boolean).map(resolveParticipant)));
+  if (!messages.length && messageFilter.active) {
+    list.innerHTML = '<li class="player-filter-empty">No messages with the picked players</li>';
+  }
+  for (const msg of messages) {
     const phase = gamePhaseAt(msg.ts);
     if (phase !== lastPhase) {
       const sep = document.createElement('li');
@@ -4327,26 +4358,6 @@ document.getElementById('toggle-night').addEventListener('click', (e) => {
   showNightChats = !showNightChats;
   e.target.textContent = showNightChats ? 'hide night' : 'show night';
   e.target.classList.toggle('toggle-btn-active', showNightChats);
-  renderChats();
-});
-
-document.getElementById('chats-filter').addEventListener('click', (e) => {
-  const chip = e.target.closest('[data-filter-player]');
-  if (chip) {
-    const name = chip.dataset.filterPlayer;
-    if (chatPlayerFilter.has(name)) chatPlayerFilter.delete(name);
-    else chatPlayerFilter.add(name);
-  } else return;
-  renderChats();
-});
-
-document.getElementById('toggle-chat-filter').addEventListener('click', () => {
-  showChatFilter = !showChatFilter;
-  renderChatFilter();
-});
-
-document.getElementById('clear-chat-filter').addEventListener('click', () => {
-  chatPlayerFilter.clear();
   renderChats();
 });
 
