@@ -23,6 +23,9 @@ let allChatSessions = [];
 let allTextMessages = [];
 let nameMap = {};
 let showNightChats = false;
+let chatPlayerFilter = new Set(); // player names; empty = show every conversation
+let lastChatFilterKey = null;
+let showChatFilter = false; // chip row toggled from the Conversations header
 let mergePhases = true; // notes grid: one column per round (Night N + Day N) instead of per phase
 let colorSource = 'grimoire'; // 'grimoire' | 'notes'
 let openPlayerTimelineName = null;
@@ -238,6 +241,7 @@ function renderState(state) {
   renderNightOrder();
   updateStRoleBtn();
   updateShowNightBtn();
+  renderChatFilter();
   updateVoiceBtn();
 }
 
@@ -627,7 +631,39 @@ function formatParticipant(userId) {
   return `<span class="role-name ${team}" data-player="${esc(name)}">${esc(dn(name))}</span>`;
 }
 
+// Player chips above the list. Rebuilt only when the roster or selection
+// changes, since renderState calls this on every state push. Picked names stay
+// listed even if they drop out of currentState.players, so a reconnect with an
+// empty roster doesn't silently wipe the filter.
+function renderChatFilter() {
+  const bar = document.getElementById('chats-filter');
+  if (!bar) return;
+  // A class, not style.display: collapsing/expanding the section resets every
+  // child's inline display, which would re-show a hidden bar.
+  bar.classList.toggle('chat-filter-hidden', !showChatFilter);
+  document.getElementById('toggle-chat-filter').classList.toggle('toggle-btn-active', showChatFilter);
+  const clearBtn = document.getElementById('clear-chat-filter');
+  clearBtn.style.display = chatPlayerFilter.size ? '' : 'none';
+  clearBtn.textContent = `✕ clear ${chatPlayerFilter.size}`;
+  const names = [...new Set([...(currentState?.players ?? []).map(p => p.name).filter(Boolean), ...chatPlayerFilter])];
+  const key = JSON.stringify([names.map(n => [n, dn(n)]), [...chatPlayerFilter]]);
+  if (key === lastChatFilterKey) return;
+  lastChatFilterKey = key;
+  if (!names.length) { bar.innerHTML = ''; return; }
+  const chips = names.map(n =>
+    `<button class="chat-filter-chip${chatPlayerFilter.has(n) ? ' active' : ''}" data-filter-player="${esc(n)}">${esc(dn(n))}</button>`
+  ).join('');
+  bar.innerHTML = chips;
+}
+
+function chatMatchesFilter(session) {
+  if (!chatPlayerFilter.size) return true;
+  const present = new Set(session.participants.map(resolveParticipant));
+  return [...chatPlayerFilter].some(n => present.has(n));
+}
+
 function renderChats() {
+  renderChatFilter();
   const list = document.getElementById('chats-log');
   const savedTop = list.scrollTop;
   const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
@@ -635,7 +671,10 @@ function renderChats() {
   list.innerHTML = '';
 
   let lastPhase = null;
-  const sessions = showNightChats ? allChatSessions : allChatSessions.filter(s => s.type !== 'night');
+  const sessions = allChatSessions.filter(s => (showNightChats || s.type !== 'night') && chatMatchesFilter(s));
+  if (!sessions.length && chatPlayerFilter.size) {
+    list.innerHTML = '<li class="chat-filter-empty">No conversations with the picked players</li>';
+  }
   for (const session of sessions) {
     const phase = gamePhaseAt(session.ts);
     if (phase !== lastPhase) {
@@ -4288,6 +4327,26 @@ document.getElementById('toggle-night').addEventListener('click', (e) => {
   showNightChats = !showNightChats;
   e.target.textContent = showNightChats ? 'hide night' : 'show night';
   e.target.classList.toggle('toggle-btn-active', showNightChats);
+  renderChats();
+});
+
+document.getElementById('chats-filter').addEventListener('click', (e) => {
+  const chip = e.target.closest('[data-filter-player]');
+  if (chip) {
+    const name = chip.dataset.filterPlayer;
+    if (chatPlayerFilter.has(name)) chatPlayerFilter.delete(name);
+    else chatPlayerFilter.add(name);
+  } else return;
+  renderChats();
+});
+
+document.getElementById('toggle-chat-filter').addEventListener('click', () => {
+  showChatFilter = !showChatFilter;
+  renderChatFilter();
+});
+
+document.getElementById('clear-chat-filter').addEventListener('click', () => {
+  chatPlayerFilter.clear();
   renderChats();
 });
 
