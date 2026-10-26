@@ -39,8 +39,8 @@ let stMessage = [];
 let stRecipientIds = new Set();
 let nightSignalQueue = {}; // `${night}|${roleId}|${holderUid}` -> {status, tokens, filled, sentAt}
 let nightSignalUnlocks = new Set(); // `${night}|${blockingRoleId}|${blockingHolderUid}` manually unlocked despite no observed reply
-let viewRole = 'player'; // 'storyteller' | 'player' — auto-follows amIStoryteller() until user toggles explicitly
-let viewRoleUserSet = false;
+let viewRole = 'player'; // 'storyteller' | 'player' — snaps to amIStoryteller() whenever it changes; manual toggle overrides until then
+let detectedRole = null; // last amIStoryteller() result seen, null until the first state with a known user id
 
 const PREDEFINED_TAGS = [
   { id: 'first-night-info',     label: 'first night' },
@@ -199,14 +199,16 @@ function renderState(state) {
   syncPlayerMetaFromGrimoire();
   document.getElementById('no-data-banner')?.remove();
 
-  if (!viewRoleUserSet) {
-    viewRole = amIStoryteller() ? 'storyteller' : 'player';
-    const isPlayer = viewRole === 'player';
-    const rs = document.getElementById('role-switch');
-    rs.classList.toggle('on', isPlayer);
-    rs.setAttribute('aria-checked', String(isPlayer));
-    document.getElementById('role-toggle').classList.toggle('ct-active', isPlayer);
-    applyViewRole();
+  if (state.myUserId) {
+    const detected = amIStoryteller() ? 'storyteller' : 'player';
+    if (detected !== detectedRole) {
+      detectedRole = detected;
+      if (viewRole !== detected) {
+        viewRole = detected;
+        syncRoleSwitch();
+        applyViewRole();
+      }
+    }
   }
 
   const phase = state.phase ? phaseLabel(state.phase) : '—';
@@ -4378,10 +4380,6 @@ function loadSettings() {
     const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
     if (s.colorSource === 'grimoire' || s.colorSource === 'notes') colorSource = s.colorSource;
     if (typeof s.mergePhases === 'boolean') mergePhases = s.mergePhases;
-    if (s.viewRole === 'storyteller' || s.viewRole === 'player') {
-      viewRole = s.viewRole;
-      viewRoleUserSet = true;
-    }
     if (Array.isArray(s.customTimerPresets)) customTimerPresets = s.customTimerPresets;
     if (Array.isArray(s.customSignalPresets)) customSignalPresets = s.customSignalPresets;
     if (Array.isArray(s.nightSignalUnlocks)) nightSignalUnlocks = new Set(s.nightSignalUnlocks);
@@ -4390,7 +4388,7 @@ function loadSettings() {
 
 function saveSettings() {
   try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ colorSource, mergePhases, viewRole: viewRoleUserSet ? viewRole : undefined, customTimerPresets, customSignalPresets, nightSignalUnlocks: [...nightSignalUnlocks] }));
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ colorSource, mergePhases, customTimerPresets, customSignalPresets, nightSignalUnlocks: [...nightSignalUnlocks] }));
   } catch { /* ignore */ }
 }
 
@@ -4401,16 +4399,20 @@ function applySettingsToUI() {
   const ms = document.getElementById('merge-switch');
   ms.classList.toggle('on', mergePhases);
   ms.setAttribute('aria-checked', String(mergePhases));
+  syncRoleSwitch();
+  applyViewRole();
+}
+
+function syncRoleSwitch() {
   const rs = document.getElementById('role-switch');
   const isPlayer = viewRole === 'player';
   rs.classList.toggle('on', isPlayer);
   rs.setAttribute('aria-checked', String(isPlayer));
   document.getElementById('role-toggle').classList.toggle('ct-active', isPlayer);
-  applyViewRole();
 }
 
-// Storyteller vs player view — auto-detected via amIStoryteller(), but always manually
-// toggleable since role detection and the ST-only feature set are still under development.
+// Storyteller vs player view — follows amIStoryteller() on startup and whenever you
+// become / stop being storyteller; the manual toggle overrides it until the next change.
 function applyViewRole() {
   const isStoryteller = viewRole === 'storyteller';
   document.getElementById('st-tools-section')?.style.setProperty('display', isStoryteller ? '' : 'none');
@@ -4422,14 +4424,9 @@ function applyViewRole() {
   if (!isStoryteller && !notesFixedColWidths) { lastNotesKey = null; renderNotesGrid(); }
 }
 
-document.getElementById('role-switch').addEventListener('click', (e) => {
+document.getElementById('role-switch').addEventListener('click', () => {
   viewRole = viewRole === 'storyteller' ? 'player' : 'storyteller';
-  viewRoleUserSet = true;
-  const isPlayer = viewRole === 'player';
-  e.currentTarget.classList.toggle('on', isPlayer);
-  e.currentTarget.setAttribute('aria-checked', String(isPlayer));
-  document.getElementById('role-toggle').classList.toggle('ct-active', isPlayer);
-  saveSettings();
+  syncRoleSwitch();
   applyViewRole();
 });
 
