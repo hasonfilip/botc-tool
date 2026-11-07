@@ -123,6 +123,17 @@ const _chanDedupMap = new Map();
 
 // ── Nomination processing ─────────────────────────────────────────────────
 
+// Votes an execution needs, the way botc.app's vote overlay works it out:
+// `highscore` is the most votes any nomination got today, and it has to be
+// beaten, not tied — unless that's still under a majority of the living. A
+// traveller's exile always takes a majority of everyone.
+function votesNeeded(players, nomineeSeat, highscore) {
+  const nominee = players.find(p => p.seat === nomineeSeat);
+  if (nominee?.team === 'traveller') return Math.ceil(players.length / 2);
+  const alive = players.filter(p => !p.isDead).length;
+  return Math.max(Math.ceil(alive / 2), (highscore ?? 0) + 1);
+}
+
 async function handleNominationFrame(eventName, eventData, ts) {
   if (isDup(_nomDedupMap, eventName + JSON.stringify(eventData))) return;
 
@@ -131,8 +142,8 @@ async function handleNominationFrame(eventName, eventData, ts) {
   if (eventName === 'nomination') {
     if (Array.isArray(eventData.nomination)) {
       const [nominatorSeat, nomineeSeat] = eventData.nomination;
-      const alive = (latestState?.players ?? []).filter(p => !p.isDead).length;
-      const highscore = Math.max(eventData.highscore ?? 0, Math.ceil(alive / 2));
+      // `highscore` on the entry is the votes needed, not the app's raw value.
+      const highscore = votesNeeded(latestState?.players ?? [], nomineeSeat, eventData.highscore);
       // Snapshot seat→name now: seats get shuffled/rotated later, so resolving
       // them against the then-current player list would rewrite history.
       const seatNames = {};
@@ -153,22 +164,39 @@ async function handleNominationFrame(eventName, eventData, ts) {
 
   if (!pendingNomination) return;
 
+  // The storyteller edited the number mid-nomination (pen icon or companion).
+  if (eventName === 'voteHighscore' && typeof eventData === 'number') {
+    const entry = { ...pendingNomination, highscore: votesNeeded(latestState?.players ?? [], pendingNomination.nomineeSeat, eventData) };
+    await store.set({ pendingNomination: entry });
+    await sendToCompanion({ type: 'NOMINATIONS_UPDATE', nominations, pendingNomination: entry });
+    return;
+  }
+
   if (eventName === 'vote' && Array.isArray(eventData)) {
     // vote [seat, 0|1] — track live hand state; seat indices here are real seat numbers
     const [seat, value] = eventData;
     // A real toggle (up→down→up) must not be eaten by the duplicate window
     _nomDedupMap.delete('vote' + JSON.stringify([seat, value ? 0 : 1]));
     const handState = { ...pendingNomination.handState, [seat]: value };
-    await store.set({ pendingNomination: { ...pendingNomination, handState } });
+    const entry = { ...pendingNomination, handState };
+    await store.set({ pendingNomination: entry });
+    await sendToCompanion({ type: 'NOMINATIONS_UPDATE', nominations, pendingNomination: entry });
     return;
   }
 
-  if (eventName === 'voteInProgress' && eventData[0] === false) {
-    // Counting ended — snapshot who has hand up as the final yes votes
-    const yesSeats = Object.entries(pendingNomination.handState)
-      .filter(([, v]) => v === 1)
-      .map(([s]) => Number(s));
-    await store.set({ pendingNomination: { ...pendingNomination, yesSeats } });
+  if (eventName === 'voteInProgress' && Array.isArray(eventData)) {
+    let entry;
+    if (eventData[0] === false) {
+      // Counting ended — snapshot who has hand up as the final yes votes
+      const yesSeats = Object.entries(pendingNomination.handState)
+        .filter(([, v]) => v === 1)
+        .map(([s]) => Number(s));
+      entry = { ...pendingNomination, yesSeats, voting: false, counted: true };
+    } else {
+      entry = { ...pendingNomination, voting: true, counted: false };
+    }
+    await store.set({ pendingNomination: entry });
+    await sendToCompanion({ type: 'NOMINATIONS_UPDATE', nominations, pendingNomination: entry });
   }
 }
 
@@ -469,7 +497,7 @@ chrome.runtime.onStartup.addListener(() => { connectToTabs(); });
 
 // Storyteller commands relayed verbatim to the active botc.app tab's bridge.
 const COMPANION_COMMANDS = new Set([
-  'SEND_SIGNAL', 'SET_TIMER', 'END_GAME', 'GONG',
+  'SEND_SIGNAL', 'SET_TIMER', 'PAUSE_TIMER', 'VOTE_DRIVE', 'SET_HIGHSCORE', 'END_GAME', 'GONG',
   'ADD_SEAT', 'SHUFFLE_SEATS', 'REMOVE_EMPTY_SEATS',
   'BECOME_STORYTELLER', 'STEP_DOWN_STORYTELLER', 'LOAD_CUSTOM_SCRIPT',
   'NEXT_PHASE', 'NOMINATE', 'REMOVE_SEAT', 'CLEAR_GRIMOIRE', 'SET_PLAYER_PROPERTY',

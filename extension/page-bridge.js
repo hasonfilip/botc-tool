@@ -49,6 +49,302 @@
   // mutation, so parsing the whole store would be wasted work
   const STORAGE_KEYS = ['game', 'players', 'roles', 'storytellers', 'edition', 'bluffs', 'reminders', 'timer', 'session', 'token'];
 
+  // Where botc.app's vote clock is, straight from the store. `locked` is the
+  // hand: -1 during the start countdown, 0 before the first tick (and after a
+  // reset), then L puts the hand on seat (nominee + L - 1) % players; past the
+  // player count the count is done. The storyteller's client ticks it every
+  // `speed` ms and broadcasts each tick, so every client's store follows it.
+  // `paused` is only knowable on the storyteller's own client.
+  // The role that allows a secret vote, if one's in play — botc.app only offers
+  // the toggle then (any seat, storyteller token or fabled/loric with a
+  // 'hidden' vote special).
+  const secretVoteRoleName = () => {
+    const ps = getStore()?.state?.players;
+    if (!ps) return null;
+    const holders = [...(ps.players ?? []), ...(ps.storytellers ?? []), ...(ps.npcs ?? []).map(role => ({ role }))];
+    const hit = holders.find(h => h?.role?.special?.some?.(x => x.type === 'vote' && x.name === 'hidden'));
+    return hit?.role?.name ?? null;
+  };
+
+  const voteClockOf = () => {
+    const v = getStore()?.state?.vote;
+    if (!v) return null;
+    // The driver loses the clock whenever something else owns the timer: the
+    // app's own Pause→resume, Stop, a closed nomination.
+    if (drive.active && v.voteTimer !== drive.timerId && v.voteTimer !== 'paused') drive.active = false;
+    return {
+      nomination: Array.isArray(v.nomination) ? [...v.nomination] : false,
+      locked: v.locked,
+      speed: v.speed,
+      isInProgress: !!v.isInProgress,
+      paused: v.voteTimer === 'paused',
+      // Most votes any nomination got today (0 after each phase change). What
+      // players see as needed is max(majority, highscore + 1) — tie at it.
+      highscore: v.highscore ?? 0,
+      // For the Mark button: botc.app hides it for a traveller, blocks it during
+      // a count or a secret vote, and turns it into "Remove mark" when the result
+      // ties a player who's already marked.
+      isHidden: !!v.isHidden,
+      tally: (v.votes ?? []).reduce((sum, x) => sum + (x || 0), 0),
+      markedSeat: (getStore()?.state?.players?.players ?? []).findIndex(pl => pl?.status?.includes('marked')),
+      nomineeIsTraveller: Array.isArray(v.nomination)
+        && getStore()?.state?.players?.players?.[v.nomination[1]]?.role?.team === 'traveller',
+      // regular | focus | phases | bigwig — audio modes for the nomination.
+      // Phases runs locked -3 (accusation) → -2 (defense) → 0 (open chat).
+      nominationType: v.nominationType ?? 'regular',
+      selectedPlayer: v.selectedPlayer ?? -1, // Big Wig's defense attorney
+      bigwigInPlay: (getStore()?.state?.players?.npcs ?? []).some(r => r?.id === 'bigwig'),
+      secretVoteRole: secretVoteRoleName(),
+      // While we're not driving, the app's own speed is the truth (it may have
+      // been changed in botc.app's settings).
+      drive: { active: drive.active, pattern: drive.pattern, speed: drive.active ? drive.speed : v.speed },
+    };
+  };
+
+  // ── Vote clock driver ──
+  // The app's clock is just the storyteller's client committing vote/lockVote
+  // on a timer kept in vote.voteTimer; each commit goes out as a `lock` frame
+  // and every client draws the hand from it. Driving it ourselves = putting
+  // our own timer there and committing whatever `locked` we like, whenever we
+  // like. Our timer lives in vote.voteTimer too, so the app's Stop, Pause and
+  // nomination-close all cancel it exactly as they would their own.
+  const DRIVE_MIN_MS = 250;
+  const DRIVE_MAX_MS = 5000;
+  // baseSpeed: the speed before Speed up / Slow down started drifting it.
+  const drive = { active: false, pattern: 'steady', speed: null, baseSpeed: null, timerId: null };
+  const clampMs = (ms) => Math.round(Math.min(DRIVE_MAX_MS, Math.max(DRIVE_MIN_MS, ms)));
+  const seatCount = (store) => store.state.players?.players?.length ?? 0;
+  const postClock = () => post({ type: 'VOTE_CLOCK', data: voteClockOf() });
+
+  // Non-internal commit: the app's socket layer turns it into a `lock` frame,
+  // locking that seat's vote with its modifiers (ghost vote spent, Banshee…).
+  const lockTo = (store, locked) => store.commit('vote/lockVote', locked);
+
+  // Speed only reaches players inside the voteInProgress frame, and it sets
+  // how long their hand takes to swing — re-send it so animations keep pace.
+  const broadcastSpeed = (store, ms) => {
+    store.commit('vote/setVotingSpeed', ms);
+    if (store.state.vote.isInProgress) store.commit('vote/toggleVoteInProgress', true);
+  };
+
+  const driveSchedule = (store, delay) => {
+    const id = setTimeout(driveTick, delay);
+    drive.timerId = id;
+    store.commit('vote/setVoteTimer', id); // clears whatever timer was there
+  };
+
+  const nextDelay = (store) => {
+    switch (drive.pattern) {
+      case 'accelerate':
+        drive.speed = clampMs(drive.speed * 0.85);
+        broadcastSpeed(store, drive.speed);
+        return drive.speed;
+      case 'decelerate':
+        drive.speed = clampMs(drive.speed * 1.18);
+        broadcastSpeed(store, drive.speed);
+        return drive.speed;
+      case 'stutter':
+        // Random gaps, but the swing itself stays at the set speed.
+        return clampMs(DRIVE_MIN_MS + Math.random() * 2750);
+      default:
+        return drive.speed;
+    }
+  };
+
+  function driveTick() {
+    const store = getStore();
+    const v = store?.state?.vote;
+    if (!v?.nomination || !v.isInProgress || v.voteTimer !== drive.timerId) {
+      drive.active = false;
+      postClock();
+      return;
+    }
+    const n = seatCount(store);
+    const locked = Math.max(v.locked, 0);
+    // Wobble: now and then the hand slips back a seat, unlocking it again.
+    const next = drive.pattern === 'wobble' && locked > 1 && Math.random() < 0.3 ? locked - 1 : locked + 1;
+    lockTo(store, next);
+    if (next > n) { driveEnd(store); return; }
+    driveSchedule(store, nextDelay(store));
+  }
+
+  // Same ending as the app's own clock: locked past the seat count (that's
+  // what makes the result count), timer cleared, vote no longer in progress.
+  const driveEnd = (store) => {
+    drive.active = false;
+    if (drive.baseSpeed) { drive.speed = drive.baseSpeed; store.commit('vote/setVotingSpeed', drive.speed); }
+    drive.baseSpeed = null;
+    store.commit('vote/setVoteTimer');
+    store.commit('vote/toggleVoteInProgress', false);
+    postClock();
+  };
+
+  // A manual move while driving pushes the next automatic tick back a full
+  // beat, so it doesn't land straight on top of the move.
+  const afterManualMove = (store) => {
+    if (drive.active && store.state.vote.voteTimer !== 'paused') driveSchedule(store, drive.speed);
+    postClock();
+  };
+
+  // The app's Close: logs the vote (only once it was counted) and clears the
+  // nomination for everyone.
+  const closeNomination = (store) => {
+    drive.active = false;
+    store.commit('vote/setVoteTimer');
+    store.dispatch('vote/addLogEntry');
+    store.commit('vote/nomination');
+  };
+
+  const handleVoteDrive = (msg) => {
+    const store = getStore();
+    const v = store?.state?.vote;
+    if (msg.action === 'type' && v) {
+      // The app's nomination-type toggle: not mid-count, not while the Big Wig
+      // forces its own type. Switching with a nomination open moves it into or
+      // out of the accusation stage, as the app does.
+      const npcs = store.state.players?.npcs ?? [];
+      if (v.locked > 0 || v.isInProgress || npcs.some(r => r?.id === 'bigwig')) return;
+      if (!['regular', 'focus', 'phases'].includes(msg.value)) return;
+      store.commit('vote/setNominationType', msg.value);
+      if (v.nomination) {
+        if (msg.value === 'phases' && v.locked === 0) store.commit('vote/lockVote', -3);
+        else if (msg.value !== 'phases' && v.locked < -1) store.commit('vote/lockVote', 0);
+      }
+      postClock();
+      return;
+    }
+    // Not driving: start from whatever speed the app has now.
+    if (v && !drive.active) drive.speed = v.speed;
+    if (msg.action === 'speed' && v && !v.nomination) {
+      // Like botc.app's settings slider: a speed for the next vote, set with no
+      // nomination open. It reaches players with the next voteInProgress frame.
+      drive.speed = clampMs(Number(msg.ms) || drive.speed);
+      drive.baseSpeed = null;
+      store.commit('vote/setVotingSpeed', drive.speed);
+      postClock();
+      return;
+    }
+    if (!v?.nomination) return;
+    const n = seatCount(store);
+    if (!n) return;
+    switch (msg.action) {
+      case 'start':
+      case 'countdown': {
+        if (v.isInProgress) return; // already running: patterns and speed take over instead
+        if (msg.pattern) drive.pattern = msg.pattern;
+        drive.active = true;
+        drive.baseSpeed ??= drive.speed;
+        if (!v.isInProgress) {
+          // Same openings as the app's Start (hand on the nominee, a beat, go)
+          // and Countdown (locked -1 plays the 3-2-1 for everyone, 4s, go).
+          const countdown = msg.action === 'countdown';
+          lockTo(store, countdown ? -1 : 0);
+          store.commit('vote/setVotingSpeed', drive.speed);
+          store.commit('vote/toggleVoteInProgress', true);
+          driveSchedule(store, countdown ? 4000 : 1000);
+        }
+        break;
+      }
+      case 'pattern':
+        drive.pattern = msg.pattern;
+        drive.baseSpeed ??= drive.speed;
+        if (v.isInProgress && !drive.active) { drive.active = true; driveSchedule(store, drive.speed); }
+        break;
+      case 'speed':
+        drive.speed = clampMs(Number(msg.ms) || drive.speed);
+        drive.baseSpeed = drive.speed; // a deliberate pick becomes the new baseline
+        broadcastSpeed(store, drive.speed);
+        // Mid-count, the app's own interval would keep its old rate while
+        // players' hands animate at the new one — so a speed change takes over.
+        if (v.isInProgress && v.voteTimer !== 'paused') {
+          drive.active = true;
+          driveSchedule(store, drive.speed);
+        }
+        break;
+      case 'pause':
+        if (v.isInProgress && v.voteTimer !== 'paused') store.commit('vote/setVoteTimer', 'paused');
+        break;
+      case 'resume':
+        if (v.isInProgress && v.voteTimer === 'paused') { drive.active = true; driveSchedule(store, drive.speed); }
+        break;
+      case 'step': {
+        if (!v.isInProgress) return;
+        const locked = Math.min(n, Math.max(1, Math.max(v.locked, 0) + (msg.delta < 0 ? -1 : 1)));
+        lockTo(store, locked);
+        afterManualMove(store);
+        break;
+      }
+      case 'point': {
+        if (!v.isInProgress) return;
+        // The hand sits on nominee + locked; the nominee itself is the last stop.
+        const nominee = v.nomination[1];
+        const locked = ((Number(msg.seat) - nominee) % n + n) % n || n;
+        lockTo(store, locked);
+        afterManualMove(store);
+        break;
+      }
+      case 'finish':
+        if (!v.isInProgress) return;
+        lockTo(store, n + 1);
+        driveEnd(store);
+        break;
+      case 'reset':
+        // The app's Reset: clock off, hand home, count over.
+        drive.active = false;
+        store.commit('vote/setVoteTimer');
+        lockTo(store, 0);
+        store.commit('vote/setSelectedPlayer', -1);
+        store.commit('vote/toggleVoteInProgress', false);
+        if (drive.baseSpeed) { drive.speed = drive.baseSpeed; store.commit('vote/setVotingSpeed', drive.speed); }
+        drive.baseSpeed = null;
+        break;
+      case 'mark':
+        // The app's Mark: refused mid-count or on a secret vote; marks (or, on a
+        // tie with the marked player, unmarks) and always closes the nomination.
+        if (v.isHidden || v.isInProgress) return;
+        if (store.state.players.players[v.nomination[1]]?.role?.team !== 'traveller') {
+          store.dispatch('vote/setMarkedPlayer');
+        }
+        closeNomination(store);
+        break;
+      case 'close':
+        closeNomination(store);
+        break;
+      case 'next-phase':
+        // Accusation & defense: accusation (-3) → defense (-2) → open chat (0).
+        if (v.locked === -3) store.commit('vote/lockVote', -2);
+        else if (v.locked === -2) store.commit('vote/lockVote', 0);
+        break;
+      case 'secret':
+        if (v.isInProgress || v.locked > 0) return;
+        store.commit('vote/toggleIsHidden', !v.isHidden);
+        break;
+      case 'attorney': {
+        // Big Wig's defense attorney; -1 clears it.
+        const seat = Number(msg.seat);
+        store.commit('vote/setSelectedPlayer', Number.isInteger(seat) && seat >= 0 && seat < n ? seat : -1);
+        break;
+      }
+      case 'release': {
+        // Hand the clock back to the app's own steady tick at the current speed.
+        drive.active = false;
+        if (v.isInProgress && v.voteTimer !== 'paused') {
+          store.commit('vote/setVoteTimer', setInterval(() => {
+            const s = getStore();
+            if (!s?.state?.vote?.nomination) return;
+            s.commit('vote/lockVote');
+            if (s.state.vote.locked > seatCount(s)) {
+              s.commit('vote/setVoteTimer');
+              s.commit('vote/toggleVoteInProgress', false);
+            }
+          }, v.speed));
+        }
+        break;
+      }
+    }
+    postClock();
+  };
+
   const readStorage = () => {
     const raw = {};
     for (const key of STORAGE_KEYS) {
@@ -210,7 +506,12 @@
       edition: storage.edition ?? null,
       bluffs: storage.bluffs ?? [],
       reminders: storage.reminders ?? [],
-      timer: storage.timer ?? null,
+      // Live store first — the localStorage mirror can lag behind a pause/resume.
+      voteClock: voteClockOf(),
+      timer: (() => {
+        const t = getStore()?.state?.session?.timer;
+        return t ? JSON.parse(JSON.stringify(t)) : (storage.timer ?? null);
+      })(),
       session: storage.session ?? null,
       // Signal history lives only in the live Vuex store (session.signals), never
       // persisted to localStorage — keyed by recipient id, "storyteller" mirrors
@@ -258,11 +559,20 @@
   // session.signals lives only in memory (never written to localStorage), so
   // the localStorage/DOM watchers above never see it change — subscribe to the
   // specific mutations directly so new sent/received signals show up promptly.
+  const VOTE_CLOCK_MUTATIONS = new Set([
+    'vote/lockVote', 'vote/toggleVoteInProgress', 'vote/setVoteTimer',
+    'vote/setVotingSpeed', 'vote/nomination', 'vote/setNomination',
+    'vote/setHighscore', 'vote/setNominationType', 'vote/setSelectedPlayer',
+    'vote/toggleIsHidden',
+  ]);
   const waitForStoreSubscribe = () => {
     const store = getStore();
     if (!store) { setTimeout(waitForStoreSubscribe, 500); return; }
     store.subscribe((mutation) => {
-      if (mutation.type === 'session/addSignal' || mutation.type === 'session/clearSignals') debouncedSend();
+      // Vote clock ticks go out on their own, undebounced — a full state
+      // rebuild per tick would be wasted work and lag the hand.
+      if (VOTE_CLOCK_MUTATIONS.has(mutation.type)) post({ type: 'VOTE_CLOCK', data: voteClockOf() });
+      if (mutation.type === 'session/addSignal' || mutation.type === 'session/clearSignals' || mutation.type.startsWith('session/') && /timer/i.test(mutation.type)) debouncedSend();
     });
   };
   waitForStoreSubscribe();
@@ -325,6 +635,37 @@
           isPausedDuringVotes: event.data.isPausedDuringVotes,
           paused: event.data.paused,
         });
+        debouncedSend();
+      } catch { /* page not ready or store unavailable */ }
+    }
+    if (event.data?.type === 'SET_HIGHSCORE') {
+      try {
+        // Same commit as the pen icon on the vote overlay; works with no
+        // nomination open too, and a new nomination keeps it.
+        const value = Math.max(0, Math.round(Number(event.data.value) || 0));
+        getStore()?.commit('vote/setHighscore', value);
+      } catch { /* page not ready or store unavailable */ }
+    }
+    if (event.data?.type === 'VOTE_DRIVE') {
+      try { handleVoteDrive(event.data); } catch { /* page not ready or store unavailable */ }
+    }
+    if (event.data?.type === 'PAUSE_TIMER') {
+      try {
+        const store = getStore();
+        const timer = store?.state?.session?.timer;
+        if (timer?.expiration) {
+          const { expiration, title, isPausedDuringVotes, paused } = timer;
+          const now = Date.now();
+          // Same shape botc.app uses for its pause-during-votes: `paused` is the
+          // moment the pause began, and resuming pushes expiration out by the
+          // time spent paused. A plain setTimer commit broadcasts it to everyone.
+          if (event.data.pause && !paused && expiration > now) {
+            store.commit('session/setTimer', { expiration, title, isPausedDuringVotes, paused: now });
+          } else if (!event.data.pause && paused) {
+            store.commit('session/setTimer', { expiration: expiration + (now - paused), title, isPausedDuringVotes, paused: 0 });
+          }
+          debouncedSend();
+        }
       } catch { /* page not ready or store unavailable */ }
     }
     if (event.data?.type === 'END_GAME') {

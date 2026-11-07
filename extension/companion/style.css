@@ -1,18 +1,36 @@
 :root {
   color-scheme: dark;
-  --bg: #1a1a2e;
-  --surface: #16213e;
-  --accent: #7ec8e3;
-  --accent2: #a8e6cf;
-  --text: #e0e0e0;
-  --muted: #888;
-  --dead: #555;
-  --townsfolk: #4a9eff;
-  --outsider: #a0c4ff;
-  --minion: #ff6b6b;
-  --demon: #ff4444;
-  --traveller: #c084fc;
-  --border: #2a2a4a;
+  /* Graphite surfaces, darkest to lightest */
+  --bg: #0c0c0e;
+  --sunken: #121214;
+  --surface: #151518;
+  --surface-2: #1d1d21;
+  --surface-3: #26262b;
+  --border: #27272c;
+  --line: #222226;
+  /* Text */
+  --text: #ececef;
+  --text2: #c4c4ca;
+  --muted: #8e8e98;
+  --dead: #5a5a62;
+  /* One accent: amber. Used for the primary action and "current" states only. */
+  --accent: #e9b44c;
+  --accent-hover: #f2c466;
+  --accent-text: #f0c770;
+  --on-accent: #1d1405;
+  --accent-soft: rgba(233,180,76,0.14);
+  --accent2: #f0c770;
+  /* Game meaning */
+  --good: #5f8fea;
+  --evil: #ff6b61;
+  --townsfolk: #82adff;
+  --outsider: #b4ccff;
+  --minion: #ff8f85;
+  --demon: #ff6b61;
+  --traveller: #c4a5ff;
+  /* Type */
+  --font: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-display: 'Cormorant Garamond', Georgia, 'Times New Roman', serif;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -25,27 +43,36 @@
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-family: var(--font);
   font-size: 13px;
+  font-variant-numeric: tabular-nums;
   min-width: 300px;
 }
 
 /* ── Header ── */
 
 header {
-  background: var(--surface);
-  padding: 10px 20px;
+  background: var(--bg);
+  min-height: 56px;
+  padding: 8px 24px;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 10px 14px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--line);
   position: sticky;
   top: 0;
   z-index: 10;
 }
 
-header h1 { font-size: 16px; color: var(--accent); letter-spacing: 2px; white-space: nowrap; }
+header h1 {
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--accent-text);
+  white-space: nowrap;
+}
+#session-id { font-family: var(--font); font-size: 12px; font-weight: 400; color: var(--muted); margin-left: 4px; }
 
 .color-toggle {
   display: flex;
@@ -56,34 +83,42 @@ header h1 { font-size: 16px; color: var(--accent); letter-spacing: 2px; white-sp
 /* ── Settings popup (gear) ── */
 #settings-wrap { position: relative; display: flex; align-items: center; }
 #settings-btn {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
   background: none;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text);
-  font-size: 15px;
-  line-height: 1;
-  padding: 5px 8px;
+  border: none;
+  border-radius: 8px;
+  color: var(--text2);
+  padding: 0;
   cursor: pointer;
-  transition: background 0.1s, border-color 0.1s;
+  transition: background 0.1s, color 0.1s;
 }
-#settings-btn:hover { background: rgba(255,255,255,0.06); }
-#settings-btn.open { background: rgba(255,255,255,0.08); border-color: var(--accent); }
+#settings-btn:hover { background: var(--surface-2); color: var(--text); }
+#settings-btn.open { background: var(--surface-2); color: var(--accent-text); }
 
 .header-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
   background: none;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 600;
+  border: none;
+  border-radius: 8px;
+  color: var(--text2);
+  font-size: 13px;
+  font-weight: 500;
   font-family: inherit;
   line-height: 1;
-  padding: 6px 10px;
+  padding: 0 10px;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.1s, border-color 0.1s;
+  transition: background 0.1s, color 0.1s;
 }
-.header-icon-btn:hover { background: rgba(255,255,255,0.06); border-color: var(--accent); }
+.header-icon-btn:hover { background: var(--surface-2); color: var(--text); }
+.header-icon-btn.header-btn-danger { color: var(--minion); }
+.header-icon-btn .btn-icon { margin: 0; }
 
 #settings-popup {
   display: none;
@@ -92,9 +127,9 @@ header h1 { font-size: 16px; color: var(--accent); letter-spacing: 2px; white-sp
   right: 0;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 6px 24px rgba(0,0,0,0.5);
-  padding: 12px 14px;
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.55);
+  padding: 14px 16px;
   flex-direction: column;
   gap: 14px;
   z-index: 1002;
@@ -104,18 +139,6 @@ header h1 { font-size: 16px; color: var(--accent); letter-spacing: 2px; white-sp
 
 /* ── Script library button (scroll icon) ── */
 #script-wrap { position: relative; display: flex; align-items: center; }
-#script-btn {
-  background: none;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text);
-  font-size: 15px;
-  line-height: 1;
-  padding: 5px 8px;
-  cursor: pointer;
-  transition: background 0.1s, border-color 0.1s;
-}
-#script-btn:hover { background: rgba(255,255,255,0.06); }
 
 .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .settings-row-col { flex-direction: column; align-items: flex-start; gap: 6px; }
@@ -126,18 +149,14 @@ header h1 { font-size: 16px; color: var(--accent); letter-spacing: 2px; white-sp
 .ct-switch.on::after { transform: translateX(16px); }
 
 .ct-title {
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
+  font-size: 12px;
   color: var(--muted);
   margin-right: 2px;
 }
 
 .ct-label {
   font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.8px;
+  font-weight: 500;
   color: var(--muted);
   transition: color 0.2s;
   user-select: none;
@@ -153,7 +172,7 @@ header h1 { font-size: 16px; color: var(--accent); letter-spacing: 2px; white-sp
   height: 20px;
   border-radius: 10px;
   border: none;
-  background: var(--border);
+  background: var(--surface-3);
   position: relative;
   cursor: pointer;
   padding: 0;
@@ -176,7 +195,7 @@ header h1 { font-size: 16px; color: var(--accent); letter-spacing: 2px; white-sp
 
 .ws-heartbeat {
   margin-left: auto;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 400;
   color: var(--muted);
   display: flex;
@@ -190,41 +209,39 @@ header h1 { font-size: 16px; color: var(--accent); letter-spacing: 2px; white-sp
 }
 
 .badge {
-  background: var(--accent);
-  color: var(--bg);
-  padding: 2px 10px;
-  border-radius: 12px;
-  font-weight: bold;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
+  background: var(--surface-2);
+  color: var(--text);
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 12px;
   white-space: nowrap;
 }
 
-.badge.night { background: #7b68ee; }
-.badge.day   { background: #ffd700; color: #333; }
+.badge.night { background: rgba(160,150,255,0.14); color: #c3b9ff; }
+.badge.day   { background: var(--accent-soft); color: var(--accent-text); }
 
 #stats-bar {
   display: flex;
   gap: 14px;
-  font-size: 12px;
-  color: var(--muted);
+  font-size: 13px;
+  color: var(--text2);
 }
 
 .status-line { font-size: 11px; color: var(--muted); margin-left: auto; white-space: nowrap; }
 
 /* ── Layout ── */
 
-main { padding: 14px 20px; display: flex; flex-direction: column; gap: 14px; }
+main { padding: 16px 24px 24px; display: flex; flex-direction: column; gap: 20px; }
 
 #no-data-banner {
   margin: 40px 20px;
   padding: 20px 24px;
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
   font-size: 15px;
-  color: var(--muted);
+  color: var(--text2);
   text-align: center;
 }
 
@@ -246,7 +263,12 @@ main { padding: 14px 20px; display: flex; flex-direction: column; gap: 14px; }
   max-height: 650px;
 }
 
-#players-section { display: flex; flex-direction: column; padding-top: 10px; }
+#players-section {
+  display: flex;
+  flex-direction: column;
+  padding: 16px 20px 12px;
+  background: radial-gradient(circle at 50% 50%, #1c1c21 0%, var(--bg) 60%);
+}
 
 #timeline-section #timeline-log,
 #nominations-section #nominations-log,
@@ -262,24 +284,22 @@ main { padding: 14px 20px; display: flex; flex-direction: column; gap: 14px; }
   overflow: visible;
 }
 
+/* Section headers: plain text over a hairline, not boxed bars. */
 h2 {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  color: var(--accent);
-  margin-bottom: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 10px;
   display: flex;
   align-items: center;
   gap: 8px;
   cursor: pointer;
   user-select: none;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 5px 10px;
+  padding: 4px 2px 8px;
+  border-bottom: 1px solid var(--line);
 }
 
-h2:hover { color: var(--accent2); border-color: var(--accent); }
+h2:hover { color: var(--accent-text); }
 
 h2 .chevron { font-size: 10px; color: var(--muted); display: inline-block; transition: transform 0.15s; }
 section.collapsed h2 .chevron { transform: rotate(-90deg); }
@@ -295,13 +315,47 @@ section.collapsed > *:not(h2) { display: none; }
   margin: 10px auto 30px;
 }
 
-.player-circle::before {
+.player-circle::before,
+.player-circle::after {
   content: '';
   position: absolute;
-  inset: 8%;
-  border: 2px solid var(--border);
   border-radius: 50%;
+  pointer-events: none;
 }
+.player-circle::before { inset: 8%; border: 1px solid var(--line); }
+.player-circle::after  { inset: 10%; border: 1px solid #18181b; }
+
+/* Phase readout in the middle of the circle; the nomination alert chips take
+   its place while they're showing. */
+#circle-phase {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  pointer-events: none;
+  z-index: 1;
+}
+#circle-phase[hidden] { display: none; }
+.cp-ordinal {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.cp-phase {
+  font-family: var(--font-display);
+  font-size: 72px;
+  line-height: 1;
+  font-weight: 700;
+  color: var(--accent-text);
+}
+#circle-phase.is-night .cp-phase { color: #c3b9ff; }
+.cp-stats { margin-top: 12px; font-size: 13px; color: var(--text2); }
 
 /* Nomination alerts: what the storyteller has to resolve the moment this
    nomination goes in. Sits above the circle, in the eyeline between the
@@ -345,15 +399,15 @@ section.collapsed > *:not(h2) { display: none; }
 }
 
 .nom-alert-danger {
-  background: rgba(58,26,26,0.92);
-  border-color: rgba(224,82,82,0.6);
-  color: #ff8f8f;
+  background: rgba(58,24,22,0.94);
+  border-color: rgba(255,107,97,0.55);
+  color: #ff9d94;
 }
 
 .nom-alert-info {
-  background: rgba(46,40,22,0.92);
-  border-color: rgba(255,193,7,0.4);
-  color: #ffd35c;
+  background: rgba(46,36,16,0.94);
+  border-color: rgba(240,199,112,0.4);
+  color: var(--accent-text);
   font-weight: 500;
 }
 
@@ -369,20 +423,60 @@ section.collapsed > *:not(h2) { display: none; }
   pointer-events: none;
 }
 
-.nom-hand-line {
-  stroke-width: 2.2;
-  stroke-linecap: round;
+/* Clock hands: rotated into place, so a new target sweeps round the dial with
+   a little overshoot, like a clock hand ticking onto the hour. */
+.nom-hand {
+  transform-origin: 50px 50px;
+  transition: transform 0.38s cubic-bezier(0.34, 1.45, 0.64, 1), opacity 0.18s ease;
+}
+.nom-hand path { stroke-linejoin: round; }
+.nom-hand-nominator path { fill: #f5b83d; filter: drop-shadow(0 0 1.2px rgba(245,184,61,0.7)); }
+.nom-hand-nominee path   { fill: var(--evil); filter: drop-shadow(0 0 1.2px rgba(255,107,97,0.7)); }
+/* A hand the next click would place: present but not committed. */
+.nom-hand.is-preview { opacity: 0.5; }
+.nom-hand.is-hidden { opacity: 0; }
+.nom-hand-nominator:not(.is-preview):not(.is-hidden) { animation: nom-hand-set 0.45s ease-out; }
+@keyframes nom-hand-set {
+  0%   { filter: brightness(1.8); }
+  100% { filter: brightness(1); }
 }
 
-.nom-hand-nominator { stroke: #ffc107; fill: #ffc107; }
-.nom-hand-nominee { stroke: #e05252; fill: #e05252; }
+.nom-hand-hub {
+  fill: var(--surface-3);
+  stroke: #f5b83d;
+  stroke-width: 0.6;
+  transition: opacity 0.18s ease;
+}
+.nom-hand-hub.is-hidden { opacity: 0; }
 
-/* Dashes mark a hand the next click would place, not one already placed. Only
-   the line dashes — the arrowhead is filled, so it stays solid either way. */
-.nom-hand-preview.nom-hand-line { stroke-dasharray: 4 3; opacity: 0.6; }
-.nom-hand-preview.nom-hand-head { opacity: 0.6; }
+/* Seat rings mirror the hands: amber for the nominator, red for the nominee. */
+.player-circle.picking-nominator .player-seat.pa-selectable:hover .seat-token {
+  box-shadow: 0 0 0 3px rgba(245,184,61,0.55);
+}
+.player-circle.picking-nominee .player-seat.pa-selectable:hover .seat-token {
+  box-shadow: 0 0 0 3px rgba(255,107,97,0.6);
+}
+.player-seat.pa-picked .seat-token {
+  box-shadow: 0 0 0 3px #f5b83d, 0 0 18px rgba(245,184,61,0.45);
+  animation: nom-picked-pulse 1.6s ease-in-out infinite;
+}
+@keyframes nom-picked-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px #f5b83d, 0 0 10px rgba(245,184,61,0.3); }
+  50%      { box-shadow: 0 0 0 3px #f5b83d, 0 0 22px rgba(245,184,61,0.6); }
+}
+.player-seat .seat-token { transition: border-color 0.15s, transform 0.1s, box-shadow 0.15s; }
 
-.nom-hand-hub { fill: var(--border); }
+/* Alert chips ease in rather than pop. */
+.nom-alert { animation: nom-alert-in 0.18s ease-out; }
+@keyframes nom-alert-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.96); }
+  to   { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nom-hand, .nom-hand-hub { transition: none; }
+  .nom-hand-nominator, .player-seat.pa-picked .seat-token, .nom-alert { animation: none; }
+}
 
 .player-seat {
   position: absolute;
@@ -397,19 +491,19 @@ section.collapsed > *:not(h2) { display: none; }
   border-radius: 10px;
 }
 
-.player-seat.dead .player-name { color: var(--dead); }
+.player-seat.dead .player-name { color: var(--dead); text-decoration: line-through; }
 .player-seat.dead .seat-token { filter: grayscale(0.8); opacity: 0.6; }
 
-.player-seat.pa-selectable { cursor: pointer; background: rgba(59,130,246,0.09); }
-.player-seat.pa-selectable:hover { background: rgba(255,255,255,0.1); }
-.player-seat.pa-picked { background: rgba(255,193,7,0.15); }
+.player-seat.pa-selectable { cursor: pointer; background: rgba(130,173,255,0.06); }
+.player-seat.pa-selectable:hover { background: rgba(255,255,255,0.08); }
+.player-seat.pa-picked { background: rgba(245,184,61,0.16); }
 
 /* Nominate mode only: visually flags who can't nominate/be nominated again
    today (per BOTC's once-per-day rule) — informational, not a block, so it
    stays fully clickable for the storyteller to override when needed. */
 .player-seat.pa-ineligible .seat-token {
   opacity: 0.65;
-  box-shadow: 0 0 10px 3px rgba(224, 82, 82, 0.5);
+  box-shadow: 0 0 12px 3px rgba(255, 107, 97, 0.45);
 }
 .player-seat.pa-ineligible .player-name,
 .player-seat.pa-ineligible .seat-role-label { opacity: 0.6; }
@@ -418,8 +512,8 @@ section.collapsed > *:not(h2) { display: none; }
    reads as a distinct kind of "selectable" rather than just a dimmer version
    of every other clickable seat. Two-class selector to reliably win over the
    plain .pa-selectable background regardless of source order. */
-.player-seat.pa-selectable.pa-ineligible { background: rgba(224,82,82,0.1); }
-.player-seat.pa-selectable.pa-ineligible:hover { background: rgba(224,82,82,0.14); }
+.player-seat.pa-selectable.pa-ineligible { background: rgba(255,107,97,0.08); }
+.player-seat.pa-selectable.pa-ineligible:hover { background: rgba(255,107,97,0.13); }
 
 /* Round token, filled with the role icon when known */
 .seat-token-wrap { position: relative; width: 60px; height: 60px; }
@@ -429,7 +523,7 @@ section.collapsed > *:not(h2) { display: none; }
   inset: 0;
   border-radius: 50%;
   border: 2px solid var(--border);
-  background-color: var(--surface);
+  background-color: var(--surface-2);
   background-size: cover;
   background-position: center;
   display: flex;
@@ -442,10 +536,10 @@ section.collapsed > *:not(h2) { display: none; }
   transition: border-color 0.15s, transform 0.1s;
 }
 .seat-token:hover { transform: scale(1.05); }
-.seat-token.townsfolk { border-color: var(--townsfolk); }
-.seat-token.outsider  { border-color: var(--outsider); }
-.seat-token.minion    { border-color: var(--minion); }
-.seat-token.demon     { border-color: var(--demon); }
+.seat-token.townsfolk { border-color: var(--good); }
+.seat-token.outsider  { border-color: var(--good); }
+.seat-token.minion    { border-color: var(--evil); }
+.seat-token.demon     { border-color: var(--evil); }
 .seat-token.traveller { border-color: var(--traveller); }
 
 .seat-num-badge {
@@ -455,9 +549,9 @@ section.collapsed > *:not(h2) { display: none; }
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--surface-3);
+  color: var(--text2);
   font-size: 10px;
   display: flex;
   align-items: center;
@@ -482,9 +576,9 @@ section.collapsed > *:not(h2) { display: none; }
   opacity: 1;
   z-index: 2;
 }
-.seat-align-badge.align-dot-none { background: #fff; }
-.seat-align-badge.align-dot-good { background: #3b82f6; }
-.seat-align-badge.align-dot-evil { background: #e53e3e; }
+.seat-align-badge.align-dot-none { background: var(--surface-3); }
+.seat-align-badge.align-dot-good { background: var(--good); }
+.seat-align-badge.align-dot-evil { background: var(--evil); }
 .seat-align-badge:hover { filter: brightness(1.2); }
 
 .seat-remove-x-btn.seat-remove-badge {
@@ -494,9 +588,9 @@ section.collapsed > *:not(h2) { display: none; }
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--surface-3);
+  color: var(--text2);
   font-size: 9px;
   line-height: 1;
   padding: 0;
@@ -506,7 +600,7 @@ section.collapsed > *:not(h2) { display: none; }
 }
 .player-seat:hover .seat-remove-badge,
 .seat-remove-badge:focus-visible { opacity: 1; }
-.seat-remove-badge:hover { color: #e05252; border-color: #e05252; }
+.seat-remove-badge:hover { color: var(--evil); border-color: var(--evil); }
 
 /* Life / ghost-vote badges. Same hover-to-reveal treatment as the remove badge
    so the circle stays quiet at rest, and the same corners are kept clear: seat
@@ -514,13 +608,14 @@ section.collapsed > *:not(h2) { display: none; }
 .seat-life-btn.seat-life-badge,
 .seat-vote-btn.seat-vote-badge {
   position: absolute;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
   border-radius: 50%;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  color: var(--muted);
-  font-size: 9px;
+  background: var(--surface-2);
+  border: 1px solid var(--surface-3);
+  color: var(--text2);
   line-height: 1;
   padding: 0;
   opacity: 0;
@@ -528,6 +623,8 @@ section.collapsed > *:not(h2) { display: none; }
   cursor: pointer;
   z-index: 3;
 }
+.seat-life-badge .btn-icon,
+.seat-vote-badge .btn-icon { margin: 0; vertical-align: 0; }
 
 .seat-life-badge { bottom: -6px; left: -6px; }
 .seat-vote-badge { top: 50%; left: -8px; transform: translateY(-50%); }
@@ -537,8 +634,11 @@ section.collapsed > *:not(h2) { display: none; }
 .seat-life-badge:focus-visible,
 .seat-vote-badge:focus-visible { opacity: 1; }
 
-.seat-life-badge:hover { color: #e05252; border-color: #e05252; }
-.seat-vote-badge:hover { color: #ffc107; border-color: #ffc107; }
+.seat-life-badge:hover { color: var(--evil); border-color: var(--evil); }
+.seat-vote-badge:hover { color: var(--accent-text); border-color: var(--accent); }
+/* A dead player's ghost vote is game state, not a hover action: keep it visible. */
+.player-seat.dead .seat-vote-badge { opacity: 1; }
+.seat-vote-badge.vote-spent { color: var(--muted); }
 
 /* Dimmed and click-through while nominating or swapping */
 .player-seat:hover .seat-badge-locked { opacity: 0.25; }
@@ -555,19 +655,19 @@ section.collapsed > *:not(h2) { display: none; }
   justify-content: center;
   position: relative;
   z-index: 3;
-  background: rgba(10, 12, 24, 0.8);
-  box-shadow: 0 0 6px 3px rgba(10, 12, 24, 0.8);
+  background: rgba(12, 12, 14, 0.8);
+  box-shadow: 0 0 6px 3px rgba(12, 12, 14, 0.8);
   border-radius: 6px;
   padding: 0 3px;
 }
 .seat-role-label {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted);
   line-height: 1.2;
   position: relative;
   z-index: 3;
-  background: rgba(10, 12, 24, 0.8);
-  box-shadow: 0 0 6px 3px rgba(10, 12, 24, 0.8);
+  background: rgba(12, 12, 14, 0.8);
+  box-shadow: 0 0 6px 3px rgba(12, 12, 14, 0.8);
   border-radius: 6px;
   padding: 0 3px;
 }
@@ -577,47 +677,21 @@ section.collapsed > *:not(h2) { display: none; }
 .seat-role-label.demon     { color: var(--demon); }
 .seat-role-label.traveller { color: var(--traveller); }
 
-#players-top-actions {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-#players-top-actions .sig-send-btn { flex: 1; }
-#players-top-actions .sig-send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+#players-top-actions { align-self: center; margin-bottom: 4px; }
 
 #players-seat-actions {
   display: flex;
-  justify-content: space-between;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 2px 16px;
   align-items: center;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
+  margin-top: 4px;
 }
 
 /* Two clusters: reordering the current seats (left) vs. changing how many
    seats exist (right) — previously all five buttons sat in one unbroken row
    with no visual grouping by what they actually do. */
-.seat-actions-group { display: flex; align-items: center; gap: 6px; }
-
-.seat-rotate-btn {
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.1);
-  color: var(--text);
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border-radius: 50%;
-  font-size: 14px;
-  line-height: 1;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.seat-rotate-btn:hover { border-color: var(--accent); color: var(--accent); }
-
-.seat-add-btn { color: var(--accent2); border-color: rgba(168,230,207,0.3); }
-.seat-add-btn:hover { background: rgba(168,230,207,0.12); border-color: var(--accent2); color: var(--accent2); }
+.seat-actions-group { display: flex; align-items: center; gap: 2px; }
 
 #player-table .role-name { display: inline-flex; align-items: center; gap: 5px; }
 #player-table .tp-role-icon { width: 18px; height: 18px; object-fit: contain; flex-shrink: 0; }
@@ -660,8 +734,8 @@ section.collapsed > *:not(h2) { display: none; }
 }
 
 .tl-block.tl-start  { border-color: var(--accent2); }
-.tl-block.tl-night  { border-color: #7b68ee; background: rgba(123,104,238,0.06); }
-.tl-block.tl-day    { border-color: #ffd700; background: rgba(255,215,0,0.05); }
+.tl-block.tl-night  { border-color: #a096ff; background: rgba(160,150,255,0.06); }
+.tl-block.tl-day    { border-color: var(--accent); background: rgba(233,180,76,0.05); }
 
 .tl-block-header { display: flex; align-items: baseline; gap: 6px; cursor: pointer; user-select: none; }
 .tl-block-header:hover .tl-block-label { color: var(--accent2); }
@@ -678,7 +752,7 @@ section.collapsed > *:not(h2) { display: none; }
 .tl-death-time { color: var(--muted); font-size: 10px; }
 
 .tl-game-end { font-size: 11px; font-weight: bold; margin-top: 4px; padding: 2px 6px; border-radius: 4px; display: inline-block; cursor: pointer; user-select: none; }
-.tl-game-end.tl-good { background: rgba(168,230,207,0.2); color: var(--accent2); }
+.tl-game-end.tl-good { background: rgba(130,173,255,0.15); color: var(--townsfolk); }
 .tl-game-end.tl-evil { background: rgba(255,0,0,0.15); color: #ff6b6b; }
 .tl-game-end.spoiler:not(.revealed) { background: var(--border); color: var(--muted); }
 .tl-game-end.spoiler:not(.revealed) .spoiler-show { display: none; }
@@ -812,8 +886,8 @@ section.collapsed > *:not(h2) { display: none; }
   flex-shrink: 0;
 }
 
-.chat-entry.chat-private { border-left-color: #7b68ee; }
-.chat-entry.chat-public  { border-left-color: #ffd700; }
+.chat-entry.chat-private { border-left-color: #a096ff; }
+.chat-entry.chat-public  { border-left-color: var(--accent); }
 .chat-entry.chat-night   { border-left-color: var(--muted); }
 
 .chat-header { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
@@ -869,8 +943,8 @@ section.collapsed > *:not(h2) { display: none; }
   overflow: hidden;
   flex-shrink: 0;
 }
-.msg-entry.msg-public  { border-left-color: #ffd700; background: rgba(255,215,0,0.04); }
-.msg-entry.msg-private { border-left-color: #7b68ee; background: rgba(123,104,238,0.06); }
+.msg-entry.msg-public  { border-left-color: var(--accent); background: rgba(233,180,76,0.04); }
+.msg-entry.msg-private { border-left-color: #a096ff; background: rgba(160,150,255,0.06); }
 
 .msg-header {
   display: flex;
@@ -914,39 +988,134 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 /* ── Shared ── */
 
 .toggle-btn {
-  background: rgba(255,255,255,0.04);
-  border: 1px solid var(--border);
-  color: var(--muted);
-  padding: 3px 9px;
-  border-radius: 8px;
+  background: var(--surface-2);
+  border: none;
+  color: var(--text2);
+  padding: 4px 10px;
+  border-radius: 6px;
   cursor: pointer;
-  font-size: 10px;
-  transition: background 0.1s, border-color 0.1s, color 0.1s;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: inherit;
+  transition: background 0.1s, color 0.1s;
 }
-.toggle-btn:hover { border-color: var(--accent); color: var(--accent); }
+.toggle-btn:hover { background: var(--surface-3); color: var(--text); }
 
 /* Filled (not just outlined) so an active mode-toggle is unmistakable at a
    glance — e.g. "swap" mid-pick shouldn't read the same as its idle state. */
-.toggle-btn-active {
+.toggle-btn-active,
+.toggle-btn-active:hover {
   background: var(--accent);
   border-color: var(--accent);
-  color: var(--bg);
+  color: var(--on-accent);
   font-weight: 600;
 }
-.toggle-btn-active:hover { color: var(--bg); }
 
 /* Two-class override so the active state wins over .sig-clear-btn's own
    background/border/color (both are single-class rules; .sig-clear-btn is
    declared later in the cascade and would otherwise swallow this). Used by
    the seat-actions "Swap" button, whose active state means "mid-pick". */
-.sig-clear-btn.toggle-btn-active {
+.sig-clear-btn.toggle-btn-active,
+.sig-clear-btn.toggle-btn-active:hover {
   background: var(--accent);
   border-color: var(--accent);
-  color: var(--bg);
+  color: var(--on-accent);
 }
-.sig-clear-btn.toggle-btn-active:hover { color: var(--bg); }
 
-.btn-icon { vertical-align: -2px; margin-right: 1px; }
+.btn-icon { vertical-align: -2px; margin-right: 1px; flex-shrink: 0; }
+
+/* Button system. Three weights, used consistently:
+   .btn-primary  — the one main action of a panel (Send Signal, Next Phase)
+   .btn          — everyday actions (Gong, Join Voice, presets, wins)
+   .btn-ghost    — tools and minor actions (Swap, Shuffle, Clear)
+   .link-btn     — inline text actions (History, Save preset) */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 38px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, opacity 0.12s;
+}
+.btn:hover:not(:disabled) { background: var(--surface-3); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn .btn-icon { margin: 0; vertical-align: 0; }
+.btn-sm { height: 30px; padding: 0 10px; font-size: 12px; gap: 6px; }
+.btn-block { width: 100%; }
+.btn-strong { font-weight: 600; }
+.btn-icon-only { padding: 0; width: 30px; }
+
+.btn-primary {
+  height: 44px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 14px;
+  font-weight: 600;
+}
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+
+.btn-ghost { background: transparent; color: var(--text2); }
+.btn-ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+
+/* Mode toggles sitting on a .btn (Join Voice in a call, Swap mid-pick) */
+.btn.toggle-btn-active,
+.btn.toggle-btn-active:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  box-shadow: inset 0 0 0 1px rgba(233,180,76,0.45);
+}
+
+/* Segmented control: one selected option out of a small set */
+.seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--sunken);
+}
+.btn-seg {
+  height: 30px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text2);
+}
+.btn-seg:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+.btn-seg.toggle-btn-active,
+.btn-seg.toggle-btn-active:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow: none;
+  font-weight: 600;
+}
+
+.link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  color: var(--accent-text);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.link-btn:hover { text-decoration: underline; text-underline-offset: 3px; }
+.link-btn .btn-icon { margin: 0; vertical-align: 0; }
+.link-btn-muted { color: var(--text2); }
+.link-btn-muted:hover { color: var(--text); }
 
 /* ── Notes grid ── */
 
@@ -958,7 +1127,7 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
-  border: 2px solid #7a7060;
+  border: 1px solid var(--border);
 }
 
 #notes-table th {
@@ -969,16 +1138,16 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
   letter-spacing: 1px;
   color: var(--text);
   background: var(--surface);
-  border-bottom: 2px solid #7a7060;
+  border-bottom: 2px solid var(--surface-3);
   border-right: 1px solid var(--border);
   white-space: nowrap;
   text-align: center;
 }
 
-#notes-table th.notes-night { background: rgba(123,104,238,0.18); }
-#notes-table th.notes-day   { background: rgba(255,215,0,0.12); }
+#notes-table th.notes-night { background: rgba(160,150,255,0.18); }
+#notes-table th.notes-day   { background: rgba(233,180,76,0.12); }
 /* Merged round column: blend the night (left) and day (right) tints */
-#notes-table th.notes-merged { background: linear-gradient(90deg, rgba(123,104,238,0.18), rgba(255,215,0,0.12)); }
+#notes-table th.notes-merged { background: linear-gradient(90deg, rgba(160,150,255,0.18), rgba(233,180,76,0.12)); }
 
 #notes-table td {
   border: 1px solid var(--border);
@@ -989,11 +1158,11 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 #notes-table td.notes-meta-cell { vertical-align: middle; }
 
 .notes-player-col { position: sticky; left: 0; background: var(--bg); z-index: 1; }
-.notes-player-col.notes-night { background: rgba(123,104,238,0.1); }
-.notes-player-col.notes-day   { background: rgba(255,215,0,0.07); }
+.notes-player-col.notes-night { background: rgba(160,150,255,0.1); }
+.notes-player-col.notes-day   { background: rgba(233,180,76,0.07); }
 
-.notes-align-col { border-right: 2px solid #7a7060 !important; }
-.epoch-start { border-left: 2px solid #7a7060 !important; }
+.notes-align-col { border-right: 2px solid var(--surface-3) !important; }
+.epoch-start { border-left: 2px solid var(--surface-3) !important; }
 .notes-meta-role { overflow: hidden; white-space: nowrap; }
 .notes-meta-role.role-locked { cursor: default; opacity: 0.75; }
 
@@ -1019,12 +1188,12 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
   z-index: 1001;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px;
-  box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.55);
   flex-direction: column;
-  gap: 6px;
-  width: 200px;
+  gap: 4px;
+  width: 260px;
 }
 
 #signal-popover {
@@ -1050,39 +1219,59 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 }
 
 .mrp-search {
-  background: var(--bg);
+  height: 34px;
+  background: var(--sunken);
   border: 1px solid var(--border);
   color: var(--text);
-  padding: 4px 8px;
-  border-radius: 5px;
-  font-size: 12px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 13px;
   font-family: inherit;
   outline: none;
   width: 100%;
   box-sizing: border-box;
 }
 .mrp-search:focus { border-color: var(--accent); }
+.mrp-search::placeholder { color: var(--muted); }
 
 .mrp-list {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  max-height: 200px;
+  max-height: 280px;
   overflow-y: auto;
+  padding: 2px 0;
 }
 
 .mrp-item {
-  padding: 3px 6px;
-  border-radius: 4px;
+  min-height: 32px;
+  padding: 0 8px;
+  border-radius: 6px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 13px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  outline: none;
 }
-.mrp-item:hover { background: var(--border); }
-.mrp-item.active { background: rgba(99,102,241,0.15); }
-.mrp-item .tp-role-icon { width: 14px; height: 14px; object-fit: contain; flex-shrink: 0; }
+.mrp-item:hover, .mrp-item:focus { background: var(--surface-2); }
+.mrp-item.active { background: var(--accent-soft); }
+.mrp-item .tp-role-icon { width: 20px; height: 20px; object-fit: contain; flex-shrink: 0; }
+.mrp-icon-blank { width: 20px; height: 20px; flex-shrink: 0; border-radius: 50%; background: var(--surface-3); }
+.mrp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mrp-seat {
+  width: 20px;
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.mrp-sub { flex-shrink: 0; font-size: 11px; }
+.mrp-item.mrp-dead .mrp-name { color: var(--dead); text-decoration: line-through; }
+.mrp-item.mrp-dead .tp-role-icon { filter: grayscale(0.8); opacity: 0.6; }
+.mrp-empty { padding: 8px; font-size: 12px; color: var(--muted); }
+#signal-player-popover .mrp-item:not(.mrp-dead) .mrp-name { color: var(--text); }
 
 .mrp-clear {
   background: none;
@@ -1164,7 +1353,7 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 .role-chip { background: var(--border); }
 .tag-chip  { background: rgba(255,255,255,0.06); color: var(--muted); }
 .note-chip { background: rgba(255,255,255,0.06); color: var(--text); font-style: italic; }
-.ability-chip { background: rgba(99,102,241,0.12); border: 1px solid rgba(99,102,241,0.3); gap: 3px; flex-wrap: wrap; }
+.ability-chip { background: rgba(233,180,76,0.12); border: 1px solid rgba(233,180,76,0.3); gap: 3px; flex-wrap: wrap; }
 .confirmed-chip { background: rgba(52,211,153,0.15); border: 1px solid rgba(52,211,153,0.35); color: var(--text); }
 
 /* Cell-color chips: a label chip whose colour also tints the cell (see below) */
@@ -1215,7 +1404,7 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
   font-style: italic;
 }
 .ab-val-number {
-  background: rgba(126,200,227,0.15);
+  background: rgba(233,180,76,0.15);
   color: var(--accent);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
@@ -1404,9 +1593,9 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 
 .tp-ab-tab:hover { opacity: 1; border-color: var(--border); }
 .tp-ab-tab:hover::before { width: 100%; transition: width 200ms linear; }
-.tp-ab-tab.active { opacity: 1; border-color: var(--accent); background: rgba(99,102,241,0.15); }
+.tp-ab-tab.active { opacity: 1; border-color: var(--accent); background: rgba(233,180,76,0.15); }
 .tp-ab-tab.active::before { width: 100%; transition: none; }
-.tp-ab-tab.locked { border-color: var(--accent); background: rgba(99,102,241,0.3); box-shadow: 0 0 0 1px var(--accent); }
+.tp-ab-tab.locked { border-color: var(--accent); background: rgba(233,180,76,0.3); box-shadow: 0 0 0 1px var(--accent); }
 .tp-ab-tab .tp-role-icon { width: 24px; height: 24px; object-fit: contain; }
 
 .tp-ability-form {
@@ -1507,7 +1696,7 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 }
 
 .tp-ab-hsel-item:hover,
-.tp-ab-hsel-item.active { background: rgba(99,102,241,0.25); }
+.tp-ab-hsel-item.active { background: rgba(233,180,76,0.25); }
 
 .tp-ab-number, .tp-ab-text {
   background: var(--bg);
@@ -1555,7 +1744,7 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 }
 
 .tp-ab-num-btn:hover { background: rgba(255,255,255,0.12); border-color: var(--muted); }
-.tp-ab-num-btn.active { background: rgba(99,102,241,0.4); border-color: var(--accent); }
+.tp-ab-num-btn.active { background: rgba(233,180,76,0.4); border-color: var(--accent); }
 
 .tp-ab-opt-wrap {
   display: inline-flex;
@@ -1577,7 +1766,7 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 }
 
 .tp-ab-opt-btn:hover { background: rgba(255,255,255,0.12); border-color: var(--muted); }
-.tp-ab-opt-btn.active { background: rgba(99,102,241,0.4); border-color: var(--accent); }
+.tp-ab-opt-btn.active { background: rgba(233,180,76,0.4); border-color: var(--accent); }
 
 
 #notes-table th.notes-player-col { position: sticky; left: 0; background: var(--surface); z-index: 2; }
@@ -1709,12 +1898,12 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 .ptl-death       { border-left-color: var(--demon); }
 .ptl-revive      { border-left-color: var(--accent2); }
 .ptl-ghostvote   { border-left-color: var(--muted); }
-.ptl-nom-made    { border-left-color: #ffd700; }
-.ptl-nom-received { border-left-color: #ffd700; opacity: 0.8; }
+.ptl-nom-made    { border-left-color: var(--accent); }
+.ptl-nom-received { border-left-color: var(--accent); opacity: 0.8; }
 .ptl-voted-yes   { border-left-color: var(--townsfolk); }
 .ptl-voted-no    { border-left-color: var(--muted); }
-.ptl-chat-public  { border-left-color: #ffd700; }
-.ptl-chat-private { border-left-color: #7b68ee; }
+.ptl-chat-public  { border-left-color: var(--accent); }
+.ptl-chat-private { border-left-color: #a096ff; }
 .ptl-chat-night   { border-left-color: var(--muted); }
 .ptl-msg-sent     { border-left-color: var(--accent); }
 .ptl-msg-received { border-left-color: var(--accent2); }
@@ -1728,65 +1917,163 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 
 #st-tools-section { width: 100%; }
 
+/* Three open columns split by hairlines (signal | grimoire | phase & timer),
+   rather than three boxed cards. Stacks on narrow windows. */
 #st-tools-body {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 16px;
-  align-items: start;
+  grid-template-columns: minmax(300px, 340px) minmax(0, 1fr) minmax(280px, 320px);
+  align-items: stretch;
+  border-bottom: 1px solid var(--line);
+}
+@media (max-width: 1100px) {
+  #st-tools-body { grid-template-columns: minmax(0, 1fr); }
+  #st-tools-body > * + * { border-top: 1px solid var(--line); }
 }
 
 .st-tab-panel {
   display: flex;
   flex-direction: column;
+  gap: 14px;
+  padding: 20px 24px 24px;
+  min-width: 0;
+}
+#st-tab-signal { border-right: 1px solid var(--line); }
+#st-tab-timer  { border-left: 1px solid var(--line); }
+@media (max-width: 1100px) {
+  #st-tab-signal, #st-tab-timer { border-left: none; border-right: none; }
+}
+
+.st-tab-panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
   gap: 10px;
-  padding: 14px 16px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
 }
 
 .st-tab-panel-title {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  color: var(--accent);
+  font-family: var(--font-display);
+  font-size: 26px;
+  line-height: 1.1;
   font-weight: 600;
+  color: var(--text);
 }
 
-.st-tab-divider { border-top: 1px solid var(--border); margin: 4px 0; }
+.st-tab-divider { border-top: 1px solid var(--line); margin: 6px 0; }
+.st-spacer { flex: 1; }
+.st-btn-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 
-#signal-history-open-btn { background: rgba(255,255,255,0.05); color: var(--text); border: 1px solid rgba(255,255,255,0.1); }
-#signal-history-open-btn:hover { background: rgba(255,255,255,0.1); }
 
-
-#timer-actions { display: flex; gap: 8px; }
-#timer-actions .sig-send-btn, #timer-actions .sig-clear-btn { flex: 1; }
-#timer-clear-btn { padding: 10px; text-align: center; }
-
-/* The timer's duration is the single most important number on this panel —
-   give it its own boxed, centered, large-digit display instead of two small
-   left-aligned inputs buried among the other controls. */
-#timer-duration-row {
+/* Live timer: what's running right now, with its own Stop. The setup row
+   below starts a new one (replacing it). */
+#timer-status {
   display: flex;
   flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px 0;
+  border-radius: 10px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+#timer-status[hidden] { display: none; }
+.timer-status-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.timer-status-title {
+  min-width: 0;
+  color: var(--text2);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.timer-status-state {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 14px 0 12px;
-  background: rgba(255,255,255,0.03);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-text);
 }
-#timer-duration-inputs { display: flex; align-items: center; gap: 4px; }
+.timer-status-state::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: timer-live 1.4s ease-in-out infinite;
+}
+@keyframes timer-live { 50% { opacity: 0.25; } }
+.timer-status-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 10px;
+}
+.timer-status-left {
+  color: var(--text);
+  font-size: 40px;
+  line-height: 1.1;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.timer-status-btns { display: flex; gap: 6px; }
+#timer-pause-btn[hidden] { display: none; }
+#timer-pause-btn { background: var(--surface-3); }
+#timer-pause-btn:hover { background: #303036; }
+#timer-pause-btn .btn-icon { margin: 0; }
+#timer-clear-btn { background: var(--surface-3); }
+#timer-clear-btn:hover { background: #303036; color: var(--minion); }
+#timer-clear-btn .btn-icon { margin: 0; }
+
+/* Drains left to right as time runs out. */
+.timer-status-bar { height: 3px; margin: 0 -14px; background: var(--surface-3); }
+.timer-status-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transform-origin: left center;
+  transition: transform 0.25s linear;
+}
+
+#timer-status.timer-status-paused .timer-status-state { color: var(--muted); }
+#timer-status.timer-status-paused .timer-status-state::before { animation: none; }
+#timer-status.timer-status-paused .timer-status-left { color: var(--text2); }
+#timer-status.timer-status-paused .timer-status-bar span { background: var(--muted); }
+
+#timer-status.timer-status-done { box-shadow: inset 0 0 0 1px rgba(255,107,97,0.45); }
+#timer-status.timer-status-done .timer-status-state,
+#timer-status.timer-status-done .timer-status-left { color: var(--evil); }
+#timer-status.timer-status-done .timer-status-left { animation: timer-done 1s ease-in-out infinite; }
+@keyframes timer-done { 50% { opacity: 0.45; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .timer-status-state::before, #timer-status.timer-status-done .timer-status-left { animation: none; }
+  .timer-status-bar span { transition: none; }
+}
+
+#timer-duration-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+#timer-duration-inputs { display: flex; align-items: center; gap: 2px; }
 
 .tp-num {
-  width: 56px;
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.1);
+  width: 58px;
+  background: transparent;
+  border: 1px solid transparent;
   color: var(--text);
-  padding: 4px 2px;
+  padding: 2px 0;
   border-radius: 8px;
-  font-size: 26px;
-  font-weight: 700;
+  font-size: 40px;
+  font-weight: 600;
   font-family: inherit;
   text-align: center;
   outline: none;
@@ -1794,78 +2081,45 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
   -moz-appearance: textfield;
 }
 .tp-num::-webkit-outer-spin-button, .tp-num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-.tp-num:focus { border-color: var(--accent); }
-.tp-colon { color: var(--muted); font-weight: 700; font-size: 22px; }
-.tp-check { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; }
+.tp-num:hover { border-color: var(--border); }
+.tp-num:focus { border-color: var(--accent); background: var(--sunken); }
+.tp-colon { color: var(--muted); font-weight: 600; font-size: 32px; }
+.tp-check { display: flex; align-items: center; gap: 6px; color: var(--text2); font-size: 12px; cursor: pointer; }
+.tp-check input { accent-color: var(--accent); }
 
 #timer-presets-label, #signal-presets-label {
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  font-size: 12px;
   color: var(--muted);
-  margin-top: 2px;
 }
 
 .timer-preset-btn {
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.1);
+  background: var(--surface-2);
+  border: none;
   color: var(--text);
-  padding: 5px 9px;
-  border-radius: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
   font-size: 12px;
   font-family: inherit;
   cursor: pointer;
   display: flex;
   align-items: center;
   gap: 6px;
+  transition: background 0.12s;
 }
-.timer-preset-btn:hover { border-color: var(--accent); color: var(--accent); }
-.timer-preset-time { color: var(--muted); font-size: 11px; }
+.timer-preset-btn:hover { background: var(--surface-3); }
+.timer-preset-time { color: var(--muted); font-size: 12px; }
 
-#endgame-actions { display: flex; gap: 8px; }
-.endgame-btn {
-  flex: 1;
+/* End-game: rare and irreversible, so a slim strip at the foot of the panel. */
+#endgame-actions {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 10px;
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  letter-spacing: 0.3px;
-  border: 1px solid transparent;
-  transition: opacity 0.15s;
+  gap: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
 }
-.endgame-good { background: var(--townsfolk); color: var(--bg); }
-.endgame-evil { background: var(--demon); color: var(--bg); }
-.endgame-btn:hover { opacity: 0.85; }
-.endgame-btn .btn-icon { margin-right: 0; }
-
-/* The gong is a one-off "ring the alarm" action, not a routine step like Next
-   Phase — give it a distinct warm/outlined treatment so it doesn't read as
-   just another primary button in the same row. */
-.gong-send-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  width: 100%;
-  padding: 10px;
-  background: rgba(240,180,60,0.1);
-  border: 1px solid rgba(240,180,60,0.4);
-  color: #f0b43c;
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  letter-spacing: 0.3px;
-  transition: background 0.15s, opacity 0.15s;
-}
-.gong-send-btn:hover { background: rgba(240,180,60,0.2); }
+.endgame-btn { flex: 1; }
+.endgame-good { color: var(--townsfolk); }
+.endgame-evil { color: var(--minion); }
 
 
 /* ── Script Library (modal overlay) ── */
@@ -1995,7 +2249,7 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
   font-family: inherit;
   cursor: pointer;
 }
-.script-lib-apply:hover { background: #a8d8ea; }
+.script-lib-apply:hover { background: var(--accent-hover); }
 
 .script-lib-roles { padding: 4px 10px 8px 30px; display: flex; flex-direction: column; gap: 5px; }
 .script-lib-role-team { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
@@ -2028,86 +2282,81 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
   padding: 1px 3px;
   border-radius: 4px;
 }
-.timer-preset-remove:hover { color: #e74c3c; background: rgba(231,76,60,0.15); }
+.timer-preset-remove:hover { color: var(--evil); background: rgba(255,107,97,0.15); }
 
-/* Token grid — left col (self report) / right col (other-player report),
-   each with its matching +role/+player picker beneath it, then a shared
-   center row (yes/no/numbers/prompts) spanning both columns. */
-#signal-token-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  grid-template-areas:
-    "left right"
-    "roleSel playerSel"
-    "center center";
-  gap: 8px 10px;
-  align-items: start;
+/* Saved signal presets are whole sentences: let them wrap as a left-aligned
+   block instead of squeezing into a one-line pill. */
+#signal-presets { flex-direction: column; align-items: stretch; }
+#signal-presets .timer-preset-btn {
+  height: auto;
+  min-height: 30px;
+  padding: 6px 8px 6px 10px;
+  justify-content: space-between;
+  align-items: flex-start;
+  text-align: left;
+  line-height: 1.4;
 }
-#sig-col-left { grid-area: left; }
-#sig-col-right { grid-area: right; }
-.sig-role-select { grid-area: roleSel; width: 100%; }
-.sig-player-select { grid-area: playerSel; width: 100%; }
-#sig-col-center {
-  grid-area: center;
-  padding-top: 6px;
-  border-top: 1px solid rgba(255,255,255,0.05);
+
+/* Signal composer: one flowing run of phrases (statements about the recipient
+   and about others read the same way), then the questions you can ask. */
+.sig-group { display: flex; flex-direction: column; gap: 6px; }
+.sig-group[hidden] { display: none; }
+.sig-label { font-size: 12px; color: var(--muted); }
+
+.sig-phrases {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
 }
-#sig-col-center::before {
-  flex-basis: 100%;
-  order: -1;
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--muted);
-  margin-bottom: 1px;
-  content: 'Responses';
-}
+#sig-col-left, #sig-col-right { display: contents; }
 
 .sig-token-col {
   display: flex;
   flex-wrap: wrap;
-  align-content: flex-start;
-  gap: 5px;
+  align-items: center;
+  gap: 4px 14px;
 }
 
-/* Micro-labels so the left/right token columns read as two distinct groups
-   (statements about the recipient vs. statements about other players)
-   instead of one undifferentiated wall of buttons. */
-#sig-col-left::before, #sig-col-right::before {
-  flex-basis: 100%;
-  order: -1;
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--muted);
-  margin-bottom: 1px;
+/* "+ role" / "+ player" open a picker: same inline-link look, in the accent. */
+.sig-insert-link {
+  height: auto;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  color: var(--accent-text);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: pointer;
 }
-#sig-col-left::before { content: 'About them'; }
-#sig-col-right::before { content: 'About others'; }
+.sig-insert-link:hover { color: var(--accent-hover); }
+.sig-insert-link[aria-expanded="true"] { color: var(--accent-hover); text-decoration: underline; text-underline-offset: 4px; }
 
+/* Phrases read as inline text links — they insert words into the message,
+   they aren't standalone actions. */
 .sig-token-btn {
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.1);
-  color: var(--text);
-  padding: 5px 11px;
-  border-radius: 6px;
-  font-size: 12px;
+  background: none;
+  border: none;
+  color: #d6d6dc;
+  padding: 2px 0;
+  font-size: 13px;
+  line-height: 1.5;
   cursor: pointer;
   font-family: inherit;
-  transition: background 0.1s, border-color 0.1s, color 0.1s;
+  text-decoration: underline;
+  text-decoration-color: #3a3a42;
+  text-underline-offset: 4px;
+  transition: color 0.1s, text-decoration-color 0.1s;
   white-space: nowrap;
 }
-.sig-token-btn:hover { background: rgba(126,200,227,0.12); border-color: var(--accent); color: var(--accent); }
+.sig-token-btn:hover { color: var(--accent-text); text-decoration-color: var(--accent); }
 
 /* Colour-code specific token buttons */
-.sig-token-yes   { color: #5cba6a; border-color: rgba(92,186,106,0.3); }
-.sig-token-yes:hover { background: rgba(92,186,106,0.12); border-color: #5cba6a; color: #5cba6a; }
-.sig-token-no    { color: #e74c3c; border-color: rgba(231,76,60,0.3); }
-.sig-token-no:hover  { background: rgba(231,76,60,0.12); border-color: #e74c3c; color: #e74c3c; }
-.sig-token-good  { color: var(--townsfolk); border-color: rgba(74,158,255,0.3); }
-.sig-token-good:hover { background: rgba(74,158,255,0.12); border-color: var(--townsfolk); color: var(--townsfolk); }
-.sig-token-evil  { color: var(--demon); border-color: rgba(255,68,68,0.3); }
-.sig-token-evil:hover { background: rgba(255,68,68,0.12); border-color: var(--demon); color: var(--demon); }
+.sig-token-yes  { color: #7dd396; text-decoration-color: rgba(125,211,150,0.35); }
+.sig-token-no   { color: var(--minion); text-decoration-color: rgba(255,143,133,0.35); }
+.sig-token-good { color: var(--townsfolk); text-decoration-color: rgba(130,173,255,0.35); }
+.sig-token-evil { color: var(--minion); text-decoration-color: rgba(255,143,133,0.35); }
 
 /* Special row */
 .sig-special {
@@ -2117,65 +2366,72 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
   align-items: center;
 }
 
-.sig-select, .sig-custom-input {
+.sig-custom-input {
+  height: 32px;
   border: 1px solid var(--border);
   color: var(--text);
-  padding: 5px 9px;
-  border-radius: 6px;
+  padding: 0 10px;
+  border-radius: 8px;
   font-size: 12px;
   font-family: inherit;
   outline: none;
+  background: var(--sunken);
+  flex: 1;
+  min-width: 80px;
 }
-.sig-select { background: var(--bg); cursor: pointer; }
-#signal-role-btn { text-align: left; font-family: inherit; }
-.sig-custom-input { background: rgba(255,255,255,0.05); flex: 1; min-width: 80px; }
-.sig-select:focus, .sig-custom-input:focus { border-color: var(--accent); }
+.sig-custom-input:focus { border-color: var(--accent); }
+.sig-custom-row { display: flex; gap: 6px; align-items: center; }
 .sig-custom-input::placeholder { color: var(--muted); }
 
-.sig-custom-add-btn {
-  background: var(--accent);
-  color: var(--bg);
-  border: none;
-  border-radius: 6px;
-  width: 26px;
-  height: 26px;
-  flex-shrink: 0;
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 1;
-  cursor: pointer;
-}
-.sig-custom-add-btn:hover { background: #a8d8ea; }
-
 .sig-clear-btn {
-  background: none;
-  border: 1px solid rgba(255,255,255,0.1);
-  color: var(--muted);
-  padding: 5px 10px;
-  border-radius: 6px;
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-2);
+  border: none;
+  color: var(--text2);
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 12px;
   font-family: inherit;
   cursor: pointer;
   white-space: nowrap;
+  transition: background 0.12s, color 0.12s;
 }
-.sig-clear-btn:hover { color: #e74c3c; border-color: rgba(231,76,60,0.4); }
+.sig-clear-btn:hover { background: var(--surface-3); color: var(--text); }
 
-/* Preview */
-.sig-preview-row { display: flex; align-items: center; gap: 8px; }
+/* Preview: the message as the player will see it. Content starts top-left
+   like text in a box; the Clear action sits on the label row above it. */
+.sig-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 18px;
+}
+.sig-group-head .link-btn { padding: 0; font-size: 12px; }
+.sig-group-head .link-btn[hidden] { display: none; }
 .sig-preview {
-  flex: 1;
-  min-width: 0;
-  min-height: 32px;
+  min-height: 76px;
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  align-items: center;
-  padding: 6px 8px;
-  background: rgba(0,0,0,0.2);
-  border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 7px;
+  gap: 6px;
+  align-items: flex-start;
+  align-content: flex-start;
+  padding: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
 }
-.sig-empty { color: var(--muted); font-size: 11px; font-style: italic; }
+.sig-empty { color: var(--muted); font-size: 13px; line-height: 26px; }
+.sig-preview .sig-chip {
+  height: 26px;
+  font-size: 13px;
+  padding: 0 4px 0 9px;
+  line-height: 1;
+}
+.sig-footer-row { display: flex; justify-content: space-between; gap: 12px; }
 
 #sighist-body { flex: 1; overflow-y: auto; padding: 10px 14px; display: flex; flex-direction: column; gap: 10px; }
 .sig-log-empty { color: var(--muted); font-size: 11px; font-style: italic; padding: 4px 0; }
@@ -2218,93 +2474,103 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
      single chip must wrap inside itself rather than overflow the preview row. */
   max-width: 100%;
   overflow-wrap: anywhere;
-  background: rgba(126,200,227,0.1);
-  border: 1px solid rgba(126,200,227,0.25);
-  color: var(--accent);
-  border-radius: 5px;
+  background: var(--surface-3);
+  border: 1px solid transparent;
+  color: var(--text);
+  border-radius: 6px;
   padding: 2px 7px;
   font-size: 11px;
 }
-.sig-chip-good    { background: rgba(74,158,255,0.1);  border-color: rgba(74,158,255,0.3);  color: var(--townsfolk); }
-.sig-chip-evil    { background: rgba(255,68,68,0.1);   border-color: rgba(255,68,68,0.3);   color: var(--demon); }
-.sig-chip-yes     { background: rgba(92,186,106,0.1);  border-color: rgba(92,186,106,0.3);  color: #5cba6a; }
-.sig-chip-no      { background: rgba(231,76,60,0.1);   border-color: rgba(231,76,60,0.3);   color: #e74c3c; }
-.sig-chip-role    { background: rgba(168,230,207,0.1); border-color: rgba(168,230,207,0.3); color: var(--accent2); }
-.sig-chip-player  { background: rgba(192,132,252,0.1); border-color: rgba(192,132,252,0.3); color: var(--traveller); }
-.sig-chip-custom  { background: rgba(255,215,0,0.07);  border-color: rgba(255,215,0,0.2);   color: #ffd700; }
-.sig-chip-num     { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.12); color: var(--muted); min-width: 22px; justify-content: center; }
+.sig-chip-good    { background: rgba(130,173,255,0.12); color: var(--townsfolk); }
+.sig-chip-evil    { background: rgba(255,143,133,0.12); color: var(--minion); }
+.sig-chip-yes     { background: rgba(125,211,150,0.12); color: #7dd396; }
+.sig-chip-no      { background: rgba(255,143,133,0.12); color: var(--minion); }
+.sig-chip-role    { background: var(--accent-soft);      color: var(--accent-text); }
+.sig-chip-player  { background: rgba(196,165,255,0.12); color: var(--traveller); }
+.sig-chip-custom  { background: var(--surface-3);        color: var(--text); }
+.sig-chip-num     { background: var(--surface-3);        color: var(--text2); min-width: 22px; justify-content: center; }
 
 .sig-chip-remove {
-  background: none;
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 2px;
   border: none;
-  color: rgba(255,255,255,0.25);
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
   cursor: pointer;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1;
-  padding: 0 0 0 3px;
+  padding: 0;
   font-family: inherit;
 }
-.sig-chip-remove:hover { color: #e74c3c; }
+.sig-chip-remove:hover { background: rgba(255,255,255,0.08); }
+.sig-chip-remove:hover { color: var(--evil); }
 
-/* Recipients */
-#signal-recipients {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: 10px 12px;
-  background: rgba(0,0,0,0.15);
-  border: 1px solid rgba(255,255,255,0.06);
-  border-radius: 8px;
-}
+/* Recipients: toggle chips. The checkbox stays for keyboard and screen
+   readers, the chip shows its state. */
+#signal-recipients { display: flex; flex-direction: column; gap: 6px; }
+.sig-recipient-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.sig-player-list { display: contents; }
 
-.sig-recipients-header {
-  font-size: 10px;
-  color: var(--muted);
-  font-weight: 600;
-  letter-spacing: 0.8px;
-  text-transform: uppercase;
-  margin-bottom: 2px;
-}
-
-.sig-recipient-all, .sig-player-row {
-  display: flex;
+.sig-chip-toggle {
+  position: relative;
+  display: inline-flex;
   align-items: center;
-  gap: 7px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text2);
   font-size: 12px;
   cursor: pointer;
-  padding: 3px 5px;
-  border-radius: 5px;
   user-select: none;
+  transition: background 0.12s, color 0.12s, box-shadow 0.12s;
 }
-.sig-recipient-all:hover, .sig-player-row:hover { background: rgba(255,255,255,0.05); }
-
-.sig-player-list { display: flex; flex-wrap: wrap; gap: 0 8px; padding-top: 2px; padding-left: 4px; }
+.sig-chip-toggle:hover { background: var(--surface-3); color: var(--text); }
+.sig-chip-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+}
+.sig-chip-toggle:has(input:checked) {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  box-shadow: inset 0 0 0 1px rgba(233,180,76,0.45);
+  font-weight: 500;
+}
+.sig-chip-toggle:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sig-recipient-all { font-weight: 500; }
 
 /* Send button */
 .sig-send-btn {
   width: 100%;
-  padding: 10px;
+  min-height: 38px;
+  padding: 0 14px;
   background: var(--accent);
   border: none;
-  color: var(--bg);
+  color: var(--on-accent);
   border-radius: 8px;
   font-size: 13px;
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
   transition: background 0.15s, opacity 0.15s;
-  letter-spacing: 0.3px;
 }
-.sig-send-btn:hover:not(:disabled) { background: #a8d8ea; }
-.sig-send-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.sig-send-btn:hover:not(:disabled) { background: var(--accent-hover); }
+.sig-send-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 .sig-send-btn.toggle-btn-active {
-  background: var(--surface);
-  color: var(--accent);
-  box-shadow: inset 0 0 0 2px var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  box-shadow: inset 0 0 0 1px rgba(233,180,76,0.45);
 }
 .sig-send-btn.toggle-btn-active:hover:not(:disabled) {
   background: var(--accent);
-  color: var(--bg);
+  color: var(--on-accent);
 }
 .ptl-empty { color: var(--muted); font-style: italic; padding: 12px 6px; }
 
@@ -2392,7 +2658,7 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 }
 .norder-unlock:hover, .norder-compose:hover, .norder-override:hover { background: rgba(255, 255, 255, 0.12); }
 .norder-input { max-width: 140px; }
-.norder-override.active { border-color: var(--accent); color: var(--accent); background: rgba(126, 200, 227, 0.12); }
+.norder-override.active { border-color: var(--accent); color: var(--accent); background: rgba(233, 180, 76, 0.12); }
 .norder-warning { cursor: help; font-size: 11px; }
 
 .norder-role {
@@ -2459,7 +2725,8 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
    including background-size/position, which the inline background-image
    style (the role icon) depends on to fill and center the circle. */
 .player-role-btn.seat-token {
-  background-color: var(--surface);
+  border: 2px solid var(--surface-3);
+  background-color: var(--surface-2);
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
@@ -2468,6 +2735,12 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
   width: auto;
   text-align: center;
 }
+/* Ring = alignment, so good/evil reads at a glance around the role art. */
+.player-role-btn.seat-token.townsfolk,
+.player-role-btn.seat-token.outsider  { border-color: var(--good); }
+.player-role-btn.seat-token.minion,
+.player-role-btn.seat-token.demon     { border-color: var(--evil); }
+.player-role-btn.seat-token.traveller { border-color: var(--traveller); }
 
 .seat-remove-x-btn {
   background: none;
@@ -2491,3 +2764,505 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
   break-inside: avoid;
   break-after: avoid;
 }
+
+/* ── Polish pass ── */
+
+/* View-as: a two-option segmented control instead of a switch. */
+.view-seg {
+  gap: 2px;
+  padding: 3px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--sunken);
+}
+.view-seg .ct-label {
+  height: 26px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+}
+.view-seg .ct-label:hover { color: var(--text); }
+.view-seg:not(.ct-active) .ct-left,
+.view-seg.ct-active .ct-right {
+  background: var(--surface-3);
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Quick answers (thumbs up, 0–5) are single characters: square keys, not links. */
+.sig-token-acknowledge, .sig-token-zero, .sig-token-one, .sig-token-two,
+.sig-token-three, .sig-token-four, .sig-token-five {
+  min-width: 30px;
+  height: 30px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.sig-token-acknowledge:hover, .sig-token-zero:hover, .sig-token-one:hover, .sig-token-two:hover,
+.sig-token-three:hover, .sig-token-four:hover, .sig-token-five:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+#sig-col-center { row-gap: 8px; }
+.sig-token-acknowledge { margin-left: 0; }
+
+/* Timer digits sit together like a clock face. */
+.tp-num { width: 52px; }
+#timer-minutes { text-align: right; }
+#timer-seconds { text-align: left; }
+.tp-colon { margin: 0 1px; }
+
+/* Empty seats stay quiet; filled ones carry the colour. */
+.player-role-btn.seat-token { color: var(--muted); font-size: 16px; font-weight: 500; }
+.player-seat .player-name { font-size: 12px; }
+.player-seat .player-name.role-name:not(.townsfolk):not(.outsider):not(.minion):not(.demon):not(.traveller) {
+  color: var(--text2);
+  font-weight: 400;
+}
+
+/* Night order: same heading language as the rest of the page. */
+.norder-column-header {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+  padding: 2px 6px 8px;
+  border-bottom-color: var(--line);
+}
+.norder-marker {
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--muted);
+  padding: 10px 6px 4px;
+}
+
+/* Cormorant's default numerals are old-style (a "1" sits like a lowercase
+   letter); headings want full-height ones. */
+.norder-column-header, .st-tab-panel-title, header h1, .cp-phase {
+  font-variant-numeric: lining-nums;
+}
+.norder-column-header { display: flex; align-items: center; gap: 10px; }
+
+/* Answer keys share the row with the text prompts; tighter gap so 👍 + 0–5 fit. */
+#sig-col-center { column-gap: 10px; }
+.sig-token-acknowledge, .sig-token-zero, .sig-token-one, .sig-token-two,
+.sig-token-three, .sig-token-four, .sig-token-five { min-width: 28px; height: 28px; }
+
+/* While nominating, the hands own the middle of the dial: fade the phase text. */
+#circle-phase { transition: opacity 0.2s ease; }
+.player-circle.picking-nominator #circle-phase,
+.player-circle.picking-nominee #circle-phase { opacity: 0.18; }
+
+/* With a timer live, the setup row steps back so only one big number shows. */
+#timer-status:not([hidden]) + #timer-duration-row .tp-num { font-size: 22px; width: 34px; }
+#timer-status:not([hidden]) + #timer-duration-row .tp-colon { font-size: 18px; }
+#timer-status:not([hidden]) + #timer-duration-row #timer-set-btn { height: 32px; font-size: 12px; }
+
+/* The nomination that's still open — hands update live as players vote. */
+.nom-entry.nom-live { border-left-color: var(--accent); }
+.nom-live-badge {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+.nom-entry.nom-live .nom-live-badge { animation: nom-live-pulse 1.6s ease-in-out infinite; }
+@keyframes nom-live-pulse { 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .nom-entry.nom-live .nom-live-badge { animation: none; } }
+
+/* Signal panel rhythm: groups 18px apart, label 6px above its content. */
+#st-tab-signal { gap: 18px; }
+#st-tab-signal .st-tab-panel-head { margin-bottom: -4px; }
+.sig-chip-toggle { height: 26px; padding: 0 9px; }
+.sig-custom-row .btn { height: 32px; width: 32px; }
+.sig-footer-row { align-items: center; }
+
+/* ── Live nomination on the wheel ── */
+
+/* Centre readout: replaces the phase text while a nomination is open. */
+#circle-nom {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 200px;
+  max-width: 46%;
+  padding: 14px 18px 16px;
+  border-radius: 16px;
+  background: rgba(12,12,14,0.82);
+  box-shadow: 0 0 0 1px var(--line), 0 10px 30px rgba(0,0,0,0.45);
+  backdrop-filter: blur(3px);
+  text-align: center;
+  pointer-events: none;
+  z-index: 2;
+}
+#circle-nom[hidden] { display: none; }
+.player-circle.picking-nominator #circle-nom,
+.player-circle.picking-nominee #circle-nom { display: none; }
+
+.cn-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+#circle-nom.is-voting .cn-state { color: var(--accent-text); }
+#circle-nom.is-voting .cn-state::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: timer-live 1.2s ease-in-out infinite;
+}
+.cn-pair {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 8px;
+  max-width: 100%;
+  font-size: 14px;
+  font-weight: 600;
+}
+.cn-nominator, .cn-nominee { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cn-nominator { color: #f5b83d; }
+.cn-nominee { color: var(--evil); }
+.cn-arrow { color: var(--muted); font-weight: 400; }
+
+.cn-count { display: flex; align-items: baseline; gap: 6px; margin-top: 2px; }
+.cn-yes {
+  font-family: var(--font-display);
+  font-variant-numeric: lining-nums;
+  font-size: 64px;
+  line-height: 1;
+  font-weight: 700;
+  color: var(--text);
+}
+#circle-nom.cn-bump .cn-yes { animation: cn-pop 0.3s ease-out; }
+.cn-of { font-size: 18px; color: var(--muted); }
+#circle-nom.is-enough .cn-yes { color: var(--evil); }
+@keyframes cn-pop {
+  from { transform: scale(1.18); }
+  to   { transform: none; }
+}
+
+/* One pip per vote needed; hands beyond the threshold add extra pips. */
+.cn-pips { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; max-width: 180px; margin-top: 2px; }
+.cn-pip {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  transition: background 0.2s;
+}
+.cn-pip.on { background: var(--accent); }
+#circle-nom.is-enough .cn-pip.on { background: var(--evil); }
+.cn-pip.extra { box-shadow: inset 0 0 0 1px rgba(255,255,255,0.15); }
+
+.cn-verdict { margin-top: 4px; font-size: 12px; color: var(--text2); }
+#circle-nom.is-enough .cn-verdict { color: var(--evil); font-weight: 600; }
+#circle-nom.is-counted:not(.is-enough) .cn-verdict { color: var(--muted); }
+
+/* Seats: who's nominating, who's on the block, whose hand is up. */
+.player-seat.nom-live-nominator .seat-token { box-shadow: 0 0 0 3px #f5b83d, 0 0 14px rgba(245,184,61,0.35); }
+.player-seat.nom-live-nominee .seat-token { box-shadow: 0 0 0 3px var(--evil), 0 0 16px rgba(255,107,97,0.45); }
+.player-seat.nom-hand-up:not(.nom-live-nominator):not(.nom-live-nominee) .seat-token {
+  box-shadow: 0 0 0 2px rgba(233,180,76,0.7);
+}
+.seat-hand-badge {
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow: 0 0 0 2px var(--bg);
+  z-index: 4;
+  pointer-events: none;
+}
+.seat-hand-badge .btn-icon { margin: 0; vertical-align: 0; }
+
+/* Hands held on an open nomination don't re-flash on every vote update. */
+.player-circle.nom-live .nom-hand-nominator { animation: none; }
+.player-circle.nom-live #circle-phase { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cn-yes, #circle-nom.is-voting .cn-state::before { animation: none; }
+}
+
+/* The Mark: one player at a time, flagged for death. Red ring on the token and
+   a skull over its art, so it reads at a glance from across the wheel. */
+.player-seat.is-marked .seat-token {
+  box-shadow: 0 0 0 3px var(--evil), 0 0 14px rgba(255,107,97,0.4);
+}
+/* Skull laid over the token's art: darkened backdrop so it reads on any icon. */
+.seat-mark-skull {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(20,6,6,0.55) 0%, rgba(20,6,6,0.25) 70%);
+  color: #fff1ef;
+  filter: drop-shadow(0 0 3px rgba(255,107,97,0.9));
+  pointer-events: none;
+  z-index: 1;
+}
+.seat-mark-skull .btn-icon { margin: 0; vertical-align: 0; }
+
+/* ── Vote clock ── */
+
+/* The counting hand: white, longest, ticking one seat at a time. */
+.nom-hand-vote path { fill: #f4f4f6; filter: drop-shadow(0 0 1.6px rgba(255,255,255,0.75)); }
+.player-circle.vote-running .nom-hand-vote { transition: transform 0.32s cubic-bezier(0.34, 1.5, 0.64, 1), opacity 0.18s ease; }
+/* While the clock runs, the nominator/nominee hands step back. */
+.player-circle.vote-running .nom-hand-nominator,
+.player-circle.vote-running .nom-hand-nominee { opacity: 0.35; }
+
+/* Hands not yet reached by the clock can still go down: outlined. */
+.player-circle.vote-running .player-seat:not(.vote-passed) .seat-hand-badge {
+  background: var(--bg);
+  color: var(--accent-text);
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+/* Passed without a hand up: counted as no, dimmed. */
+.player-circle.vote-running .player-seat.vote-passed:not(.nom-hand-up):not(.nom-live-nominee) .seat-token {
+  filter: grayscale(0.7) brightness(0.6);
+}
+.player-circle.vote-running .player-seat.vote-passed:not(.nom-hand-up) .player-name { opacity: 0.55; }
+
+@media (prefers-reduced-motion: reduce) {
+  .player-circle.vote-running .nom-hand-vote { transition: none; }
+}
+
+/* Countdown before the first tick: the vote hand waits on the nominee, pulsing. */
+.player-circle.vote-countdown .nom-hand-vote { animation: vote-hand-ready 0.8s ease-in-out infinite; }
+@keyframes vote-hand-ready { 50% { opacity: 0.35; } }
+.player-circle.vote-countdown #circle-nom .cn-state { color: var(--text); }
+
+/* Paused: the hand greys and holds; the live dot stops. */
+.player-circle.vote-paused .nom-hand-vote path { fill: var(--muted); filter: none; }
+.player-circle.vote-paused #circle-nom .cn-state { color: var(--muted); }
+.player-circle.vote-paused #circle-nom .cn-state::before { animation: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .player-circle.vote-countdown .nom-hand-vote { animation: none; }
+}
+
+/* ── Vote clock controls (storyteller) ── */
+#vote-drive {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+#vote-drive[hidden] { display: none; }
+#vote-drive.is-driving { box-shadow: inset 3px 0 0 var(--accent); }
+.vd-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.vd-title { font-size: 11px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+.vd-status { font-size: 12px; color: var(--text2); }
+#vote-drive.is-driving .vd-status { color: var(--accent-text); }
+.vd-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.vd-buttons [hidden] { display: none; }
+.vd-buttons .btn-icon-only .btn-icon { margin: 0; }
+.vd-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; }
+.vd-speed { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text2); }
+.vd-speed input { width: 130px; accent-color: var(--accent); }
+#vd-speed-val { min-width: 3.4em; font-variant-numeric: tabular-nums; color: var(--text); }
+.player-circle.picking-point .player-seat { cursor: crosshair; }
+#vd-patterns .btn-seg { height: 26px; padding: 0 10px; font-size: 12px; }
+
+/* Votes-to-execute preset under the seat mode switch. */
+#vote-target {
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--text2);
+}
+#vote-target[hidden], #vt-reset[hidden] { display: none; }
+.vt-label { font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.vt-value { min-width: 1.6em; text-align: center; font-size: 18px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+#vote-target .btn-icon-only svg { display: block; }
+.vt-note { color: var(--muted); }
+.vd-spacer { flex: 1; }
+#vd-mark:not(:disabled):hover { color: var(--evil); }
+#vd-stage { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 13px; color: var(--text); }
+#vd-stage[hidden], #vd-stage [hidden], #vd-secret[hidden] { display: none; }
+#vd-stage-text { flex: 1; min-width: 0; }
+.vt-type {
+  margin-left: 6px;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--sunken);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+.vt-type:disabled { opacity: 0.6; }
+
+/* ── Vote controls in the middle of the wheel ──
+   Sits just below the live nomination card; the circle has a 10px top margin
+   inside the scroll box, so its centre is 10px above the box's. */
+#player-table-scroll { position: relative; }
+#vd-core {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + 84px);
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-width: 380px;
+}
+#vd-core[hidden], #vd-core [hidden] { display: none !important; }
+.vd-core-buttons { display: flex; flex-wrap: nowrap; justify-content: center; gap: 6px; }
+.vd-core-buttons .btn { box-shadow: 0 4px 14px rgba(0,0,0,0.45); }
+#vd-core #vd-start { background: var(--accent); color: var(--on-accent); }
+#vd-core #vd-start:hover:not(:disabled) { background: var(--accent-hover); }
+#vd-core #vd-pause[data-paused="1"] { background: var(--accent); color: var(--on-accent); }
+#vd-core #vd-mark:not(:disabled) { color: var(--minion); }
+#vd-core #vd-stage {
+  justify-content: center;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(12,12,14,0.85);
+  box-shadow: 0 0 0 1px var(--line);
+  text-align: center;
+}
+#vd-core #vd-secret {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(12,12,14,0.85);
+}
+#vd-more-btn { font-size: 11px; }
+#vd-more-btn.is-open { color: var(--accent-text); }
+
+/* The live card shifts up a little so the controls below it stay in the dial. */
+#player-table-scroll:has(#vd-core:not([hidden])) #circle-nom { transform: translate(-50%, calc(-50% - 24px)); }
+/* The pre-nomination row also carries the vote speed and type now: let it wrap. */
+#vote-target { flex-wrap: wrap; justify-content: center; row-gap: 4px; }
+#vote-target .vd-speed { margin-left: 8px; }
+
+/* ── Next-nomination setup (centre of the wheel while Nominate waits) ── */
+#nom-setup {
+  position: absolute;
+  left: 50%;
+  top: calc(50% - 10px);
+  transform: translate(-50%, -50%);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 230px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(12,12,14,0.86);
+  box-shadow: 0 0 0 1px var(--line), 0 10px 30px rgba(0,0,0,0.45);
+  backdrop-filter: blur(3px);
+}
+#nom-setup[hidden] { display: none; }
+.ns-title {
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.ns-row { display: flex; align-items: center; gap: 10px; }
+.ns-label { width: 40px; flex-shrink: 0; font-size: 12px; color: var(--muted); }
+.ns-slot { flex: 1; display: flex; align-items: center; min-width: 0; }
+/* The moved-in controls, fitted to the card. */
+#nom-setup .vt-type { margin-left: 0; width: 100%; height: 30px; }
+#nom-setup .vd-speed { width: 100%; gap: 8px; font-size: 0; color: transparent; }  /* hides the "Tick" text node */
+#nom-setup .vd-speed input { flex: 1; width: auto; min-width: 0; }
+#nom-setup #vd-speed-val { font-size: 12px; }
+/* The phase text would sit underneath: let the card own the centre. */
+.player-circle.nom-setup-open #circle-phase { display: none; }
+
+/* "Clock tools" sits over the dial: give it a backing so a passing hand
+   doesn't show through the text. */
+#vd-more-btn {
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(12,12,14,0.9);
+  box-shadow: 0 0 0 1px var(--line), 0 4px 14px rgba(0,0,0,0.45);
+}
+#vd-more-btn:hover { text-decoration: none; color: var(--text); }
+#vd-more-btn.is-open { color: var(--accent-text); box-shadow: 0 0 0 1px rgba(233,180,76,0.45), 0 4px 14px rgba(0,0,0,0.45); }
+
+/* ── Clock tools inside the centre stack ──
+   Same dark backing as the buttons above, compact rows, no panel of its own. */
+#vd-core #vote-drive {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  box-shadow: none;
+  align-items: center;
+  gap: 8px;
+}
+#vd-core #vote-drive[hidden] { display: none; }
+#vd-core #vote-drive.is-driving { box-shadow: none; }
+#vd-core .vd-head { justify-content: center; order: 3; }
+#vd-core .vd-status {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(12,12,14,0.9);
+  font-size: 11px;
+}
+#vd-core .vd-buttons { justify-content: center; flex-wrap: nowrap; }
+#vd-core .vd-buttons .btn,
+#vd-core #vd-patterns { box-shadow: 0 4px 14px rgba(0,0,0,0.45); }
+#vd-core .vd-buttons .btn-ghost { background: rgba(12,12,14,0.9); }
+#vd-core .vd-controls { justify-content: center; }
+#vd-core #vd-patterns { background: rgba(12,12,14,0.92); }
+#vd-core #vd-patterns .btn-seg { height: 24px; padding: 0 8px; font-size: 11px; }
+
+/* With the tools open the stack is taller: lift the card and the stack so it
+   all stays inside the dial. */
+#player-table-scroll:has(#vote-drive:not([hidden])) #circle-nom { transform: translate(-50%, calc(-50% - 78px)); }
+#player-table-scroll:has(#vote-drive:not([hidden])) #vd-core { top: calc(50% + 20px); }
+/* The card's state line says who's driving; the pattern chip shows how. */
+#vd-core .vd-head { display: none; }
+#vote-target.vt-hide-setup .vd-speed,
+#vote-target.vt-hide-setup .vt-type { display: none; }

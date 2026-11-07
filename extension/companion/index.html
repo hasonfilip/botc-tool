@@ -5,6 +5,9 @@
 	<meta charset="UTF-8" />
 	<title>BOTC Companion</title>
 	<link rel="icon" href="favicon.png" />
+	<link rel="preconnect" href="https://fonts.googleapis.com" />
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+	<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cormorant+Garamond:wght@600;700&display=swap" />
 	<link rel="stylesheet" href="style.css" />
 </head>
 
@@ -22,13 +25,18 @@
 			<span id="ws-heartbeat-timer"></span>
 			<span id="ws-heartbeat-msg"></span>
 		</div>
-		<button id="st-role-btn" class="header-icon-btn">🧙 Become Storyteller</button>
-		<button id="clear-grimoire-btn" class="header-icon-btn" style="display:none">🧹 Clear</button>
+		<button id="clear-grimoire-btn" class="header-icon-btn" style="display:none"><svg class="btn-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"></path></svg> Clear</button>
 		<div id="script-wrap" style="display:none">
-			<button id="script-btn" title="Script Library" aria-label="Script Library">📜</button>
+			<button id="script-btn" class="header-icon-btn" title="Script Library" aria-label="Script Library"><svg class="btn-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12a3 3 0 0 1 3 3v13H7a3 3 0 0 1-3-3z"></path><path d="M8 9h7M8 13h7"></path></svg> Script</button>
 		</div>
+		<div id="role-toggle" class="color-toggle view-seg" role="group" aria-label="View as">
+			<button type="button" class="ct-label ct-left" data-view="storyteller">Storyteller</button>
+			<button class="ct-switch" id="role-switch" role="switch" aria-checked="false" aria-label="View as player" hidden></button>
+			<button type="button" class="ct-label ct-right" data-view="player">Player</button>
+		</div>
+		<button id="st-role-btn" class="header-icon-btn">Become Storyteller</button>
 		<div id="settings-wrap">
-			<button id="settings-btn" title="Settings" aria-label="Settings">⚙</button>
+			<button id="settings-btn" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></button>
 			<div id="settings-popup">
 				<div class="settings-row settings-row-col">
 					<span class="ct-title">source of truth</span>
@@ -41,14 +49,6 @@
 				<div class="settings-row">
 					<span class="ct-title">merge day/night</span>
 					<button class="ct-switch on" id="merge-switch" role="switch" aria-checked="true"></button>
-				</div>
-				<div class="settings-row settings-row-col">
-					<span class="ct-title">view as</span>
-					<div id="role-toggle" class="color-toggle">
-						<span class="ct-label ct-left">storyteller</span>
-						<button class="ct-switch" id="role-switch" role="switch" aria-checked="false"></button>
-						<span class="ct-label ct-right">player</span>
-					</div>
 				</div>
 			</div>
 		</div>
@@ -67,93 +67,180 @@
 		</section>
 
 		<section id="st-tools-section" style="display:none">
-			<h2><span class="chevron">▾</span> Storyteller Tools</h2>
 			<div id="st-tools-body">
 				<div id="st-tab-signal" class="st-tab-panel">
-					<div class="st-tab-panel-title">Signal</div>
+					<div class="st-tab-panel-head">
+						<div class="st-tab-panel-title">Signal</div>
+						<button id="signal-history-open-btn" class="link-btn"><svg class="btn-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg> History</button>
+					</div>
 					<div id="signal-recipients">
-						<div class="sig-recipients-header">Recipients</div>
-						<label class="sig-recipient-all"><input type="checkbox" id="signal-all-check" /> All players</label>
-						<div id="signal-player-list" class="sig-player-list"></div>
+						<div class="sig-group-head"><div class="sig-label">To</div></div>
+						<div class="sig-recipient-chips">
+							<label class="sig-recipient-all sig-chip-toggle"><input type="checkbox" id="signal-all-check" /> Everyone</label>
+							<div id="signal-player-list" class="sig-player-list"></div>
+						</div>
 					</div>
-					<div id="signal-presets-label">Presets</div>
-					<div id="signal-presets" class="sig-special"></div>
-					<div class="st-tab-divider"></div>
-					<div id="signal-token-grid">
-						<div id="sig-col-left" class="sig-token-col"></div>
-						<div id="sig-col-right" class="sig-token-col"></div>
-						<button type="button" id="signal-role-btn" class="sig-select sig-role-select">+ role</button>
-						<select id="signal-player-select" class="sig-select sig-player-select"><option value="">+ player</option></select>
-						<div id="sig-col-center" class="sig-token-col"></div>
+					<div class="sig-group">
+						<div class="sig-group-head">
+							<div class="sig-label">Message</div>
+							<button id="signal-clear-btn" class="link-btn link-btn-muted" hidden>Clear</button>
+						</div>
+						<div id="signal-preview" class="sig-preview"><span class="sig-empty">Pick phrases below to build the message</span></div>
 					</div>
-					<div class="sig-special">
-						<input id="signal-custom-input" class="sig-custom-input" placeholder="custom…" />
-						<button id="signal-custom-add-btn" class="sig-custom-add-btn" title="Add custom token">›</button>
+					<div class="sig-group">
+						<div class="sig-label">Phrases</div>
+						<div id="signal-token-grid" class="sig-phrases">
+							<div id="sig-col-left" class="sig-token-col"></div>
+							<div id="sig-col-right" class="sig-token-col"></div>
+							<button type="button" id="signal-role-btn" class="sig-insert-link" aria-haspopup="listbox" aria-expanded="false">+ role</button>
+							<button type="button" id="signal-player-btn" class="sig-insert-link" aria-haspopup="listbox" aria-expanded="false">+ player</button>
+						</div>
 					</div>
-					<div class="sig-special">
-						<button id="signal-grimoire-btn" class="sig-clear-btn" title="Attach a live snapshot of the current grimoire"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg> Send Grimoire</button>
+					<div class="sig-group">
+						<div class="sig-label">Ask</div>
+						<div id="sig-col-center" class="sig-token-col sig-phrases"></div>
 					</div>
-					<div class="sig-preview-row">
-						<div id="signal-preview" class="sig-preview"><span class="sig-empty">No tokens selected</span></div>
-						<button id="signal-clear-btn" class="sig-clear-btn">clear</button>
+					<div class="sig-custom-row">
+						<input id="signal-custom-input" class="sig-custom-input" placeholder="Add your own words…" />
+						<button id="signal-custom-add-btn" class="btn btn-sm btn-icon-only" title="Add to message" aria-label="Add to message"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
 					</div>
-					<button id="signal-save-preset-btn" class="sig-clear-btn" title="Save the current message as a preset"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg> save preset</button>
-					<button id="signal-send-btn" class="sig-send-btn" disabled>Send Signal</button>
-					<button id="signal-history-open-btn" class="sig-send-btn"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg> View Signal History</button>
+					<div class="sig-group" id="signal-presets-group">
+						<div id="signal-presets-label" class="sig-label">Saved</div>
+						<div id="signal-presets" class="sig-special"></div>
+					</div>
+					<div class="st-spacer"></div>
+					<div class="sig-footer-row">
+						<button id="signal-grimoire-btn" class="link-btn link-btn-muted" title="Attach a live snapshot of the current grimoire"><svg class="btn-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg> Send grimoire</button>
+						<button id="signal-save-preset-btn" class="link-btn link-btn-muted" title="Save the current message as a preset"><svg class="btn-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3 6.4 20.2l1.1-6.2L3 9.6l6.2-.9z"></path></svg> Save preset</button>
+					</div>
+					<button id="signal-send-btn" class="btn btn-primary btn-block" disabled><svg class="btn-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4z"></path></svg> Send Signal</button>
 				</div>
 				<section id="players-section" style="display:none">
-					<div id="players-top-actions">
-						<button id="players-nominate-btn" class="sig-send-btn"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg> Nominate</button>
-						<button id="players-mark-btn" class="sig-send-btn">💀 Mark</button>
-						<button id="players-unmark-btn" class="sig-send-btn" disabled><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg> Remove Mark</button>
+					<div id="players-top-actions" class="seg" role="group" aria-label="Seat click mode">
+						<button id="players-nominate-btn" class="btn btn-seg"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4z"></path><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg> Nominate</button>
+						<button id="players-mark-btn" class="btn btn-seg"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a8 8 0 0 0-5 14.2V21h10v-3.8A8 8 0 0 0 12 3z"></path><path d="M9 12h.01M15 12h.01M10 21v-2M14 21v-2"></path></svg> Mark</button>
+						<button id="players-unmark-btn" class="btn btn-seg" disabled><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M15 9l-6 6M9 9l6 6"></path></svg> Remove Mark</button>
+					</div>
+					<div id="vote-target" hidden title="What players see as the votes an execution needs. Set it before or during a nomination; botc.app resets it each phase.">
+						<span class="vt-label">To execute</span>
+						<button id="vt-minus" class="btn btn-sm btn-icon-only" aria-label="One fewer vote needed"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"></path></svg></button>
+						<span id="vt-value" class="vt-value"></span>
+						<button id="vt-plus" class="btn btn-sm btn-icon-only" aria-label="One more vote needed"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
+						<span id="vt-note" class="vt-note"></span>
+						<button id="vt-reset" class="link-btn link-btn-muted">Reset</button>
+						<label class="vd-speed" title="How long the vote clock spends on each seat">Tick <input id="vd-speed" type="range" min="250" max="4000" step="50" aria-label="Time per seat" /> <span id="vd-speed-val"></span></label>
+						<select id="vt-type" class="vt-type" aria-label="Nomination type" title="Who may talk during a nomination">
+							<option value="regular" title="Everyone may talk as they wish.">Regular</option>
+							<option value="focus" title="The nominated player has the group's attention.">Nominee focus</option>
+							<option value="phases" title="Only the nominator and nominee may talk.">Accusation &amp; defense</option>
+							<option value="bigwig" disabled title="Set by the Big Wig while it's in play.">Big Wig</option>
+						</select>
 					</div>
 					<div id="player-table-scroll">
 						<div id="player-table" class="player-circle"></div>
+						<div id="nom-setup" hidden>
+							<span class="ns-title">Next nomination</span>
+							<div class="ns-row"><span class="ns-label">Type</span><span class="ns-slot" data-slot="type"></span></div>
+							<div class="ns-row"><span class="ns-label">Clock</span><span class="ns-slot" data-slot="speed"></span></div>
+						</div>
+						<div id="vd-core" hidden>
+							<div id="vd-stage" hidden>
+								<span id="vd-stage-text"></span>
+								<button id="vd-next-phase" class="btn btn-sm btn-strong" hidden></button>
+								<button id="vd-attorney" class="btn btn-sm btn-strong" hidden title="Click a seat to make them the defense attorney">Select player</button>
+								<button id="vd-attorney-clear" class="link-btn link-btn-muted" hidden>Clear</button>
+							</div>
+							<label id="vd-secret" class="tp-check" hidden><input type="checkbox" id="vd-secret-input" /> <span id="vd-secret-label"></span></label>
+							<div class="vd-core-buttons">
+								<button id="vd-countdown" class="btn btn-sm btn-strong" title="3-2-1, then the clock starts"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="13" r="8"></circle><path d="M12 9v4l2 2M9 2h6"></path></svg> Countdown</button>
+								<button id="vd-start" class="btn btn-sm btn-strong"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="currentColor" stroke="none" aria-hidden="true"><path d="M7 4v16l13-8z"></path></svg> <span class="vd-start-label">Start</span></button>
+								<button id="vd-pause" class="btn btn-sm"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="currentColor" stroke="none" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"></rect><rect x="14" y="5" width="4" height="14" rx="1"></rect></svg> <span class="vd-pause-label">Pause</span></button>
+								<button id="vd-reset" class="btn btn-sm" title="Stop the clock and put the hand back on the nominee"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><path d="M3 3v5h5"></path></svg> Reset</button>
+								<button id="vd-mark" class="btn btn-sm" title="Mark the nominee for execution and close the nomination"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a8 8 0 0 0-5 14.2V21h10v-3.8A8 8 0 0 0 12 3z"></path><path d="M9 12h.01M15 12h.01M10 21v-2M14 21v-2"></path></svg> <span class="vd-mark-label">Mark</span></button>
+								<button id="vd-close" class="btn btn-sm" title="Close the nomination"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M15 9l-6 6M9 9l6 6"></path></svg> Close</button>
+							</div>
+							<div id="vote-drive" hidden>
+								<div class="vd-head">
+									<span id="vd-status" class="vd-status"></span>
+								</div>
+								<div class="vd-buttons">
+									<button id="vd-back" class="btn btn-sm btn-icon-only" title="Step the hand back a seat (unlocks it)" aria-label="Step back"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"></path></svg></button>
+									<button id="vd-fwd" class="btn btn-sm btn-icon-only" title="Step the hand forward a seat" aria-label="Step forward"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg></button>
+									<button id="vd-point" class="btn btn-sm" title="Click seats to send the hand there"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><circle cx="12" cy="12" r="2"></circle></svg> Point</button>
+									<button id="vd-finish" class="btn btn-sm" title="End the count now — the result counts as it stands"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4h11l-1.5 4L16 12H5"></path></svg> End count</button>
+									<button id="vd-release" class="btn btn-sm btn-ghost" title="Give the clock back to botc.app's normal steady tick">Hand back</button>
+								</div>
+								<div class="vd-controls">
+									<div id="vd-patterns" class="seg" role="group" aria-label="Clock pattern">
+										<button class="btn btn-seg btn-sm" data-pattern="steady">Steady</button>
+										<button class="btn btn-seg btn-sm" data-pattern="accelerate" title="Each tick 15% faster">Speed up</button>
+										<button class="btn btn-seg btn-sm" data-pattern="decelerate" title="Each tick 18% slower">Slow down</button>
+										<button class="btn btn-seg btn-sm" data-pattern="stutter" title="Random pauses between ticks">Stutter</button>
+										<button class="btn btn-seg btn-sm" data-pattern="wobble" title="Now and then slips back a seat">Wobble</button>
+									</div>
+								</div>
+							</div>
+							<button id="vd-more-btn" class="link-btn link-btn-muted" aria-expanded="false" aria-controls="vote-drive"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"></path><circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg> Clock tools</button>
+						</div>
 					</div>
 					<div id="players-seat-actions">
 						<div class="seat-actions-group">
-							<button id="players-swap-btn" class="sig-clear-btn" title="Pick two seats to swap their occupants"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 3 3 7 7 11"></polyline><line x1="3" y1="7" x2="21" y2="7"></line><polyline points="17 13 21 17 17 21"></polyline><line x1="21" y1="17" x2="3" y2="17"></line></svg> Swap</button>
-							<button id="players-shuffle-btn" class="sig-clear-btn" title="Shuffle seat order"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"></polyline><line x1="4" y1="20" x2="21" y2="3"></line><polyline points="21 16 21 21 16 21"></polyline><line x1="15" y1="15" x2="21" y2="21"></line><line x1="4" y1="4" x2="9" y2="9"></line></svg> Shuffle</button>
-							<button id="players-rotate-ccw-btn" class="seat-rotate-btn" title="Rotate counterclockwise">↺</button>
-							<button id="players-rotate-cw-btn" class="seat-rotate-btn" title="Rotate clockwise">↻</button>
+							<button id="players-swap-btn" class="btn btn-ghost btn-sm" title="Pick two seats to swap their occupants"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3 3 7l4 4M3 7h18M17 13l4 4-4 4M21 17H3"></path></svg> Swap</button>
+							<button id="players-shuffle-btn" class="btn btn-ghost btn-sm" title="Shuffle seat order"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"></path></svg> Shuffle</button>
+							<button id="players-rotate-ccw-btn" class="btn btn-ghost btn-sm btn-icon-only" title="Rotate counterclockwise" aria-label="Rotate counterclockwise"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><path d="M3 3v5h5"></path></svg></button>
+							<button id="players-rotate-cw-btn" class="btn btn-ghost btn-sm btn-icon-only" title="Rotate clockwise" aria-label="Rotate clockwise"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"></path><path d="M21 3v5h-5"></path></svg></button>
 						</div>
 						<div class="seat-actions-group">
-							<button id="players-add-seat-btn" class="sig-clear-btn seat-add-btn" title="Add a seat"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><line x1="20" y1="8" x2="20" y2="14"></line><line x1="23" y1="11" x2="17" y2="11"></line></svg> Add Seat</button>
-							<button id="players-remove-empty-btn" class="sig-clear-btn" title="Remove all empty seats"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg> Remove empty</button>
+							<button id="players-add-seat-btn" class="btn btn-ghost btn-sm" title="Add a seat"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M20 8v6M23 11h-6"></path></svg> Add seat</button>
+							<button id="players-remove-empty-btn" class="btn btn-ghost btn-sm" title="Remove all empty seats"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"></path></svg> Remove empty</button>
 						</div>
 					</div>
 				</section>
 				<div id="st-tab-timer" class="st-tab-panel">
-					<button id="gong-btn" class="gong-send-btn"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg> Gong</button>
-					<div class="st-tab-divider"></div>
-					<button id="voice-btn" class="sig-send-btn"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line></svg> <span id="voice-btn-label">Join Voice</span></button>
-					<div class="st-tab-divider"></div>
-					<button id="next-phase-btn" class="sig-send-btn"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19"></line></svg> Next Phase</button>
-					<div class="st-tab-divider"></div>
-					<div id="endgame-actions">
-						<button id="endgame-good-btn" class="endgame-btn endgame-good"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle></svg> Good Wins</button>
-						<button id="endgame-evil-btn" class="endgame-btn endgame-evil"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="currentColor" stroke="none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg> Evil Wins</button>
+					<div class="st-tab-panel-title">Phase</div>
+					<button id="next-phase-btn" class="btn btn-primary btn-block"><svg class="btn-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4l10 8-10 8z"></path><path d="M19 5v14"></path></svg> Next Phase</button>
+					<div class="st-btn-pair">
+						<button id="gong-btn" class="btn"><svg class="btn-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg> Gong</button>
+						<button id="voice-btn" class="btn"><svg class="btn-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3"></path></svg> <span id="voice-btn-label">Join Voice</span></button>
 					</div>
 					<div class="st-tab-divider"></div>
+					<div class="st-tab-panel-head">
+						<div class="st-tab-panel-title">Timer</div>
+						<label class="tp-check"><input type="checkbox" id="timer-pause-votes" checked /> Pause during votes</label>
+					</div>
+					<div id="timer-status" hidden>
+						<div class="timer-status-head">
+							<span class="timer-status-title"></span>
+							<span class="timer-status-state"></span>
+						</div>
+						<div class="timer-status-main">
+							<span class="timer-status-left"></span>
+							<div class="timer-status-btns">
+								<button id="timer-pause-btn" class="btn btn-sm"><svg class="btn-icon timer-pause-icon" viewBox="0 0 24 24" width="11" height="11" fill="currentColor" stroke="none"><rect x="6" y="5" width="4" height="14" rx="1"></rect><rect x="14" y="5" width="4" height="14" rx="1"></rect></svg> <span class="timer-pause-label">Pause</span></button>
+								<button id="timer-clear-btn" class="btn btn-sm"><svg class="btn-icon" viewBox="0 0 24 24" width="11" height="11" fill="currentColor" stroke="none"><rect x="6" y="6" width="12" height="12" rx="1.5"></rect></svg> <span class="timer-clear-label">Stop</span></button>
+							</div>
+						</div>
+						<div class="timer-status-bar"><span></span></div>
+					</div>
 					<div id="timer-duration-row">
 						<div id="timer-duration-inputs">
-							<input id="timer-minutes" type="number" min="0" max="99" value="1" class="tp-num" title="minutes" />
+							<input id="timer-minutes" type="number" min="0" max="99" value="1" class="tp-num" title="minutes" aria-label="Minutes" />
 							<span class="tp-colon">:</span>
-							<input id="timer-seconds" type="number" min="0" max="59" value="0" class="tp-num" title="seconds" />
+							<input id="timer-seconds" type="number" min="0" max="59" value="00" class="tp-num" title="seconds" aria-label="Seconds" />
 						</div>
-						<label class="tp-check"><input type="checkbox" id="timer-pause-votes" checked /> pause during votes</label>
+						<button id="timer-set-btn" class="btn btn-strong"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="currentColor" stroke="none"><path d="M7 4v16l13-8z"></path></svg> <span class="timer-start-label">Start</span></button>
 					</div>
 					<div class="sig-special">
-						<input id="timer-title" class="sig-custom-input" placeholder="timer title…" maxlength="40" />
-						<button id="timer-save-preset-btn" class="sig-clear-btn" title="Save current settings as a preset"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg> save preset</button>
+						<input id="timer-title" class="sig-custom-input" placeholder="Timer title…" maxlength="40" />
+						<button id="timer-save-preset-btn" class="link-btn link-btn-muted" title="Save current settings as a preset"><svg class="btn-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3 6.4 20.2l1.1-6.2L3 9.6l6.2-.9z"></path></svg> Save preset</button>
 					</div>
-					<div id="timer-actions">
-						<button id="timer-set-btn" class="sig-send-btn">Start Timer</button>
-						<button id="timer-clear-btn" class="sig-clear-btn">Clear Timer</button>
-					</div>
-					<div class="st-tab-divider"></div>
-					<div id="timer-presets-label">Or launch a saved preset</div>
+					<div id="timer-presets-label">Presets</div>
 					<div id="timer-presets" class="sig-special"></div>
+					<div class="st-spacer"></div>
+					<div id="endgame-actions">
+						<button id="endgame-good-btn" class="btn btn-sm endgame-btn endgame-good"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="9"></circle></svg> Good wins</button>
+						<button id="endgame-evil-btn" class="btn btn-sm endgame-btn endgame-evil"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="currentColor" stroke="none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg> Evil wins</button>
+					</div>
 				</div>
 			</div>
 		</section>

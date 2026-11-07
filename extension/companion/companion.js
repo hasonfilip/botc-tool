@@ -16,8 +16,8 @@ let currentState = null;
 let revealedRoles = {}; // playerId → roleId, populated from end entry
 let allNominations = [];
 // The nomination currently on the floor, before its closing frame lands. Kept
-// apart from allNominations so it can't reach the log or vote maths half-built —
-// the per-day nominate-once limits are the one place it has to count.
+// apart from allNominations so it can't reach the vote maths half-built — the
+// per-day nominate-once limits count it, and the log shows it as a live entry.
 let pendingNomination = null;
 let allChatSessions = [];
 let allTextMessages = [];
@@ -27,7 +27,7 @@ let mergePhases = true; // notes grid: one column per round (Night N + Day N) in
 let colorSource = 'grimoire'; // 'grimoire' | 'notes'
 let openPlayerTimelineName = null;
 let cellTokens = {};
-let playerActionMode = null; // null | 'nominate' | 'swap'
+let playerActionMode = null; // null | 'nominate' | 'swap' | 'mark' | 'point' | 'attorney'
 let playerActionPickedSeat = null; // first seat picked during 'swap'/'nominate' mode
 let hoveredSeat = null; // seat under the cursor, for the nomination hand preview
 let materializedStatus = new Set(); // event keys already turned into a status chip — never recreate, even after edit/delete
@@ -70,6 +70,27 @@ const DROISON_SOURCE_ROLES = new Set([
 ]);
 
 const phaseLabel = (phase) => phase % 2 === 1 ? `Night ${Math.ceil(phase / 2)}` : `Day ${Math.ceil(phase / 2)}`;
+
+// Inline stroke icons for markup built in JS (the static ones live in index.html).
+const _svg = (size, body, extra = '') =>
+  `<svg class="btn-icon" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"${extra}>${body}</svg>`;
+const ICON_SVG = {
+  stepDown: _svg(15, '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"></path>'),
+  storyteller: _svg(15, '<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3 6.4 20.2l1.1-6.2L3 9.6l6.2-.9z"></path>'),
+  skull: _svg(10, '<path d="M12 3a8 8 0 0 0-5 14.2V21h10v-3.8A8 8 0 0 0 12 3z"></path><path d="M9 12h.01M15 12h.01"></path>', ' stroke-width="2.6"'),
+  revive: _svg(10, '<path d="M12 5v14M5 12h14"></path>', ' stroke-width="3"'),
+  hand: _svg(11, '<path d="M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v6M10 10.5V6a2 2 0 0 0-4 0v8"></path><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-6-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"></path>', ' stroke-width="2.2"'),
+  markSkull: _svg(30, '<path d="M12 3a8 8 0 0 0-5 14.2V21h10v-3.8A8 8 0 0 0 12 3z"></path><circle cx="9" cy="12" r="1.6" fill="currentColor"></circle><circle cx="15" cy="12" r="1.6" fill="currentColor"></circle><path d="M10 21v-2M14 21v-2"></path>', ' stroke-width="1.8"'),
+  ghostVote: _svg(10, '<circle cx="12" cy="12" r="6" fill="currentColor"></circle>'),
+  ghostVoteSpent: _svg(10, '<circle cx="12" cy="12" r="7"></circle><path d="M7 17 17 7"></path>', ' stroke-width="2.4"'),
+};
+
+// "THE FIRST / Day" in the middle of the grimoire circle.
+const ORDINALS = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'eleventh', 'twelfth'];
+const phaseOrdinal = (phase) => {
+  const n = Math.ceil(phase / 2);
+  return ORDINALS[n - 1] ?? `${n}th`;
+};
 const dn = (name) => {
   const chars = [...(name ?? '')]; // code points, so truncation can't split an emoji
   return chars.length > 20 ? chars.slice(0, 20).join('') + '…' : (name ?? '');
@@ -196,6 +217,7 @@ function syncPlayerMetaFromGrimoire() {
 function renderState(state) {
   if (!state) return;
   currentState = { ...state, roles: enrichRoles(state.roles) };
+  if (state.voteClock !== undefined) voteClock = state.voteClock;
   syncPlayerMetaFromGrimoire();
   document.getElementById('no-data-banner')?.remove();
 
@@ -211,6 +233,13 @@ function renderState(state) {
     }
   }
 
+  // Nominations are a daytime thing: going into night switches Nominate off.
+  if (state.phase && state.phase % 2 === 1 && playerActionMode === 'nominate') {
+    playerActionMode = null;
+    playerActionPickedSeat = null;
+    nominationSent = null;
+    document.getElementById('players-nominate-btn')?.classList.remove('toggle-btn-active');
+  }
   const phase = state.phase ? phaseLabel(state.phase) : '—';
   const phaseBadge = document.getElementById('phase-badge');
   phaseBadge.textContent = phase;
@@ -243,6 +272,7 @@ function renderState(state) {
   chatFilter.render();
   messageFilter.render();
   updateVoiceBtn();
+  updateTimerStatus();
 }
 
 // A channel of our own, so nobody else is ever routed into it — the id only has
@@ -266,7 +296,10 @@ function updateStRoleBtn() {
   const btn = document.getElementById('st-role-btn');
   if (!btn) return;
   const isSt = amIStoryteller();
-  btn.textContent = isSt ? '🚪 Step Down' : '🧙 Become Storyteller';
+  btn.innerHTML = isSt
+    ? `${ICON_SVG.stepDown} Step Down`
+    : `${ICON_SVG.storyteller} Become Storyteller`;
+  btn.classList.toggle('header-btn-danger', isSt);
 }
 
 // Night chats are only visible to the storyteller in the real game — hide the
@@ -532,7 +565,9 @@ function renderNominations() {
   list.innerHTML = '';
 
   let lastDay = null;
-  for (const nom of allNominations) {
+  const entries = pendingNomination ? [...allNominations, pendingNomination] : allNominations;
+  for (const nom of entries) {
+    const isLive = nom === pendingNomination;
     const day = gamePhaseAt(nom.ts);
     if (day !== lastDay) {
       const sep = document.createElement('li');
@@ -544,7 +579,11 @@ function renderNominations() {
 
     const nominator = nomSeatName(nom, nom.nominatorSeat);
     const nominee = nomSeatName(nom, nom.nomineeSeat);
-    const yesNames = nom.yesSeats.map(s => nomSeatName(nom, s));
+    // Live: who has a hand up right now; once counted, the final snapshot.
+    const yesSeats = isLive && !nom.counted
+      ? Object.entries(nom.handState ?? {}).filter(([, v]) => v === 1).map(([s]) => Number(s))
+      : (nom.yesSeats ?? []);
+    const yesNames = yesSeats.map(s => nomSeatName(nom, s));
     const yesCount = yesNames.length;
     const needed = nom.highscore ?? '?';
 
@@ -553,19 +592,24 @@ function renderNominations() {
 
     const executed = typeof needed === 'number' && yesCount >= needed;
     const li = document.createElement('li');
-    li.className = `nom-entry${executed ? ' nom-executed' : ''}`;
+    li.className = `nom-entry${executed ? ' nom-executed' : ''}${isLive ? ' nom-live' : ''}`;
+    const liveLabel = !isLive ? '' : nom.counted ? 'Counted' : nom.voting ? 'Voting…' : 'Open';
+    const votersLabel = isLive && !nom.counted
+      ? (yesNames.length > 0 ? 'Hands up' : 'No hands up')
+      : (yesNames.length > 0 ? 'Voted' : 'No votes');
     li.innerHTML = `
       <div class="nom-header">
         <span class="nom-nominator role-name ${playerTeamByName(nominator)}" data-player="${esc(nominator)}">${esc(dn(nominator))}</span>
         <span class="nom-arrow">→</span>
         <span class="nom-nominee role-name ${playerTeamByName(nominee)}" data-player="${esc(nominee)}">${esc(dn(nominee))}</span>
         <span class="nom-meta">
+          ${liveLabel ? `<span class="nom-live-badge">${liveLabel}</span>` : ''}
           <span class="nom-count ${executed ? 'nom-execute' : ''}">${yesCount}/${needed}</span>
           <span class="nom-time">${fmt(nom.ts)}</span>
         </span>
       </div>
       <div class="nom-voters${yesNames.length === 0 ? ' nom-none' : ''}">
-        <span class="nom-voters-label">${yesNames.length > 0 ? 'Voted' : 'No votes'}</span>
+        <span class="nom-voters-label">${votersLabel}</span>
         ${yesNames.length > 0 ? yesNames.map(n => `${isGhostVoter(n) ? '👻 ' : ''}<span class="role-name ${playerTeamByName(n)}" data-player="${esc(n)}">${esc(dn(n))}</span>`).join('<span class="nom-voter-sep">,</span> ') : ''}
       </div>
     `;
@@ -1909,103 +1953,118 @@ function openRolePopover(name, anchorEl) {
 // but selecting a role pushes a {id:'role'} signal token instead of setting
 // a player's meta role. Kept separate from getRolePopover/_roleTarget since
 // that one is tightly coupled to playerMeta semantics.
-let _sigRolePop = null;
+// Searchable picker anchored under a "+ role" / "+ player" link: type to
+// filter, arrows to move, Enter to pick, Escape or an outside click to close.
+// getItems(filter) returns [{ key, html, cls? }]; onSelect(key) inserts it.
+function makeSignalPicker({ id, anchorId, placeholder, getItems, onSelect }) {
+  let pop = null;
+  let anchor = null;
 
-function getSignalRolePopover() {
-  if (_sigRolePop) return _sigRolePop;
-  _sigRolePop = document.createElement('div');
-  _sigRolePop.id = 'signal-role-popover';
-  _sigRolePop.className = 'mrp-popover';
-  _sigRolePop.innerHTML = `
-    <input class="mrp-search" type="text" placeholder="Search…" />
-    <div class="mrp-list"></div>
-  `;
-  document.body.appendChild(_sigRolePop);
-
-  const search = _sigRolePop.querySelector('.mrp-search');
-  const list = _sigRolePop.querySelector('.mrp-list');
-
-  const closePopover = () => { _sigRolePop.style.display = 'none'; };
-
-  const selectRole = (roleId) => {
-    const role = (currentState?.roles ?? []).find(r => r.id === roleId);
-    if (!role) return;
-    stMessage.push({ id: 'role', data: role.id });
-    renderSignalPreview();
-    updateSignalSendBtn();
-    closePopover();
+  const close = () => {
+    if (!pop) return;
+    pop.style.display = 'none';
+    anchor?.setAttribute('aria-expanded', 'false');
   };
 
-  const renderList = (filter) => {
-    const roles = (currentState?.roles ?? []).filter(r =>
-      !filter || r.name.toLowerCase().includes(filter.toLowerCase()));
-    list.innerHTML = roles.map(r => {
-      const icon = _iconUrl(r) ? `<img class="tp-role-icon" src="${esc(_iconUrl(r))}" />` : '';
-      return `<div class="mrp-item role-name ${r.team ?? ''}" data-id="${esc(r.id)}" tabindex="-1">${icon}${esc(r.name)}</div>`;
-    }).join('');
-    list.querySelectorAll('.mrp-item').forEach(item => {
-      item.addEventListener('mousedown', (e) => { e.preventDefault(); selectRole(item.dataset.id); });
+  const build = () => {
+    pop = document.createElement('div');
+    pop.id = id;
+    pop.className = 'mrp-popover';
+    pop.innerHTML = `<input class="mrp-search" type="text" placeholder="${esc(placeholder)}" /><div class="mrp-list" role="listbox"></div>`;
+    document.body.appendChild(pop);
+    const search = pop.querySelector('.mrp-search');
+    const list = pop.querySelector('.mrp-list');
+
+    const pick = (key) => { onSelect(key); renderSignalPreview(); updateSignalSendBtn(); close(); };
+
+    pop._render = (filter) => {
+      const items = getItems(filter.trim().toLowerCase());
+      list.innerHTML = items.length
+        ? items.map(it => `<div class="mrp-item ${it.cls ?? ''}" data-key="${esc(String(it.key))}" role="option" tabindex="-1">${it.html}</div>`).join('')
+        : '<div class="mrp-empty">No matches</div>';
+      list.querySelectorAll('.mrp-item').forEach(item => {
+        item.addEventListener('mousedown', (e) => { e.preventDefault(); pick(item.dataset.key); });
+      });
+    };
+
+    search.addEventListener('input', () => pop._render(search.value));
+    search.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); list.querySelector('.mrp-item')?.focus(); }
+      else if (e.key === 'Enter') { e.preventDefault(); const first = list.querySelector('.mrp-item'); if (first) pick(first.dataset.key); }
+      else if (e.key === 'Escape') close();
+    });
+    list.addEventListener('keydown', (e) => {
+      const items = [...list.querySelectorAll('.mrp-item')];
+      const idx = items.indexOf(document.activeElement);
+      if (e.key === 'ArrowDown') { e.preventDefault(); items[idx + 1]?.focus(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); if (idx > 0) items[idx - 1].focus(); else search.focus(); }
+      else if (e.key === 'Enter') { e.preventDefault(); if (idx >= 0) pick(items[idx].dataset.key); }
+      else if (e.key === 'Escape') close();
+    });
+    document.addEventListener('mousedown', (e) => {
+      if (pop.style.display !== 'none' && !pop.contains(e.target) && !e.target.closest(`#${anchorId}`)) close();
     });
   };
 
-  _sigRolePop._renderList = renderList;
-
-  search.addEventListener('input', () => renderList(search.value));
-
-  search.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      list.querySelector('.mrp-item')?.focus();
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      const first = list.querySelector('.mrp-item');
-      if (first) selectRole(first.dataset.id);
-    } else if (e.key === 'Escape') {
-      closePopover();
-    }
-  });
-
-  list.addEventListener('keydown', (e) => {
-    const items = [...list.querySelectorAll('.mrp-item')];
-    const idx = items.indexOf(document.activeElement);
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      items[idx + 1]?.focus();
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      if (idx > 0) items[idx - 1].focus(); else search.focus();
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      if (idx >= 0) selectRole(items[idx].dataset.id);
-    } else if (e.key === 'Escape') {
-      closePopover();
-    }
-  });
-
-  document.addEventListener('mousedown', (e) => {
-    if (_sigRolePop.style.display !== 'none' && !_sigRolePop.contains(e.target) && !e.target.closest('#signal-role-btn')) {
-      closePopover();
-    }
-  });
-  return _sigRolePop;
+  return (anchorEl) => {
+    if (!pop) build();
+    if (pop.style.display === 'flex' && anchor === anchorEl) { close(); return; }
+    anchor = anchorEl;
+    anchor.setAttribute('aria-expanded', 'true');
+    const search = pop.querySelector('.mrp-search');
+    search.value = '';
+    pop._render('');
+    pop.style.display = 'flex';
+    const rect = anchorEl.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    pop.style.top = spaceBelow > 300
+      ? `${rect.bottom + window.scrollY + 6}px`
+      : `${rect.top + window.scrollY - pop.offsetHeight - 6}px`;
+    pop.style.left = `${Math.max(8, Math.min(rect.left + window.scrollX, window.innerWidth - pop.offsetWidth - 8))}px`;
+    search.focus();
+  };
 }
 
-function openSignalRolePopover(anchorEl) {
-  const pop = getSignalRolePopover();
-  const search = pop.querySelector('.mrp-search');
-  search.value = '';
-  pop._renderList('');
-  pop.style.display = 'flex';
+const openSignalRolePopover = makeSignalPicker({
+  id: 'signal-role-popover',
+  anchorId: 'signal-role-btn',
+  placeholder: 'Search roles…',
+  getItems: (f) => (currentState?.roles ?? [])
+    .filter(r => !f || r.name.toLowerCase().includes(f))
+    .map(r => {
+      const icon = _iconUrl(r) ? `<img class="tp-role-icon" src="${esc(_iconUrl(r))}" alt="" />` : '<span class="mrp-icon-blank"></span>';
+      return { key: r.id, cls: `role-name ${r.team ?? ''}`, html: `${icon}<span class="mrp-name">${esc(r.name)}</span>` };
+    }),
+  onSelect: (roleId) => {
+    if ((currentState?.roles ?? []).some(r => r.id === roleId)) stMessage.push({ id: 'role', data: roleId });
+  },
+});
 
-  const rect = anchorEl.getBoundingClientRect();
-  const spaceBelow = window.innerHeight - rect.bottom;
-  pop.style.top = spaceBelow > 200
-    ? `${rect.bottom + window.scrollY + 2}px`
-    : `${rect.top + window.scrollY - pop.offsetHeight - 2}px`;
-  pop.style.left = `${Math.max(8, Math.min(rect.left + window.scrollX, window.innerWidth - pop.offsetWidth - 8))}px`;
-
-  search.focus();
-}
+// Players in seat order, with their seat number and (for the storyteller) role,
+// so "Seat 4" and a real name are both findable.
+const openSignalPlayerPopover = makeSignalPicker({
+  id: 'signal-player-popover',
+  anchorId: 'signal-player-btn',
+  placeholder: 'Search players…',
+  getItems: (f) => (currentState?.players ?? [])
+    .slice()
+    .sort((a, b) => a.seat - b.seat)
+    .map(p => ({ p, name: displayName(p, p.seat), role: playerRoleInfo(p) }))
+    .filter(({ p, name, role }) => !f
+      || name.toLowerCase().includes(f)
+      || String(p.seat + 1) === f
+      || (role?.name ?? '').toLowerCase().includes(f))
+    .map(({ p, name, role }) => {
+      const icon = role?.iconUrl ? `<img class="tp-role-icon" src="${esc(role.iconUrl)}" alt="" />` : '<span class="mrp-icon-blank"></span>';
+      return {
+        key: p.seat,
+        cls: p.isDead ? 'mrp-dead' : '',
+        html: `<span class="mrp-seat">${p.seat + 1}</span>${icon}<span class="mrp-name">${esc(dn(name))}</span>`
+          + (role ? `<span class="mrp-sub role-name ${esc(role.team ?? '')}">${esc(role.name)}</span>` : ''),
+      };
+    }),
+  onSelect: (seat) => { stMessage.push({ id: 'player', data: Number(seat) }); },
+});
 
 // ── Player grimoire role popover — same searchable icon list, but selecting a
 // role commits it to the live game (players/updatePlayer) via SET_PLAYER_PROPERTY,
@@ -2439,11 +2498,13 @@ function signalTokenCls(token) {
 function renderSignalPreview() {
   const el = document.getElementById('signal-preview');
   if (!el) return;
+  const clearBtn = document.getElementById('signal-clear-btn');
+  if (clearBtn) clearBtn.hidden = !stMessage.length;
   if (!stMessage.length) {
-    el.innerHTML = '<span class="sig-empty">No tokens selected</span>';
+    el.innerHTML = '<span class="sig-empty">Pick phrases below to build the message</span>';
   } else {
     el.innerHTML = stMessage.map((t, i) =>
-      `<span class="${signalTokenCls(t)}">${esc(signalTokenLabel(t))}<button class="sig-chip-remove" data-idx="${i}">×</button></span>`
+      `<span class="${signalTokenCls(t)}">${esc(signalTokenLabel(t))}<button class="sig-chip-remove" data-idx="${i}" aria-label="Remove">×</button></span>`
     ).join('');
     el.querySelectorAll('.sig-chip-remove').forEach(btn => {
       btn.addEventListener('click', (e) => {
@@ -2613,7 +2674,6 @@ document.getElementById('signal-history-overlay').addEventListener('click', clos
 
 function renderSignalPlayers() {
   const list = document.getElementById('signal-player-list');
-  const playerSelect = document.getElementById('signal-player-select');
   if (!list || !currentState) return;
 
   const players = (currentState.players ?? []).filter(p => p.id);
@@ -2621,7 +2681,7 @@ function renderSignalPlayers() {
   list.innerHTML = players.map(p => {
     const name = esc(dn(displayName(p)));
     const checked = stRecipientIds.has(String(p.id)) ? 'checked' : '';
-    return `<label class="sig-player-row"><input type="checkbox" data-id="${esc(String(p.id))}" ${checked} />${name}</label>`;
+    return `<label class="sig-player-row sig-chip-toggle"><input type="checkbox" data-id="${esc(String(p.id))}" ${checked} />${name}</label>`;
   }).join('');
 
   list.querySelectorAll('input[type=checkbox]').forEach(cb => {
@@ -2634,14 +2694,7 @@ function renderSignalPlayers() {
     });
   });
 
-  if (playerSelect) {
-    const prev = playerSelect.value;
-    playerSelect.innerHTML = '<option value="">+ player</option>' +
-      (currentState.players ?? []).map(p =>
-        `<option value="${p.seat}">${esc(displayName(p))}</option>`
-      ).join('');
-    playerSelect.value = prev;
-  }
+
 
   updateSignalSendBtn();
 }
@@ -2663,7 +2716,10 @@ function renderSignalPresets() {
   wrap.innerHTML = customSignalPresets.map((preset, i) => {
     const label = preset.message.map(signalTokenLabel).join(' · ') || '(empty)';
     return `<button type="button" class="timer-preset-btn" data-i="${i}" title="${esc(label)}">${esc(label)}<span class="timer-preset-remove" data-i="${i}">✕</span></button>`;
-  }).join('') || '<span class="sig-empty">No saved presets yet</span>';
+  }).join('');
+  // Nothing saved yet: hide the whole group rather than show an empty state.
+  const group = document.getElementById('signal-presets-group');
+  if (group) group.hidden = customSignalPresets.length === 0;
 
   wrap.querySelectorAll('.timer-preset-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
@@ -2687,8 +2743,76 @@ function renderSignalPresets() {
 function sendSetTimer({ title, minutes, seconds, isPausedDuringVotes }) {
   const duration = (minutes * 60 + seconds) * 1000;
   if (duration <= 0) return;
+  timerTrack = { title: title || '', total: duration, startedAt: Date.now() };
   sendBg({ type: 'SET_TIMER', title, duration, isPausedDuringVotes, paused: 0 });
 }
+
+// The store only knows when the timer ends, not how long it was. Remember the
+// length when we start one; for a timer started elsewhere, the most remaining
+// time we've seen stands in for it. Drives the progress bar.
+let timerTrack = null; // { title, total, startedAt }
+
+// botc.app's timer: `paused` is 0 while running, or the timestamp the pause
+// began. The app only counts it as paused while that's before expiration.
+function isTimerPaused(timer) {
+  const paused = Number(timer?.paused) || 0;
+  return paused > 0 && paused < timer.expiration;
+}
+
+// Remaining ms of the app's timer, or null when none is running.
+function timerRemaining(timer) {
+  if (!timer?.expiration) return null;
+  const now = isTimerPaused(timer) ? Number(timer.paused) : Date.now();
+  return Math.max(0, timer.expiration - now);
+}
+
+function formatMs(ms) {
+  const total = Math.ceil(ms / 1000);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
+function updateTimerStatus() {
+  const el = document.getElementById('timer-status');
+  if (!el) return;
+  const timer = currentState?.timer;
+  const remaining = timerRemaining(timer);
+  const startLabel = document.querySelector('#timer-set-btn .timer-start-label');
+  if (remaining === null) {
+    el.hidden = true;
+    if (startLabel) startLabel.textContent = 'Start';
+    // Keep a just-started timer's length until the store reports it back.
+    if (timerTrack && Date.now() - timerTrack.startedAt > 3000) timerTrack = null;
+    return;
+  }
+  const isPaused = isTimerPaused(timer);
+  const isDone = remaining === 0;
+  const title = timer.title || '';
+  const fresh = timerTrack && Date.now() - timerTrack.startedAt < 3000;
+  if (!timerTrack || (!fresh && timerTrack.title !== title) || remaining > timerTrack.total) {
+    timerTrack = { title, total: remaining, startedAt: timerTrack?.startedAt ?? 0 };
+  }
+
+  el.hidden = false;
+  el.classList.toggle('timer-status-done', isDone);
+  el.classList.toggle('timer-status-paused', isPaused && !isDone);
+  el.querySelector('.timer-status-title').textContent = title || 'Timer';
+  el.querySelector('.timer-status-state').textContent = isDone ? 'Time’s up' : isPaused ? 'Paused' : 'Running';
+  el.querySelector('.timer-status-left').textContent = formatMs(remaining);
+  el.querySelector('.timer-status-bar span').style.transform =
+    `scaleX(${timerTrack.total > 0 ? Math.min(1, remaining / timerTrack.total) : 0})`;
+  el.querySelector('.timer-clear-label').textContent = isDone ? 'Clear' : 'Stop';
+  const pauseBtn = document.getElementById('timer-pause-btn');
+  pauseBtn.hidden = isDone;
+  if (pauseBtn.dataset.paused !== (isPaused ? '1' : '')) {
+    pauseBtn.dataset.paused = isPaused ? '1' : '';
+    pauseBtn.querySelector('.timer-pause-label').textContent = isPaused ? 'Resume' : 'Pause';
+    pauseBtn.querySelector('.timer-pause-icon').innerHTML = isPaused
+      ? '<path d="M7 4v16l13-8z"></path>'
+      : '<rect x="6" y="5" width="4" height="14" rx="1"></rect><rect x="14" y="5" width="4" height="14" rx="1"></rect>';
+  }
+  if (startLabel) startLabel.textContent = 'Start new';
+}
+setInterval(updateTimerStatus, 250);
 
 function renderTimerPresets() {
   const wrap = document.getElementById('timer-presets');
@@ -2751,12 +2875,8 @@ function initSignalPanel() {
     openSignalRolePopover(e.currentTarget);
   });
 
-  document.getElementById('signal-player-select')?.addEventListener('change', function() {
-    if (this.value === '') return;
-    stMessage.push({ id: 'player', data: Number(this.value) });
-    this.value = '';
-    renderSignalPreview();
-    updateSignalSendBtn();
+  document.getElementById('signal-player-btn')?.addEventListener('click', (e) => {
+    openSignalPlayerPopover(e.currentTarget);
   });
 
   const addCustomSignalToken = () => {
@@ -2818,6 +2938,13 @@ function initSignalPanel() {
     renderSignalPresets();
   });
 
+  // Read like a clock: 1:00, not 1:0.
+  const secondsInput = document.getElementById('timer-seconds');
+  secondsInput?.addEventListener('change', () => {
+    const v = Math.min(59, Math.max(0, parseInt(secondsInput.value, 10) || 0));
+    secondsInput.value = String(v).padStart(2, '0');
+  });
+
   document.getElementById('timer-set-btn')?.addEventListener('click', () => {
     sendSetTimer({
       title: document.getElementById('timer-title').value.trim(),
@@ -2825,6 +2952,10 @@ function initSignalPanel() {
       seconds: parseInt(document.getElementById('timer-seconds').value, 10) || 0,
       isPausedDuringVotes: document.getElementById('timer-pause-votes').checked,
     });
+  });
+
+  document.getElementById('timer-pause-btn')?.addEventListener('click', (e) => {
+    sendBg({ type: 'PAUSE_TIMER', pause: !e.currentTarget.dataset.paused });
   });
 
   document.getElementById('timer-clear-btn')?.addEventListener('click', () => {
@@ -3580,18 +3711,13 @@ const seatPos = (idx, n, r) => {
 };
 
 // One clock hand from the hub out towards a seat, with an arrowhead on the tip.
-function nomHand(idx, n, r, cls) {
-  const a = seatAngle(idx, n);
-  const at = (rad) => ({ x: 50 + rad * Math.cos(a), y: 50 + rad * Math.sin(a) });
-  const from = at(0), line = at(r), tip = at(r + 5);
-  // Perpendicular to the hand, for the arrowhead's base corners
-  const px = -Math.sin(a) * 3, py = Math.cos(a) * 3;
-  const base = at(r - 0.5);
-  const pts = `${tip.x.toFixed(2)},${tip.y.toFixed(2)} `
-    + `${(base.x + px).toFixed(2)},${(base.y + py).toFixed(2)} `
-    + `${(base.x - px).toFixed(2)},${(base.y - py).toFixed(2)}`;
-  return `<line class="nom-hand-line ${cls}" x1="${from.x}" y1="${from.y}" x2="${line.x.toFixed(2)}" y2="${line.y.toFixed(2)}" />`
-    + `<polygon class="nom-hand-head ${cls}" points="${pts}" />`;
+// A tapered clock hand pointing along +x from the hub at (50,50), with a short
+// counterweight tail. It's rotated into place with a CSS transform, so moving
+// between seats sweeps the hand around the dial instead of redrawing it.
+function nomHandPath(r) {
+  const tipBase = 50 + r - 4, tip = 50 + r + 3;
+  return `M45 49.35 L50 48.9 L${tipBase} 49.5 L${tipBase} 47.5 L${tip} 50`
+    + ` L${tipBase} 52.5 L${tipBase} 50.5 L50 51.1 L45 50.65 Z`;
 }
 
 // Redraws the overlay only — cheap enough to run on every hover, unlike a full
@@ -3640,12 +3766,52 @@ function nominationAlerts(nominatorSeat, nomineeSeat) {
     .map(rule => ({ id: rule.id, level: rule.level, role: rule.role, label: rule.label }));
 }
 
+// ── Next-nomination setup in the middle of the wheel ──
+// While Nominate is on and nothing is happening yet (no open nomination, no
+// nominator picked, no alerts), the empty centre holds the nomination type and
+// the clock speed. The real controls are moved in and back out, so their own
+// handlers and syncing keep working unchanged.
+const _nomSetupHomes = {};
+function moveNomSetupControl(key, el, into) {
+  if (!el) return;
+  if (!_nomSetupHomes[key]) _nomSetupHomes[key] = { parent: el.parentNode, next: el.nextSibling };
+  if (into) {
+    const slot = document.querySelector(`#nom-setup [data-slot="${key}"]`);
+    if (slot && el.parentNode !== slot) slot.appendChild(el);
+  } else {
+    const home = _nomSetupHomes[key];
+    if (el.parentNode !== home.parent) home.parent.insertBefore(el, home.next);
+  }
+}
+
+function updateNomSetup() {
+  const panel = document.getElementById('nom-setup');
+  if (!panel) return;
+  const alertsShown = document.getElementById('nom-alerts')?.style.display !== 'none';
+  const active = amIStoryteller() && !!voteClock
+    && playerActionMode === 'nominate' && !pendingNomination && !awaitingNomination()
+    && playerActionPickedSeat === null && !alertsShown;
+  panel.hidden = !active;
+  document.getElementById('player-table')?.classList.toggle('nom-setup-open', active);
+  moveNomSetupControl('type', document.getElementById('vt-type'), active);
+  moveNomSetupControl('speed', document.querySelector('.vd-speed'), active);
+  // Type and speed only matter around nominating: out of the bar when
+  // Nominate is off.
+  document.getElementById('vote-target')?.classList.toggle('vt-hide-setup', playerActionMode !== 'nominate');
+  if (!active) return;
+  // The clock panel isn't up to sync the slider, so do it here.
+  const slider = document.getElementById('vd-speed');
+  if (slider && document.activeElement !== slider) slider.value = voteClock?.drive?.speed ?? voteClock?.speed ?? 1000;
+  const val = document.getElementById('vd-speed-val');
+  if (val && slider) val.textContent = `${(Number(slider.value) / 1000).toFixed(2)}s`;
+}
+
 function renderNomAlerts() {
   const box = document.getElementById('nom-alerts');
   if (!box) return;
   // The hovered seat stands in for the seat about to be picked, so the reminder
   // shows before the click rather than after the nomination is already in.
-  const alerts = playerActionMode === 'nominate'
+  const alerts = isPickingNomination()
     ? (playerActionPickedSeat === null
         ? nominationAlerts(hoveredSeat, null)
         : nominationAlerts(playerActionPickedSeat, hoveredSeat))
@@ -3661,7 +3827,407 @@ function renderNomAlerts() {
       + `<span class="nom-alert-label">${esc(a.label)}</span></div>`;
   }).join('');
   box.style.display = alerts.length ? '' : 'none';
+  // The alerts take over the middle of the circle while they're up.
+  const phase = document.getElementById('circle-phase');
+  if (phase) phase.hidden = alerts.length > 0 || !!pendingNomination;
+  const nomCentre = document.getElementById('circle-nom');
+  if (nomCentre) nomCentre.hidden = alerts.length > 0;
+  updateNomSetup();
 }
+
+// Phase readout parked in the middle of the circle: what part of the game it
+// is, and how many votes an execution needs right now.
+// The nomination that's open right now, reduced to what the wheel shows:
+// whose hands are up (live while voting, the final snapshot once counted)
+// and how that compares with what an execution needs.
+function liveNominationState() {
+  const nom = pendingNomination;
+  if (!nom) return null;
+  const handSeats = nom.counted
+    ? (nom.yesSeats ?? [])
+    : Object.entries(nom.handState ?? {}).filter(([, v]) => v === 1).map(([s]) => Number(s));
+  const needed = typeof nom.highscore === 'number' ? nom.highscore : null;
+  const yes = handSeats.length;
+  return {
+    nominatorSeat: nom.nominatorSeat,
+    nomineeSeat: nom.nomineeSeat,
+    nominator: nomSeatName(nom, nom.nominatorSeat),
+    nominee: nomSeatName(nom, nom.nomineeSeat),
+    hands: new Set(handSeats),
+    yes,
+    needed,
+    enough: needed !== null && yes >= needed,
+    voting: !!nom.voting,
+    counted: !!nom.counted,
+  };
+}
+
+// Centre of the wheel while a nomination is open: who's on the block, the
+// running count against the threshold, one pip per vote needed.
+let _lastNomYes = null;
+function circleNominationHtml(live) {
+  if (!live) { _lastNomYes = null; return ''; }
+  const state = live.counted ? 'counted' : live.voting ? 'voting' : 'open';
+  const stateLabel = live.counted ? 'Vote counted' : live.voting ? 'Voting' : 'Nominated';
+  const needed = live.needed;
+  let verdict = '';
+  if (needed !== null) {
+    if (live.counted) verdict = live.enough ? 'On the block' : 'Not enough votes';
+    else if (live.enough) verdict = 'Enough to execute';
+    else verdict = `${needed - live.yes} more to execute`;
+  }
+  const pipCount = needed !== null ? Math.max(needed, live.yes) : 0;
+  const pips = pipCount && pipCount <= 20
+    ? `<span class="cn-pips">${Array.from({ length: pipCount }, (_, i) =>
+        `<span class="cn-pip${i < live.yes ? ' on' : ''}${i >= (needed ?? 0) ? ' extra' : ''}"></span>`).join('')}</span>`
+    : '';
+  // Pop the count only when it actually changed, not on every unrelated redraw.
+  const bump = _lastNomYes !== null && _lastNomYes !== live.yes;
+  _lastNomYes = live.yes;
+  return `<div id="circle-nom" class="is-${state}${live.enough ? ' is-enough' : ''}${bump ? ' cn-bump' : ''}">`
+    + `<span class="cn-state">${stateLabel}</span>`
+    + `<span class="cn-pair"><span class="cn-nominator">${esc(dn(live.nominator))}</span>`
+    + `<span class="cn-arrow">→</span><span class="cn-nominee">${esc(dn(live.nominee))}</span></span>`
+    + `<span class="cn-count"><span class="cn-yes">${live.yes}</span><span class="cn-of">/ ${needed ?? '?'}</span></span>`
+    + pips
+    + (verdict ? `<span class="cn-verdict">${verdict}</span>` : '')
+    + `</div>`;
+}
+
+function circlePhaseHtml(players) {
+  const phase = currentState?.phase;
+  if (!phase) return '';
+  const isNight = phase % 2 === 1;
+  const alive = players.filter(p => !p.isDead).length;
+  const needed = Math.ceil(alive / 2);
+  return `<div id="circle-phase" class="${isNight ? 'is-night' : 'is-day'}"${pendingNomination ? ' hidden' : ''}>`
+    + `<span class="cp-ordinal">The ${phaseOrdinal(phase)}</span>`
+    + `<span class="cp-phase">${isNight ? 'Night' : 'Day'}</span>`
+    + `<span class="cp-stats">${alive} alive · ${needed} ${needed === 1 ? 'vote' : 'votes'} to execute</span>`
+    + `</div>`;
+}
+
+// Last rotation of each hand in degrees, kept across hides and across the
+// innerHTML rebuild in renderPlayers, so a hand always sweeps from where it was.
+const nomHandDeg = { nominator: null, nominee: null, vote: null };
+
+// Rotate one hand to point at a seat index (null hides it). Takes the short
+// way round the dial; snaps without a sweep the first time it appears.
+function placeNomHand(svg, key, target, n) {
+  const g = svg.querySelector(`.nom-hand-${key}`);
+  if (!g) return;
+  const show = !!target && target.idx >= 0;
+  g.classList.toggle('is-hidden', !show);
+  if (!show) return;
+  g.classList.toggle('is-preview', !!target.preview);
+  let deg = seatAngle(target.idx, n) * 180 / Math.PI;
+  const prev = nomHandDeg[key];
+  const snapTo = (d) => {
+    g.style.transition = 'none';
+    g.style.transform = `rotate(${d}deg)`;
+    g.getBoundingClientRect();
+    g.style.transition = '';
+  };
+  if (prev === null) {
+    snapTo(deg);
+  } else {
+    // A full lap is allowed for the vote hand (it goes all the way round);
+    // the others take the short way.
+    if (target.forward) {
+      while (deg < prev - 0.01) deg += 360;
+      if (deg - prev > 359.99) deg -= 360;
+    } else {
+      deg = prev + ((((deg - prev) % 360) + 540) % 360) - 180;
+    }
+    if (g.style.transform === '') snapTo(prev);
+    g.style.transform = `rotate(${deg}deg)`;
+  }
+  nomHandDeg[key] = deg;
+}
+
+// ── Vote clock ──
+// botc.app's own clock position, pushed by the bridge on every tick (see
+// voteClockOf in page-bridge.js). Countdowns, speed changes, pauses and resets
+// all come through as changes to `locked`, so nothing here has to guess.
+let voteClock = null; // { nomination, locked, speed, isInProgress, paused }
+let lastVoteStep = 0;
+
+// How far round the clock is: 0 before it starts, 1..n as it reaches each seat
+// after the nominee (n = back on the nominee). botc.app draws its hand on
+// nominee + locked, so the step is `locked` itself.
+function voteClockStep(nom, n) {
+  const locked = voteClock?.locked;
+  if (typeof locked !== 'number') return nom?.counted ? n : 0;
+  return Math.max(0, Math.min(n, locked));
+}
+
+// How many seats after the nominee are locked in: the app locks everything
+// strictly behind its hand, and past the last seat the nominee too.
+function voteLockedArc(nom, n) {
+  const locked = voteClock?.locked;
+  if (typeof locked !== 'number') return voteClockStep(nom, n);
+  return Math.max(0, locked);
+}
+
+function isVoteRunning(nom) {
+  return voteClock ? voteClock.isInProgress && !!voteClock.nomination : !!nom?.voting;
+}
+
+// Moves the vote hand and marks which seats the clock has already counted.
+// Cheap DOM updates only, so it can run on a short interval while voting.
+function updateVoteClock() {
+  const svg = document.getElementById('nom-hands');
+  const table = document.getElementById('player-table');
+  if (!svg || !table) return;
+  const players = currentState?.players ?? [];
+  const n = players.length;
+  const nom = pendingNomination;
+  const running = !!nom && isVoteRunning(nom) && !isPickingNomination();
+  table.classList.toggle('vote-running', running);
+  if (!running) {
+    table.classList.remove('vote-countdown', 'vote-paused');
+    placeNomHand(svg, 'vote', null, n);
+    nomHandDeg.vote = null;
+    lastVoteStep = 0;
+    table.querySelectorAll('.player-seat.vote-passed').forEach(el => el.classList.remove('vote-passed'));
+    updateVoteDrive();
+    return;
+  }
+  const nomineeIdx = players.findIndex(pl => pl.seat === nom.nomineeSeat);
+  if (nomineeIdx < 0) return;
+  const step = voteClockStep(nom, n);
+  // A reset sends the hand back to the start: snap there rather than sweeping
+  // forward a whole lap.
+  if (step < lastVoteStep) nomHandDeg.vote = null;
+  lastVoteStep = step;
+  const countdown = voteClock?.locked === -1;
+  const paused = !!voteClock?.paused;
+  table.classList.toggle('vote-countdown', countdown);
+  table.classList.toggle('vote-paused', paused);
+  // The centre card's state line follows the clock between full re-renders.
+  const stateEl = table.querySelector('#circle-nom .cn-state');
+  if (stateEl) stateEl.textContent = countdown ? 'Get ready' : paused ? 'Vote paused'
+    : voteClock?.drive?.active ? 'Voting · you drive' : 'Voting';
+  placeNomHand(svg, 'vote', { idx: (nomineeIdx + step) % n, forward: true }, n);
+  // Seats strictly behind the hand have been counted.
+  const arc = voteLockedArc(nom, n);
+  players.forEach((pl, idx) => {
+    const offset = (idx - nomineeIdx + n) % n || n; // nominee counts last
+    table.querySelector(`.player-seat[data-seat="${pl.seat}"]`)
+      ?.classList.toggle('vote-passed', offset < arc);
+  });
+  updateVoteDrive();
+}
+
+// ── Vote clock controls (storyteller) ──
+// Drives botc.app's clock from here — see the driver in page-bridge.js. Only
+// the hand's position is shared with players, so everything here shows up on
+// their screens as the hand moving.
+const VOTE_PATTERN_LABELS = { steady: 'Steady', accelerate: 'Speeding up', decelerate: 'Slowing down', stutter: 'Stutter', wobble: 'Wobble' };
+
+// Whether the extra clock tools panel is open; remembered between sessions.
+const VOTE_TOOLS_KEY = 'botc-companion-vote-tools-open';
+let voteToolsOpen = (() => { try { return localStorage.getItem(VOTE_TOOLS_KEY) === '1'; } catch { return false; } })();
+
+function sendVoteDrive(action, extra = {}) {
+  sendBg({ type: 'VOTE_DRIVE', action, ...extra });
+}
+
+function updateVoteDrive() {
+  updateVoteTarget();
+  updateNomSetup();
+  const el = document.getElementById('vote-drive');
+  if (!el) return;
+  const vc = voteClock;
+  const show = !!vc?.nomination && amIStoryteller();
+  // Everyday controls sit in the middle of the wheel; the extra clock tools
+  // (stepping, pointing, speed, patterns) only when asked for.
+  const core = document.getElementById('vd-core');
+  if (core) core.hidden = !show;
+  el.hidden = !show || !voteToolsOpen;
+  const moreBtn = document.getElementById('vd-more-btn');
+  if (moreBtn) {
+    moreBtn.setAttribute('aria-expanded', String(voteToolsOpen));
+    moreBtn.classList.toggle('is-open', voteToolsOpen);
+  }
+  if (!show) {
+    // Seat-picking modes that only make sense with a nomination open.
+    if (playerActionMode === 'point' || playerActionMode === 'attorney') setPlayerActionMode(playerActionMode); // toggles off
+    return;
+  }
+  const n = currentState?.players?.length ?? 0;
+  const inProgress = !!vc.isInProgress;
+  const driving = !!vc.drive?.active;
+  const counted = !inProgress && vc.locked > n;
+  const pattern = vc.drive?.pattern ?? 'steady';
+
+  // Pre-vote stages botc.app runs before the clock can start.
+  const type = vc.nominationType ?? 'regular';
+  const phaseStage = !inProgress && type === 'phases' && vc.locked < -1; // -3 accusation, -2 defense
+  const needsAttorney = !inProgress && type === 'bigwig' && (vc.selectedPlayer ?? -1) < 0;
+  const hasAttorney = type === 'bigwig' && (vc.selectedPlayer ?? -1) >= 0;
+  const [nominatorIdx, nomineeIdx] = vc.nomination;
+  const stage = document.getElementById('vd-stage');
+  const nextPhase = document.getElementById('vd-next-phase');
+  stage.hidden = !(phaseStage || (type === 'bigwig' && !inProgress));
+  nextPhase.hidden = !phaseStage;
+  document.getElementById('vd-attorney').hidden = !needsAttorney;
+  document.getElementById('vd-attorney').classList.toggle('toggle-btn-active', playerActionMode === 'attorney');
+  document.getElementById('vd-attorney-clear').hidden = !hasAttorney;
+  document.getElementById('vd-stage-text').textContent =
+    phaseStage ? (vc.locked === -3 ? `Accusation: ${dn(seatName(nominatorIdx))}` : `Defense: ${dn(seatName(nomineeIdx))}`)
+    : needsAttorney ? 'Choose a defense attorney'
+    : hasAttorney ? `Defense attorney: ${dn(seatName(vc.selectedPlayer))}`
+    : '';
+  nextPhase.textContent = vc.locked === -3 ? 'Go to Defense' : 'Open Chat';
+  if (playerActionMode === 'attorney' && !needsAttorney) setPlayerActionMode('attorney'); // toggles off
+
+  // Secret vote: only offered when a role allowing it is in play.
+  const secret = document.getElementById('vd-secret');
+  secret.hidden = !vc.secretVoteRole || !!vc.nomineeIsTraveller;
+  document.getElementById('vd-secret-label').textContent = `${vc.secretVoteRole ?? ''}: Secret vote`;
+  const secretInput = document.getElementById('vd-secret-input');
+  secretInput.checked = !!vc.isHidden;
+  secretInput.disabled = inProgress || vc.locked > 0;
+
+  document.getElementById('vd-status').textContent =
+    counted ? 'Counted'
+    : !inProgress ? 'Not started'
+    : vc.locked === -1 ? 'Countdown'
+    : vc.paused ? 'Paused'
+    : driving ? `You're driving · ${VOTE_PATTERN_LABELS[pattern] ?? pattern}`
+    : 'botc.app is driving';
+  el.classList.toggle('is-driving', inProgress && driving && !vc.paused);
+
+  // Same split as botc.app's overlay: Countdown/Start(Restart) before a count,
+  // Pause/Reset during one; plus our own driving controls while it runs.
+  // The app swaps Countdown/Start out while a pre-vote stage is pending.
+  const preVoteBlocked = phaseStage || needsAttorney;
+  document.getElementById('vd-countdown').hidden = inProgress || preVoteBlocked;
+  const start = document.getElementById('vd-start');
+  start.hidden = inProgress || preVoteBlocked;
+  start.querySelector('.vd-start-label').textContent = vc.locked > 0 ? 'Restart' : 'Start';
+
+  const pause = document.getElementById('vd-pause');
+  pause.hidden = !inProgress;
+  pause.disabled = vc.locked < 1; // nothing to pause during the countdown
+  pause.dataset.paused = vc.paused ? '1' : '';
+  pause.querySelector('.vd-pause-label').textContent = vc.paused ? 'Resume' : 'Pause';
+
+  for (const id of ['vd-reset', 'vd-back', 'vd-fwd', 'vd-point', 'vd-finish']) {
+    document.getElementById(id).hidden = !inProgress;
+  }
+
+  const mark = document.getElementById('vd-mark');
+  // Mark is for after the count; during it the middle shows Pause/Reset/Close.
+  mark.hidden = !!vc.nomineeIsTraveller || inProgress;
+  mark.disabled = inProgress || !!vc.isHidden;
+  const unmark = counted && vc.tally > 0 && vc.tally === vc.highscore && vc.markedSeat >= 0;
+  mark.querySelector('.vd-mark-label').textContent = unmark ? 'Remove mark' : 'Mark';
+  mark.title = vc.isHidden ? 'Secret vote: close it instead, then mark by hand'
+    : inProgress ? 'Available once the count is over'
+    : unmark ? 'Ties the marked player: removes the mark and closes the nomination'
+    : 'Mark the nominee for execution and close the nomination';
+  document.getElementById('vd-point').classList.toggle('toggle-btn-active', playerActionMode === 'point');
+  document.getElementById('player-table')?.classList.toggle('picking-point', playerActionMode === 'point' || playerActionMode === 'attorney');
+  if (!inProgress && playerActionMode === 'point') setPlayerActionMode('point');
+  document.getElementById('vd-release').hidden = !driving;
+
+  document.querySelectorAll('#vd-patterns [data-pattern]').forEach(b =>
+    b.classList.toggle('toggle-btn-active', b.dataset.pattern === pattern));
+}
+
+function wireVoteDrive() {
+  const on = (id, fn) => document.getElementById(id)?.addEventListener('click', fn);
+  on('vd-countdown', () => sendVoteDrive('countdown'));
+  on('vd-start', () => sendVoteDrive('start'));
+  on('vd-reset', () => sendVoteDrive('reset'));
+  on('vd-mark', () => sendVoteDrive('mark'));
+  on('vd-close', () => sendVoteDrive('close'));
+  on('vd-next-phase', () => sendVoteDrive('next-phase'));
+  on('vd-attorney', () => setPlayerActionMode('attorney'));
+  on('vd-attorney-clear', () => sendVoteDrive('attorney', { seat: -1 }));
+  document.getElementById('vd-secret-input')?.addEventListener('change', () => sendVoteDrive('secret'));
+  on('vd-pause', (e) => sendVoteDrive(e.currentTarget.dataset.paused ? 'resume' : 'pause'));
+  on('vd-back', () => sendVoteDrive('step', { delta: -1 }));
+  on('vd-fwd', () => sendVoteDrive('step', { delta: 1 }));
+  on('vd-point', () => setPlayerActionMode('point'));
+  on('vd-finish', () => sendVoteDrive('finish'));
+  on('vd-release', () => sendVoteDrive('release'));
+  on('vd-more-btn', () => {
+    voteToolsOpen = !voteToolsOpen;
+    try { localStorage.setItem(VOTE_TOOLS_KEY, voteToolsOpen ? '1' : '0'); } catch { /* ignore */ }
+    updateVoteDrive();
+  });
+  const slider = document.getElementById('vd-speed');
+  slider?.addEventListener('input', () => {
+    document.getElementById('vd-speed-val').textContent = `${(Number(slider.value) / 1000).toFixed(2)}s`;
+  });
+  // Committed on release, not every pixel of the drag: each change is a frame
+  // to every player.
+  slider?.addEventListener('change', () => sendVoteDrive('speed', { ms: Number(slider.value) }));
+  document.getElementById('vd-patterns')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-pattern]');
+    if (btn) sendVoteDrive('pattern', { pattern: btn.dataset.pattern });
+  });
+}
+wireVoteDrive();
+
+// ── Votes to execute (storyteller) ──
+// botc.app keeps `highscore`, the most votes any nomination got today; the
+// number players see is max(majority, highscore + 1). We edit it as "votes to
+// execute" and store K − 1, or 0 when K is just the majority (so it keeps
+// following the majority if someone dies).
+function majorityNow() {
+  const alive = (currentState?.players ?? []).filter(p => !p.isDead).length;
+  return Math.ceil(alive / 2);
+}
+
+function votesToExecute() {
+  return Math.max(majorityNow(), (voteClock?.highscore ?? 0) + 1);
+}
+
+function setVotesToExecute(k) {
+  const m = majorityNow();
+  sendBg({ type: 'SET_HIGHSCORE', value: k > m ? k - 1 : 0 });
+}
+
+function updateVoteTarget() {
+  const el = document.getElementById('vote-target');
+  if (!el) return;
+  const show = !!voteClock && amIStoryteller() && (currentState?.players?.length ?? 0) > 0;
+  el.hidden = !show;
+  if (!show) return;
+  // Vote speed: settable any time, like botc.app's settings slider.
+  const slider = document.getElementById('vd-speed');
+  const speed = voteClock.drive?.speed ?? voteClock.speed ?? 1000;
+  if (document.activeElement !== slider) slider.value = speed;
+  document.getElementById('vd-speed-val').textContent = `${(Number(slider.value) / 1000).toFixed(2)}s`;
+
+  // Nomination type: locked during a count and while the Big Wig forces its own.
+  const typeSel = document.getElementById('vt-type');
+  const type = voteClock.nominationType ?? 'regular';
+  if (document.activeElement !== typeSel) typeSel.value = type;
+  typeSel.querySelector('option[value="bigwig"]').hidden = type !== 'bigwig';
+  typeSel.disabled = !!voteClock.bigwigInPlay || !!voteClock.isInProgress || voteClock.locked > 0;
+  typeSel.title = voteClock.bigwigInPlay ? 'The Big Wig is in play: every nomination uses its rules'
+    : typeSel.disabled ? 'Can’t change during a count' : 'Who may talk during a nomination';
+  const m = majorityNow();
+  const h = voteClock.highscore ?? 0;
+  const k = votesToExecute();
+  document.getElementById('vt-value').textContent = k;
+  document.getElementById('vt-note').textContent = h >= m ? `tie at ${h}` : 'majority';
+  document.getElementById('vt-minus').disabled = k <= m;
+  document.getElementById('vt-reset').hidden = h === 0;
+}
+
+function wireVoteTarget() {
+  document.getElementById('vt-minus')?.addEventListener('click', () => setVotesToExecute(votesToExecute() - 1));
+  document.getElementById('vt-plus')?.addEventListener('click', () => setVotesToExecute(votesToExecute() + 1));
+  document.getElementById('vt-reset')?.addEventListener('click', () => sendBg({ type: 'SET_HIGHSCORE', value: 0 }));
+  document.getElementById('vt-type')?.addEventListener('change', (e) => sendVoteDrive('type', { value: e.target.value }));
+}
+wireVoteTarget();
 
 function renderNomHands() {
   const svg = document.getElementById('nom-hands');
@@ -3670,23 +4236,42 @@ function renderNomHands() {
   const n = players.length;
   const idxOf = (seat) => players.findIndex(pl => pl.seat === seat);
 
-  const hands = [];
-  if (playerActionMode === 'nominate') {
-    if (playerActionPickedSeat !== null) {
-      hands.push({ idx: idxOf(playerActionPickedSeat), r: HAND_R, cls: 'nom-hand-nominator' });
-    }
-    // The hovered seat previews whichever hand the next click would place. Not
-    // skipped when it equals the picked seat: that's a self-nomination, and the
-    // shorter nominee hand stays visible inside the nominator's.
-    if (hoveredSeat !== null) {
-      hands.push(playerActionPickedSeat === null
-        ? { idx: idxOf(hoveredSeat), r: HAND_R, cls: 'nom-hand-nominator nom-hand-preview' }
-        : { idx: idxOf(hoveredSeat), r: HAND_R_NOMINEE, cls: 'nom-hand-nominee nom-hand-preview' });
-    }
+  if (!svg.querySelector('.nom-hand')) {
+    svg.innerHTML = `<g class="nom-hand nom-hand-nominee is-hidden"><path d="${nomHandPath(HAND_R_NOMINEE)}" /></g>`
+      + `<g class="nom-hand nom-hand-nominator is-hidden"><path d="${nomHandPath(HAND_R)}" /></g>`
+      + `<g class="nom-hand nom-hand-vote is-hidden"><path d="${nomHandPath(HAND_R + 3)}" /></g>`
+      + '<circle class="nom-hand-hub is-hidden" cx="50" cy="50" r="2.4" />';
   }
 
-  svg.innerHTML = hands.filter(h => h.idx >= 0).map(h => nomHand(h.idx, n, h.r, h.cls)).join('')
-    + (hands.length ? '<circle class="nom-hand-hub" cx="50" cy="50" r="2.4" />' : '');
+  // Which seat each hand points at, and whether it's placed or only a preview.
+  let nominator = null, nominee = null;
+  if (isPickingNomination()) {
+    if (playerActionPickedSeat !== null) {
+      nominator = { idx: idxOf(playerActionPickedSeat), preview: false };
+      // Not skipped when it equals the picked seat: that's a self-nomination, and
+      // the shorter nominee hand stays visible inside the nominator's.
+      if (hoveredSeat !== null) nominee = { idx: idxOf(hoveredSeat), preview: true };
+    } else if (hoveredSeat !== null) {
+      nominator = { idx: idxOf(hoveredSeat), preview: true };
+    }
+  } else if (pendingNomination || awaitingNomination()) {
+    // A nomination is open (or just sent): the hands hold on the two players.
+    const nom = pendingNomination ?? nominationSent;
+    nominator = { idx: idxOf(nom.nominatorSeat), preview: false };
+    nominee = { idx: idxOf(nom.nomineeSeat), preview: false };
+  }
+
+  placeNomHand(svg, 'nominator', nominator, n);
+  placeNomHand(svg, 'nominee', nominee, n);
+  svg.querySelector('.nom-hand-hub').classList.toggle('is-hidden', !nominator && !nominee);
+
+  // Seat rings follow the same state: who's picked, who the next click would pick.
+  const table = document.getElementById('player-table');
+  const picking = isPickingNomination();
+  table?.classList.toggle('picking-nominator', picking && playerActionPickedSeat === null);
+  table?.classList.toggle('picking-nominee', picking && playerActionPickedSeat !== null);
+  table?.classList.toggle('nom-live', !!pendingNomination && !picking);
+  updateVoteClock();
 }
 
 function renderPlayers() {
@@ -3702,15 +4287,16 @@ function renderPlayers() {
   // regardless of player count (still bounded by the container's own width).
   const minChordPx = 100;
   const neededDiameter = n > 1 ? minChordPx / (0.84 * Math.sin(Math.PI / n)) : 420;
-  table.style.maxWidth = `${Math.round(Math.max(420, Math.min(1100, neededDiameter)))}px`;
+  table.style.maxWidth = `${Math.round(Math.max(600, Math.min(1100, neededDiameter)))}px`;
   // Only computed while actively picking a nominator/nominee — cheap to build
   // (walks allNominations once), but pointless otherwise.
-  const nomLimits = (playerActionMode === 'nominate') ? nominationLimitsToday() : null;
+  const nomLimits = isPickingNomination() ? nominationLimitsToday() : null;
   // Locked out while a seat-pick mode is running: pointer-events:none in CSS
   // means a stray click lands on the seat and picks it, the same as clicking any
   // other part of the seat, instead of killing someone by accident.
   const badgeLock = playerActionMode ? ' seat-badge-locked' : '';
   const badgeDisabled = playerActionMode ? ' disabled' : '';
+  const liveNom = liveNominationState();
   const seats = players.map((p, idx) => {
     const name = displayName(p, p.seat);
     const role = playerRoleInfo(p);
@@ -3740,6 +4326,10 @@ function renderPlayers() {
       playerActionMode ? 'pa-selectable' : '',
       playerActionMode && playerActionPickedSeat === p.seat ? 'pa-picked' : '',
       nomIneligible ? 'pa-ineligible' : '',
+      liveNom && p.seat === liveNom.nominatorSeat ? 'nom-live-nominator' : '',
+      liveNom && p.seat === liveNom.nomineeSeat ? 'nom-live-nominee' : '',
+      liveNom?.hands.has(p.seat) ? 'nom-hand-up' : '',
+      (p.status ?? []).includes('marked') ? 'is-marked' : '',
     ].filter(Boolean).join(' ');
     const pos = seatPos(idx, n, SEAT_R);
     const cx = pos.x.toFixed(2);
@@ -3749,15 +4339,17 @@ function renderPlayers() {
       : '';
     return `<div class="${seatClasses}" data-seat="${p.seat}" style="left:${cx}%;top:${cy}%"${nomIneligibleTitle ? ` title="${esc(nomIneligibleTitle)}"` : ''}>
       <div class="seat-token-wrap">
+        ${(p.status ?? []).includes('marked') ? `<span class="seat-mark-skull" title="Marked">${ICON_SVG.markSkull}</span>` : ''}
+        ${liveNom?.hands.has(p.seat) ? `<span class="seat-hand-badge" title="${liveNom.counted ? 'Voted yes' : 'Hand up'}">${ICON_SVG.hand}</span>` : ''}
         <span class="seat-num-badge">${p.seat + 1}</span>
         <button class="player-role-btn seat-token ${tokenColorClass}" data-seat="${p.seat}" title="${role ? esc(role.name) : 'Set role'}"${tokenFill}>${tokenLabel}</button>
         <button class="align-cycle-btn seat-align-badge ${alignClass}" data-seat="${p.seat}" title="Cycle alignment"></button>
         <button class="seat-remove-x-btn seat-remove-badge" data-seat="${p.seat}" data-occupied="${p.id ? '1' : ''}" title="Remove seat">✕</button>
-        <button class="seat-life-btn seat-life-badge${badgeLock}" data-seat="${p.seat}" data-kill="${p.isDead ? '' : '1'}"${badgeDisabled} title="${p.isDead ? 'Revive' : 'Kill'}">${p.isDead ? '✚' : '💀'}</button>
-        ${p.isDead ? `<button class="seat-vote-btn seat-vote-badge${badgeLock}" data-seat="${p.seat}" data-spend="${isVoteless(p) ? '' : '1'}"${badgeDisabled} title="${isVoteless(p) ? 'Return ghost vote' : 'Remove ghost vote'}">${isVoteless(p) ? '✋' : '⊘'}</button>` : ''}
+        <button class="seat-life-btn seat-life-badge${badgeLock}" data-seat="${p.seat}" data-kill="${p.isDead ? '' : '1'}"${badgeDisabled} title="${p.isDead ? 'Revive' : 'Kill'}" aria-label="${p.isDead ? 'Revive' : 'Kill'}">${p.isDead ? ICON_SVG.revive : ICON_SVG.skull}</button>
+        ${p.isDead ? `<button class="seat-vote-btn seat-vote-badge${isVoteless(p) ? ' vote-spent' : ''}${badgeLock}" data-seat="${p.seat}" data-spend="${isVoteless(p) ? '' : '1'}"${badgeDisabled} title="${isVoteless(p) ? 'Ghost vote spent — click to return it' : 'Ghost vote available — click to spend it'}" aria-label="${isVoteless(p) ? 'Return ghost vote' : 'Remove ghost vote'}">${isVoteless(p) ? ICON_SVG.ghostVoteSpent : ICON_SVG.ghostVote}</button>` : ''}
       </div>
       <div class="seat-name-row">
-        <span class="player-name role-name ${nameColorClass}" data-player="${esc(name)}">${esc(dn(name))}</span>${p.isDead ? ' 💀' : ''}
+        <span class="player-name role-name ${nameColorClass}" data-player="${esc(name)}">${esc(dn(name))}</span>
       </div>
       ${role ? `<div class="seat-role-label ${tokenColorClass}">${esc(role.name)}</div>` : ''}
     </div>`;
@@ -3767,6 +4359,8 @@ function renderPlayers() {
   // Both live inside the circle, absolutely positioned, so showing them can't
   // shift the layout around them.
   table.innerHTML = `<svg id="nom-hands" viewBox="0 0 100 100" aria-hidden="true"></svg>`
+    + circlePhaseHtml(players)
+    + circleNominationHtml(liveNom)
     + seats
     + `<div id="nom-alerts" style="display:none"></div>`;
 
@@ -3963,7 +4557,33 @@ function setPlayerActionMode(mode) {
   renderPlayers();
 }
 
+// Nominate mode stays on between nominations, but while one is open the wheel
+// shows that nomination (hands, count, vote clock) — picking only takes over
+// again once the storyteller actually starts a new pick.
+function isPickingNomination() {
+  return playerActionMode === 'nominate'
+    && ((!pendingNomination && !awaitingNomination()) || playerActionPickedSeat !== null);
+}
+
+// A nomination we just sent, until botc.app confirms it (or 3s pass). In that
+// gap the hands hold on the two seats instead of dropping back to the picking
+// preview and swinging round, only to swing back when the nomination lands.
+let nominationSent = null; // { nominatorSeat, nomineeSeat, at }
+function awaitingNomination() {
+  return !!nominationSent && !pendingNomination && Date.now() - nominationSent.at < 3000;
+}
+
 function handlePlayerActionPick(seat) {
+  if (playerActionMode === 'point') {
+    // Stays on, so the hand can be thrown around seat after seat.
+    sendVoteDrive('point', { seat });
+    return;
+  }
+  if (playerActionMode === 'attorney') {
+    sendVoteDrive('attorney', { seat });
+    setPlayerActionMode('attorney'); // toggles off
+    return;
+  }
   if (playerActionMode === 'nominate') {
     if (playerActionPickedSeat === null) {
       playerActionPickedSeat = seat; // nominator (can equal the nominee for a self-nomination)
@@ -3971,7 +4591,13 @@ function handlePlayerActionPick(seat) {
       return;
     }
     sendBg({ type: 'NOMINATE', nominatorSeat: playerActionPickedSeat, nomineeSeat: seat });
-    setPlayerActionMode('nominate'); // toggles off
+    nominationSent = { nominatorSeat: playerActionPickedSeat, nomineeSeat: seat, at: Date.now() };
+    // If the app never confirms, fall back to picking once the hold runs out.
+    setTimeout(() => { if (nominationSent && !pendingNomination) { nominationSent = null; renderPlayers(); } }, 3100);
+    // Stay in nominate mode so the next nomination can be picked straight away;
+    // the button click toggles it off.
+    playerActionPickedSeat = null;
+    renderPlayers();
     return;
   }
   if (playerActionMode === 'swap') {
@@ -4429,6 +5055,14 @@ document.getElementById('role-switch').addEventListener('click', () => {
   syncRoleSwitch();
   applyViewRole();
 });
+document.querySelectorAll('#role-toggle [data-view]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    if (viewRole === btn.dataset.view) return;
+    viewRole = btn.dataset.view;
+    syncRoleSwitch();
+    applyViewRole();
+  });
+});
 
 loadSettings();
 applySettingsToUI();
@@ -4621,6 +5255,7 @@ chrome.runtime.onMessage.addListener((message) => {
       if (nameMapGrew) { renderNominations(); renderChats(); renderMessages(); refreshPlayerTimeline(); }
     }
     else if (payload.type === 'WS_RECV' || payload.type === 'WS_SEND') { touchWsHeartbeat(); appendWsEvent(payload); }
+    else if (payload.type === 'VOTE_CLOCK') { voteClock = payload.data; updateVoteClock(); }
     else if (payload.type === 'NEEDS_RELOAD') { showReloadPrompt(); }
     return;
   }
@@ -4636,6 +5271,7 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message.type === 'NOMINATIONS_UPDATE') {
     allNominations = message.nominations ?? [];
     pendingNomination = message.pendingNomination ?? null;
+    if (pendingNomination) nominationSent = null; // confirmed — the hold is over
     renderNominations();
     refreshPlayerTimeline();
     // Limit flags are baked into the seat markup, so they only pick up a new
