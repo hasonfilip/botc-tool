@@ -3038,6 +3038,21 @@ function initSignalPanel() {
 
   document.getElementById('players-nominate-btn')?.addEventListener('click', () => setPlayerActionMode('nominate'));
   document.getElementById('players-swap-btn')?.addEventListener('click', () => setPlayerActionMode('swap'));
+  // "Execute" on the between-nominations card ends the day: the marked player
+  // (if any) loses the mark and dies, then the game moves on to the night.
+  document.getElementById('ns-execute')?.addEventListener('click', (e) => {
+    // NEXT_PHASE reverts on a fast second click — don't let a double-click undo it.
+    const btn = e.currentTarget;
+    if (btn.dataset.busy) return;
+    btn.dataset.busy = '1';
+    setTimeout(() => { delete btn.dataset.busy; }, 1500);
+    const marked = (currentState?.players ?? []).find(pl => (pl.status ?? []).includes('marked'));
+    if (marked) {
+      const value = [...new Set([...marked.status.filter(t => t !== 'marked'), 'dead'])];
+      sendBg({ type: 'SET_PLAYER_PROPERTY', seat: marked.seat, property: 'status', value });
+    }
+    sendBg({ type: 'NEXT_PHASE' });
+  });
   document.getElementById('players-mark-btn')?.addEventListener('click', () => setPlayerActionMode('mark'));
   document.getElementById('players-unmark-btn')?.addEventListener('click', () => {
     const marked = (currentState?.players ?? []).find(pl => (pl.status ?? []).includes('marked'));
@@ -3766,8 +3781,8 @@ function nominationLimitsToday() {
 // the two can't drift apart. Seat 1 (index 0) sits at the top of the circle and
 // the rest run clockwise, matching a physical grimoire.
 const SEAT_R = 42;        // seat centres, in the 0-100 coordinate space
-const HAND_R = 33;        // nominator hand — stops short of the seat tokens
-const HAND_R_NOMINEE = 26; // shorter, so a self-nomination shows both hands
+const HAND_R = 33;        // vote hand / nominator tail — stops short of the seat tokens
+const HAND_R_NOMINEE = 27; // shorter, so a self-nomination shows both ends
 const seatAngle = (idx, n) => (idx / (n || 1)) * 2 * Math.PI - Math.PI / 2;
 const seatPos = (idx, n, r) => {
   const a = seatAngle(idx, n);
@@ -3782,6 +3797,20 @@ function nomHandPath(r) {
   const tipBase = 50 + r - 4, tip = 50 + r + 3;
   return `M45 49.35 L50 48.9 L${tipBase} 49.5 L${tipBase} 47.5 L${tip} 50`
     + ` L${tipBase} 52.5 L${tipBase} 50.5 L50 51.1 L45 50.65 Z`;
+}
+
+// The two nomination hands read as one arrow through the hub: a thin dashed
+// tail coming in from the nominator (dashes run towards the hub, starting at
+// a dot beside their seat) and a heavy arrow going out to the nominee. Only
+// the nominee's end has an arrowhead, so the direction can't be read backwards.
+function nomTailMarkup(r) {
+  return `<line class="nom-tail-line" x1="${50 + r}" y1="50" x2="50" y2="50" />`
+    + `<circle class="nom-tail-dot" cx="${50 + r + 1}" cy="50" r="1.7" />`;
+}
+function nomArrowPath(r) {
+  const tipBase = 50 + r - 4, tip = 50 + r + 4;
+  return `M50 48.7 L${tipBase} 49.1 L${tipBase} 46.4 L${tip} 50`
+    + ` L${tipBase} 53.6 L${tipBase} 50.9 L50 51.3 Z`;
 }
 
 // Redraws the overlay only — cheap enough to run on every hover, unlike a full
@@ -3863,6 +3892,15 @@ function updateNomSetup() {
   // Nominate is off.
   document.getElementById('vote-target')?.classList.toggle('vt-hide-setup', playerActionMode !== 'nominate');
   if (!active) return;
+  const exec = document.getElementById('ns-execute');
+  if (exec) {
+    const marked = (currentState?.players ?? []).find(pl => (pl.status ?? []).includes('marked'));
+    exec.textContent = marked ? `Execute ${dn(marked.name)}` : 'No execution · go to night';
+    exec.title = marked
+      ? 'Remove the mark, kill them and move on to the night'
+      : 'Nobody is marked: move on to the night without an execution';
+    exec.classList.toggle('is-execute', !!marked);
+  }
   // The clock panel isn't up to sync the slider, so do it here.
   const slider = document.getElementById('vd-speed');
   if (slider && document.activeElement !== slider) slider.value = voteClock?.drive?.speed ?? voteClock?.speed ?? 1000;
@@ -4171,6 +4209,7 @@ function updateVoteDrive() {
   const start = document.getElementById('vd-start');
   start.hidden = inProgress || preVoteBlocked;
   start.querySelector('.vd-start-label').textContent = vc.locked > 0 ? 'Restart' : 'Start';
+  start.classList.toggle('is-restart', vc.locked > 0);
 
   const pause = document.getElementById('vd-pause');
   pause.hidden = !inProgress;
@@ -4301,8 +4340,8 @@ function renderNomHands() {
   const idxOf = (seat) => players.findIndex(pl => pl.seat === seat);
 
   if (!svg.querySelector('.nom-hand')) {
-    svg.innerHTML = `<g class="nom-hand nom-hand-nominee is-hidden"><path d="${nomHandPath(HAND_R_NOMINEE)}" /></g>`
-      + `<g class="nom-hand nom-hand-nominator is-hidden"><path d="${nomHandPath(HAND_R)}" /></g>`
+    svg.innerHTML = `<g class="nom-hand nom-hand-nominee is-hidden"><path d="${nomArrowPath(HAND_R_NOMINEE)}" /></g>`
+      + `<g class="nom-hand nom-hand-nominator is-hidden">${nomTailMarkup(HAND_R)}</g>`
       + `<g class="nom-hand nom-hand-vote is-hidden"><path d="${nomHandPath(HAND_R + 3)}" /></g>`
       + '<circle class="nom-hand-hub is-hidden" cx="50" cy="50" r="2.4" />';
   }

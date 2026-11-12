@@ -429,7 +429,17 @@ section.collapsed > *:not(h2) { display: none; }
   transition: transform 0.38s cubic-bezier(0.34, 1.45, 0.64, 1), opacity 0.18s ease;
 }
 .nom-hand path { stroke-linejoin: round; }
-.nom-hand-nominator path { fill: #f5b83d; filter: drop-shadow(0 0 1.2px rgba(245,184,61,0.7)); }
+/* Nominator: a dashed tail whose dashes run in towards the hub, from a dot by
+   their seat. Nominee: the only arrowhead. Together: one arrow, tail to tip. */
+.nom-tail-line {
+  stroke: #f5b83d;
+  stroke-width: 1.1;
+  stroke-linecap: round;
+  stroke-dasharray: 2.2 2.4;
+  animation: nom-tail-flow 0.9s linear infinite;
+}
+@keyframes nom-tail-flow { to { stroke-dashoffset: -4.6; } }
+.nom-tail-dot { fill: #f5b83d; filter: drop-shadow(0 0 1.2px rgba(245,184,61,0.7)); }
 .nom-hand-nominee path   { fill: var(--evil); filter: drop-shadow(0 0 1.2px rgba(255,107,97,0.7)); }
 /* A hand the next click would place: present but not committed. */
 .nom-hand.is-preview { opacity: 0.5; }
@@ -474,6 +484,7 @@ section.collapsed > *:not(h2) { display: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .nom-hand, .nom-hand-hub { transition: none; }
+  .nom-tail-line { animation: none; }
   .nom-hand-nominator, .player-seat.pa-picked .seat-token, .nom-alert { animation: none; }
 }
 
@@ -3179,6 +3190,9 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 .vd-core-buttons .btn { box-shadow: 0 4px 14px rgba(0,0,0,0.45); }
 #vd-core #vd-start { background: var(--accent); color: var(--on-accent); }
 #vd-core #vd-start:hover:not(:disabled) { background: var(--accent-hover); }
+/* One button, two jobs: play triangle to start, circular arrow to restart. */
+#vd-start .vd-icon-restart, #vd-start.is-restart .vd-icon-start { display: none; }
+#vd-start.is-restart .vd-icon-restart { display: inline-block; }
 #vd-core #vd-pause[data-paused="1"] { background: var(--accent); color: var(--on-accent); }
 #vd-core #vd-mark:not(:disabled) { color: var(--minion); }
 #vd-core #vd-stage {
@@ -3237,6 +3251,8 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 #nom-setup .vd-speed { width: 100%; gap: 8px; font-size: 0; color: transparent; }  /* hides the "Tick" text node */
 #nom-setup .vd-speed input { flex: 1; width: auto; min-width: 0; }
 #nom-setup #vd-speed-val { font-size: 12px; }
+#ns-execute { align-self: center; margin-top: 2px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#ns-execute.is-execute { color: var(--evil); }
 /* The phase text would sit underneath: let the card own the centre. */
 .player-circle.nom-setup-open #circle-phase { display: none; }
 
@@ -3280,10 +3296,9 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 #vd-core #vd-patterns { background: rgba(12,12,14,0.92); }
 #vd-core #vd-patterns .btn-seg { height: 24px; padding: 0 8px; font-size: 11px; }
 
-/* With the tools open the stack is taller: lift the card and the stack so it
-   all stays inside the dial. */
-#player-table-scroll:has(#vote-drive:not([hidden])) #circle-nom { transform: translate(-50%, calc(-50% - 78px)); }
-#player-table-scroll:has(#vote-drive:not([hidden])) #vd-core { top: calc(50% + 20px); }
+/* Opening the tools moves nothing: the card, the main buttons and the "Clock
+   tools" toggle all stay put, and the extra rows drop in underneath. */
+#vd-core #vote-drive { order: 1; }
 /* The card's state line says who's driving; the pattern chip shows how. */
 #vd-core .vd-head { display: none; }
 #vote-target.vt-hide-setup .vd-speed,

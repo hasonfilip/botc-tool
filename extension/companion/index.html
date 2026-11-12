@@ -134,6 +134,7 @@
 							<span class="ns-title">Next nomination</span>
 							<div class="ns-row"><span class="ns-label">Type</span><span class="ns-slot" data-slot="type"></span></div>
 							<div class="ns-row"><span class="ns-label">Clock</span><span class="ns-slot" data-slot="speed"></span></div>
+							<button id="ns-execute" class="btn btn-sm btn-strong"></button>
 						</div>
 						<div id="vd-core" hidden>
 							<div id="vd-stage" hidden>
@@ -145,7 +146,7 @@
 							<label id="vd-secret" class="tp-check" hidden><input type="checkbox" id="vd-secret-input" /> <span id="vd-secret-label"></span></label>
 							<div class="vd-core-buttons">
 								<button id="vd-countdown" class="btn btn-sm btn-strong" title="3-2-1, then the clock starts"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="13" r="8"></circle><path d="M12 9v4l2 2M9 2h6"></path></svg> Countdown</button>
-								<button id="vd-start" class="btn btn-sm btn-strong"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="currentColor" stroke="none" aria-hidden="true"><path d="M7 4v16l13-8z"></path></svg> <span class="vd-start-label">Start</span></button>
+								<button id="vd-start" class="btn btn-sm btn-strong"><svg class="btn-icon vd-icon-start" viewBox="0 0 24 24" width="12" height="12" fill="currentColor" stroke="none" aria-hidden="true"><path d="M7 4v16l13-8z"></path></svg><svg class="btn-icon vd-icon-restart" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><path d="M3 3v5h5"></path></svg> <span class="vd-start-label">Start</span></button>
 								<button id="vd-pause" class="btn btn-sm"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="currentColor" stroke="none" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"></rect><rect x="14" y="5" width="4" height="14" rx="1"></rect></svg> <span class="vd-pause-label">Pause</span></button>
 								<button id="vd-reset" class="btn btn-sm" title="Stop the clock and put the hand back on the nominee"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><path d="M3 3v5h5"></path></svg> Reset</button>
 								<button id="vd-mark" class="btn btn-sm" title="Mark the nominee for execution and close the nomination"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a8 8 0 0 0-5 14.2V21h10v-3.8A8 8 0 0 0 12 3z"></path><path d="M9 12h.01M15 12h.01M10 21v-2M14 21v-2"></path></svg> <span class="vd-mark-label">Mark</span></button>
