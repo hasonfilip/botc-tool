@@ -5174,6 +5174,279 @@ initScriptLibrary();
   });
 })();
 
+// ── Session preview ─────────────────────────────────────────────────────────
+// Shows who is in other botc.app sessions without joining them. botc.app puts a
+// session's language, edition, phase, storytellers, players and spectators in
+// the link-preview metadata of its /join/<name> page (what Discord shows when a
+// link is pasted), so one plain GET of that page is all it takes.
+const PREVIEW_KEY = 'botc-companion-preview-sessions';
+const PREVIEW_REFRESH_MS = 30000;
+let previewSessions = (() => {
+  try {
+    const list = JSON.parse(localStorage.getItem(PREVIEW_KEY) || '[]');
+    return Array.isArray(list) ? list.filter(n => typeof n === 'string' && n) : [];
+  } catch { return []; }
+})();
+const previewResults = new Map(); // name → { loading, info, error, at }
+let previewChecked = null; // session open in the check overlay — saved or not
+let previewTimer = null;
+
+function savePreviewSessions() {
+  try { localStorage.setItem(PREVIEW_KEY, JSON.stringify(previewSessions)); } catch { /* ignore */ }
+}
+
+// Accepts a bare session name or any botc.app link to one (/join/x, /play/x, #x).
+function previewSessionName(input) {
+  let text = String(input ?? '').trim();
+  if (/^https?:\/\//i.test(text)) {
+    let url;
+    try { url = new URL(text); } catch { return ''; }
+    if (!/(^|\.)botc\.app$/i.test(url.hostname)) return '';
+    text = url.hash.length > 1 ? url.hash : url.pathname.split('/').filter(Boolean).pop() || '';
+    try { text = decodeURIComponent(text); } catch { /* keep as typed */ }
+  }
+  return text.replace(/^#/, '').trim();
+}
+
+function parsePreviewDescription(desc) {
+  const m = String(desc ?? '').replace(/\s+/g, ' ').trim().match(
+    /^Chat language: (?<language>.*?) Edition: (?<edition>.*?) Phase: (?<phase>.*?) Storyteller\(s\):(?<storytellers>.*?) (?<seats>\d+) Player\(s\): (?<players>.*?)(?: \d+ Spectator\(s\): (?<spectators>.*?))? (?<join>You .*)$/
+  );
+  if (!m) return null; // generic site blurb — the session isn't running
+  const names = (text) => (text || '').split(',').map(n => n.trim()).filter(Boolean);
+  const players = [];
+  let empty = 0;
+  for (const entry of names(m.groups.players)) {
+    // Each seat reads "<status> <name>"; unclaimed ones are named "Seat N".
+    const space = entry.indexOf(' ');
+    const name = space === -1 ? '' : entry.slice(space + 1);
+    if (/^Seat \d+$/.test(name)) empty++;
+    else players.push(entry);
+  }
+  return {
+    language: m.groups.language,
+    edition: m.groups.edition,
+    phase: m.groups.phase,
+    storytellers: names(m.groups.storytellers),
+    seats: Number(m.groups.seats),
+    players,
+    empty,
+    spectators: names(m.groups.spectators),
+    join: m.groups.join,
+  };
+}
+
+async function fetchPreview(name) {
+  const res = await fetch(`https://botc.app/join/${encodeURIComponent(name)}`, { credentials: 'omit', cache: 'no-store' });
+  if (!res.ok) throw new Error(`botc.app answered ${res.status}`);
+  const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
+  return parsePreviewDescription(doc.querySelector('meta[property="og:description"]')?.getAttribute('content'));
+}
+
+async function refreshPreview(name) {
+  previewResults.set(name, { ...previewResults.get(name), loading: true });
+  renderPreviewList();
+  let result;
+  try {
+    result = { info: await fetchPreview(name), at: Date.now() };
+  } catch (err) {
+    result = { error: err?.message || 'request failed', at: Date.now() };
+  }
+  if (!previewSessions.includes(name) && previewChecked !== name) return; // removed while loading
+  previewResults.set(name, result);
+  renderPreviewList();
+}
+
+// Everything worth keeping fresh: the saved list plus the session being checked.
+function previewNames() {
+  return previewChecked && !previewSessions.includes(previewChecked) ? [previewChecked, ...previewSessions] : previewSessions;
+}
+
+function refreshAllPreviews() {
+  previewNames().forEach(refreshPreview);
+}
+
+const PREVIEW_ICONS = {
+  refresh: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"></path><path d="M21 3v5h-5"></path></svg>',
+  close: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg>',
+};
+
+// A seat reads "<status> <name>". The plain white circle is by far the most
+// common status, and a row of them is just noise — draw it as a small dot and
+// keep any other status emoji as it is.
+function previewPlayerChip(entry) {
+  const space = entry.indexOf(' ');
+  const status = space === -1 ? '' : entry.slice(0, space);
+  const name = space === -1 ? entry : entry.slice(space + 1);
+  const mark = /^[⚪○◯]️?$/.test(status)
+    ? '<span class="pv-dot"></span>'
+    : status ? `<span class="pv-status">${esc(status)}</span>` : '';
+  return `<span class="pv-chip">${mark}${esc(name)}</span>`;
+}
+
+function previewSection(label, count, bodyHtml) {
+  return `<div class="pv-section">
+    <div class="pv-label">${label}${count ? ` <span class="pv-count">${esc(count)}</span>` : ''}</div>
+    ${bodyHtml}
+  </div>`;
+}
+
+// inOverlay: the card shown alone in the check overlay — it offers Save, and
+// its ✕ closes the overlay instead of removing the session from the list.
+function renderPreviewCard(name, inOverlay = false) {
+  const saved = previewSessions.includes(name);
+  const r = previewResults.get(name) || { loading: true };
+  const info = r.info;
+  let body;
+  if (r.error) body = `<div class="pv-note pv-error">Could not fetch: ${esc(r.error)}</div>`;
+  else if (info) {
+    const seats = `${info.players.length}/${info.seats}`;
+    body = `<div class="pv-script">${esc(info.edition)}<span class="pv-sep">·</span>${esc(info.language)}</div>`
+      + previewSection('Storyteller', '', `<div class="pv-names">${info.storytellers.length ? esc(info.storytellers.join(', ')) : '<span class="pv-none">none</span>'}</div>`)
+      + previewSection('Players', seats, info.players.length
+        ? `<div class="pv-chips">${info.players.map(previewPlayerChip).join('')}</div>`
+        : '<div class="pv-names"><span class="pv-none">nobody seated</span></div>')
+      + (info.spectators.length ? previewSection('Spectators', info.spectators.length, `<div class="pv-names pv-quiet">${esc(info.spectators.join(', '))}</div>`) : '')
+      + `<div class="pv-note">${esc(info.join)}</div>`;
+  } else if (r.at) body = '<div class="pv-note">Not running right now.</div>';
+  else body = '<div class="pv-note">Loading…</div>';
+  return `<div class="pv-card${r.loading ? ' pv-loading' : ''}" data-session="${esc(name)}">
+    <div class="pv-head">
+      <a class="pv-name" href="https://botc.app/join/${esc(encodeURIComponent(name))}" target="_blank" rel="noopener" title="Open in botc.app">${esc(name)}</a>
+      ${info ? `<span class="pv-phase">${esc(info.phase)}</span>` : ''}
+      <span class="pv-head-actions">
+        ${!inOverlay || saved ? '' : '<button type="button" class="pv-text-btn" data-pv-action="save" title="Keep this session in the Sessions list">Save</button>'}
+        ${info ? `<button type="button" class="pv-text-btn pv-join" data-pv-action="join" title="Take the botc.app tab to this session">Join</button>` : ''}
+        <button type="button" class="pv-icon-btn" data-pv-action="refresh" title="Refresh" aria-label="Refresh ${esc(name)}">${PREVIEW_ICONS.refresh}</button>
+        ${inOverlay
+          ? `<button type="button" class="pv-icon-btn" data-pv-action="dismiss" title="Close" aria-label="Close">${PREVIEW_ICONS.close}</button>`
+          : `<button type="button" class="pv-icon-btn" data-pv-action="remove" title="Remove from the list" aria-label="Remove ${esc(name)}">${PREVIEW_ICONS.close}</button>`}
+      </span>
+    </div>
+    ${body}
+  </div>`;
+}
+
+function renderPreviewList() {
+  const list = document.getElementById('preview-list');
+  if (!list) return;
+  const overlay = document.getElementById('preview-overlay');
+  overlay.style.display = previewChecked ? '' : 'none';
+  document.getElementById('preview-check').innerHTML = previewChecked ? renderPreviewCard(previewChecked, true) : '';
+  list.innerHTML = previewSessions.length
+    ? previewSessions.map(name => renderPreviewCard(name)).join('')
+    : '<div class="pv-empty">Check a session to see its phase, script, storyteller, players and spectators without joining it. Save the ones you want to keep an eye on.</div>';
+}
+
+// Sends the open botc.app tab to the session (the background opens one if there
+// is none). That tab leaves whatever game it's in, so ask first if it's in one.
+function joinPreviewSession(name) {
+  const current = currentState?.session;
+  if (current && current !== name && !confirm(`Leave "${current}" and join "${name}"?`)) return;
+  if (!chrome.runtime.id) { // opened as a plain page, no extension behind it
+    window.open(`https://botc.app/join/${encodeURIComponent(name)}`, '_blank', 'noopener');
+    return;
+  }
+  sendBg({ type: 'JOIN_SESSION', session: name });
+  closePreviewPopup();
+}
+
+// Closes the check overlay. A session that was only looked at leaves no trace.
+function closePreviewCheck() {
+  if (!previewChecked) return false;
+  if (!previewSessions.includes(previewChecked)) previewResults.delete(previewChecked);
+  previewChecked = null;
+  renderPreviewList();
+  return true;
+}
+
+function closePreviewPopup() {
+  closePreviewCheck();
+  const popup = document.getElementById('preview-popup');
+  if (!popup?.classList.contains('open')) return;
+  popup.classList.remove('open');
+  const btn = document.getElementById('preview-btn');
+  btn.classList.remove('open');
+  btn.setAttribute('aria-expanded', 'false');
+  clearInterval(previewTimer);
+  previewTimer = null;
+}
+
+function openPreviewPopup() {
+  const popup = document.getElementById('preview-popup');
+  const btn = document.getElementById('preview-btn');
+  popup.classList.add('open');
+  btn.classList.add('open');
+  btn.setAttribute('aria-expanded', 'true');
+  // Fixed-positioned under the button, right-aligned to it but kept on screen —
+  // the header wraps, so the button can end up anywhere along the row.
+  const rect = btn.getBoundingClientRect();
+  const left = Math.max(8, Math.min(rect.right - popup.offsetWidth, window.innerWidth - popup.offsetWidth - 8));
+  popup.style.top = `${rect.bottom + 6}px`;
+  popup.style.left = `${left}px`;
+  refreshAllPreviews();
+  renderPreviewList();
+  clearInterval(previewTimer);
+  previewTimer = setInterval(refreshAllPreviews, PREVIEW_REFRESH_MS);
+  document.getElementById('preview-input').focus();
+}
+
+(() => {
+  const btn = document.getElementById('preview-btn');
+  const popup = document.getElementById('preview-popup');
+  const input = document.getElementById('preview-input');
+  const overlay = document.getElementById('preview-overlay');
+  if (!btn || !popup) return;
+
+  btn.addEventListener('click', () => {
+    if (popup.classList.contains('open')) closePreviewPopup();
+    else openPreviewPopup();
+  });
+  document.addEventListener('click', (e) => {
+    // A card re-renders on click (refresh/remove), detaching e.target — so test
+    // the click's original path rather than popup.contains().
+    const path = e.composedPath();
+    if (path.includes(popup) || path.includes(btn) || path.includes(overlay)) return;
+    closePreviewPopup();
+  });
+  window.addEventListener('resize', closePreviewPopup);
+
+  document.getElementById('preview-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const name = previewSessionName(input.value);
+    if (!name) { input.select(); return; }
+    input.value = '';
+    // Only a look: the session opens in its own overlay and reaches the saved
+    // list only through the Save button there.
+    previewChecked = name;
+    refreshPreview(name);
+  });
+
+  document.getElementById('preview-overlay-backdrop').addEventListener('click', closePreviewCheck);
+
+  const onCardClick = (e) => {
+    const action = e.target.closest('[data-pv-action]')?.dataset.pvAction;
+    const name = e.target.closest('.pv-card')?.dataset.session;
+    if (!action || !name) return;
+    if (action === 'refresh') refreshPreview(name);
+    if (action === 'join') joinPreviewSession(name);
+    if (action === 'dismiss') closePreviewCheck();
+    if (action === 'save' && !previewSessions.includes(name)) {
+      previewSessions.unshift(name);
+      savePreviewSessions();
+      if (!closePreviewCheck()) renderPreviewList(); // saving closes the overlay, back to the list
+    }
+    if (action === 'remove') {
+      previewSessions = previewSessions.filter(n => n !== name);
+      previewResults.delete(name);
+      savePreviewSessions();
+      renderPreviewList();
+    }
+  };
+  document.getElementById('preview-list').addEventListener('click', onCardClick);
+  document.getElementById('preview-check').addEventListener('click', onCardClick);
+})();
+
 document.getElementById('st-role-btn')?.addEventListener('click', () => {
   if (amIStoryteller()) {
     if (!confirm('Step down as storyteller?')) return;
@@ -5196,6 +5469,7 @@ document.addEventListener('keydown', (e) => {
   if (gameRole && gameRole.style.display !== 'none') gameRole.style.display = 'none';
   closeSignalPopover();
   if (signalHistoryOpen) closeSignalHistoryPanel();
+  if (!closePreviewCheck()) closePreviewPopup(); // overlay first, then the list under it
   const settings = document.getElementById('settings-popup');
   if (settings?.classList.contains('open')) {
     settings.classList.remove('open');

@@ -17,6 +17,7 @@ The header shows the session, current phase, player and alive counts, the script
 - **Nominations** — who nominated whom, the vote count and the individual voters, with hands tracked live.
 - **Conversations** — private, public and night channel visits with duration and participants, filterable by player.
 - **Messages** — captured direct messages, sharing the same player filter.
+- **Session preview** — the *Sessions* button in the header looks up any other session (and keeps a list of the ones you save), showing its phase, script, storyteller, players and spectators without joining it, refreshed while the list is open. *Join* sends your botc.app tab to a running session.
 - **Logs** — the raw WebSocket stream, for debugging.
 
 ### For storytellers

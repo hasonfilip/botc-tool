@@ -612,6 +612,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  // Session preview's Join: take the botc.app tab that's already open to the
+  // session instead of piling up tabs; open one only if there is none.
+  if (message.type === 'JOIN_SESSION') {
+    (async () => {
+      const url = `https://botc.app/join/${encodeURIComponent(String(message.session ?? ''))}`;
+      const tabs = await chrome.tabs.query({ url: 'https://botc.app/*' });
+      const target = tabs.find(t => t.id === activeBridgeTabId) ?? tabs[0];
+      if (target) {
+        await chrome.tabs.update(target.id, { url, active: true });
+        if (target.windowId != null) chrome.windows?.update(target.windowId, { focused: true }).catch(() => {});
+      } else {
+        await chrome.tabs.create({ url });
+      }
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+
   if (message.type === 'RECONNECT') {
     (async () => {
       sendResponse({ result: await connectToTabs() });

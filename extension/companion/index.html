@@ -29,6 +29,16 @@
 		<div id="script-wrap" style="display:none">
 			<button id="script-btn" class="header-icon-btn" title="Script Library" aria-label="Script Library"><svg class="btn-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12a3 3 0 0 1 3 3v13H7a3 3 0 0 1-3-3z"></path><path d="M8 9h7M8 13h7"></path></svg> Script</button>
 		</div>
+		<div id="preview-wrap">
+			<button id="preview-btn" class="header-icon-btn" title="See who is in other sessions" aria-haspopup="dialog" aria-expanded="false"><svg class="btn-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"></path><circle cx="12" cy="12" r="3"></circle></svg> Sessions</button>
+			<div id="preview-popup" role="dialog" aria-label="Session preview">
+				<form id="preview-form">
+					<input id="preview-input" class="sig-custom-input" placeholder="session name or botc.app link…" autocomplete="off" spellcheck="false" />
+					<button type="submit" class="btn btn-sm">Check</button>
+				</form>
+				<div id="preview-list"></div>
+			</div>
+		</div>
 		<div id="role-toggle" class="color-toggle view-seg" role="group" aria-label="View as">
 			<button type="button" class="ct-label ct-left" data-view="storyteller">Storyteller</button>
 			<button class="ct-switch" id="role-switch" role="switch" aria-checked="false" aria-label="View as player" hidden></button>
@@ -297,6 +307,11 @@
 		<div id="sighist-body"></div>
 	</div>
 	<div id="signal-history-overlay" class="side-panel-overlay"></div>
+
+	<div id="preview-overlay" style="display:none">
+		<div id="preview-overlay-backdrop"></div>
+		<div id="preview-check" role="dialog" aria-label="Session"></div>
+	</div>
 
 	<div id="script-library-overlay" style="display:none">
 		<div id="script-library-backdrop"></div>
