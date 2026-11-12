@@ -4,7 +4,7 @@ A browser extension companion panel for [Blood on the Clocktower Online](https:/
 
 It opens a separate tab next to your botc.app game. As a player it gives you a notes grid and a live record of everything that happened; as a storyteller it also lets you run the game from the panel: signals, nominations, the vote clock, timers, seating and scripts.
 
-<img width="2503" height="1247" alt="image" src="https://github.com/user-attachments/assets/e760e91f-2c8d-489d-a3ec-761bd964d80a" />
+<img width="2500" height="1242" alt="image" src="https://github.com/user-attachments/assets/3278f7cf-66e9-4adf-b7ab-afb0b795a8d6" />
 
 ## Features
 
@@ -26,7 +26,7 @@ The header shows the session, current phase, player and alive counts, the script
 - **Nomination alerts** — warnings while you pick the nominator and nominee for things that need resolving on the spot (Virgin, Witch, Golem, Devil's Advocate, Tea Lady, Sailor, Fool).
 - **Vote clock** — choose the nomination type (regular, nominee focus, accusation & defense), set the votes needed to execute and the tick speed, then run the count: countdown, start, pause, reset, mark, close. *Clock tools* take over the hand: step it seat by seat, point it anywhere, end the count early, or use a pattern (speed up, slow down, stutter, wobble). Secret votes and the Big Wig's defense attorney are offered when the relevant character is in play.
 - **Phase and timer** — next phase, gong, join voice, a titled countdown timer with presets and pause-during-votes, and Good wins / Evil wins.
-- **Night order** — the script's characters in wake order for the first night and other nights, with the players holding them. For Trouble Brewing characters the signal to send is drafted for you from the game state and the player's reply.
+- **Night order** — the script's characters in wake order for the first night and other nights, with the players holding them. For Trouble Brewing characters the signal to send is drafted for you from the game state and the player's reply. (WIP)
 - **Script library** — point it at a folder of script JSON files (or upload a single one) and search by name, author or role. Filter by Base 3, single-Demon, label and difficulty, sort by name or difficulty, and load a script into the game. Difficulty is an estimate computed from per-character ratings.
 - **Clear** — clears the grimoire.
 
