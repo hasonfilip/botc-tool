@@ -4,7 +4,7 @@ A browser extension companion panel for [Blood on the Clocktower Online](https:/
 
 It opens a separate tab next to your botc.app game. As a player it gives you a notes grid and a live record of everything that happened; as a storyteller it also lets you run the game from the panel: signals, nominations, the vote clock, timers, seating and scripts.
 
-<img width="2488" height="1261" alt="image" src="https://github.com/user-attachments/assets/4b71b8ae-327b-4b6c-83fe-0f61128d29e1" />
+<img width="2503" height="1247" alt="image" src="https://github.com/user-attachments/assets/e760e91f-2c8d-489d-a3ec-761bd964d80a" />
 
 ## Features
 
