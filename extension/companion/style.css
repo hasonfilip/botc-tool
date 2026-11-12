@@ -141,7 +141,6 @@ header h1 {
 #script-wrap { position: relative; display: flex; align-items: center; }
 
 .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
-.settings-row-col { flex-direction: column; align-items: flex-start; gap: 6px; }
 .settings-row .ct-title { margin: 0; }
 
 /* Standalone on/off switch (e.g. merge day/night) */
@@ -2237,6 +2236,29 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 .script-lib-cx-bar { width: 28px; height: 5px; border-radius: 3px; background: var(--border); overflow: hidden; }
 .script-lib-cx-bar > span { display: block; height: 100%; border-radius: 3px; }
 .script-lib-role-count { color: var(--muted); font-size: 11px; margin-left: auto; flex-shrink: 0; }
+.script-lib-label-filters { display: contents; }
+/* Unset labels stay faint so a library of unlabelled rows isn't noisy */
+.script-lib-label-btn {
+  flex-shrink: 0;
+  background: none;
+  color: var(--muted);
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  opacity: 0.45;
+}
+.script-lib-row:hover .script-lib-label-btn, .script-lib-label-btn:focus-visible { opacity: 1; }
+.script-lib-label-btn:hover { color: var(--text); }
+.script-lib-label-btn.active {
+  opacity: 1;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
 .script-lib-apply {
   flex-shrink: 0;
   background: var(--accent);

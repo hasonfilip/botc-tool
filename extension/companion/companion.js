@@ -24,7 +24,6 @@ let allTextMessages = [];
 let nameMap = {};
 let showNightChats = false;
 let mergePhases = true; // notes grid: one column per round (Night N + Day N) instead of per phase
-let colorSource = 'grimoire'; // 'grimoire' | 'notes'
 let openPlayerTimelineName = null;
 let cellTokens = {};
 let playerActionMode = null; // null | 'nominate' | 'swap' | 'mark' | 'point' | 'attorney'
@@ -180,17 +179,17 @@ function enrichRoles(roles) {
   });
 }
 
-// Sync grimoire roles & alignments into playerMeta: grimoire wins in grimoire
-// mode; in notes mode it fills gaps and keeps auto-synced values tracking the
-// grimoire. Auto-synced values are marked (roleAuto/alignAuto) so that changing
-// or clearing them in the grimoire updates them here too — manual assignments
-// (popover, alignment cycle) stick.
+// Sync grimoire roles & alignments into playerMeta. The grimoire always wins
+// where it has a value, so changing a role in the app changes it in the notes
+// table. Synced values are marked (roleAuto/alignAuto) so that clearing them in
+// the grimoire clears them here too — manual assignments (popover, alignment
+// cycle) only stick for players the grimoire says nothing about.
 function syncPlayerMetaFromGrimoire() {
   for (const player of currentState?.players ?? []) {
     const name = player.name ?? `Seat ${player.seat + 1}`;
     let meta = playerMeta[name];
 
-    if (player.roleId && (colorSource === 'grimoire' || !meta?.roleId || meta.roleAuto)) {
+    if (player.roleId) {
       const roleObj = (currentState.roles ?? []).find(r => r.id === player.roleId);
       playerMeta[name] = {
         ...(meta ?? {}),
@@ -206,7 +205,7 @@ function syncPlayerMetaFromGrimoire() {
 
     meta = playerMeta[name];
     const alignment = player.alignment || '';
-    if (alignment && (colorSource === 'grimoire' || !meta?.alignment || meta.alignAuto)) {
+    if (alignment) {
       playerMeta[name] = { ...(meta ?? {}), alignment, alignAuto: true };
     } else if (!alignment && meta?.alignment && meta.alignAuto) {
       playerMeta[name] = { ...meta, alignment: '', alignAuto: false };
@@ -623,14 +622,14 @@ function renderNominations() {
 // ── Chats ─────────────────────────────────────────────────────────────────
 
 function playerTeamByName(name) {
-  if (colorSource === 'notes') {
-    const meta = playerMeta[name] ?? {};
-    return meta.alignment === 'evil' ? 'demon'
-         : meta.alignment === 'good' ? 'townsfolk'
-         : meta.roleTeam ?? '';
-  }
+  // Grimoire team first; notes (alignment, then assigned role) colour the
+  // players the grimoire says nothing about.
   const p = currentState?.players?.find(p => p.name === name);
-  return p?.team ?? '';
+  if (p?.team) return p.team;
+  const meta = playerMeta[name] ?? {};
+  return meta.alignment === 'evil' ? 'demon'
+       : meta.alignment === 'good' ? 'townsfolk'
+       : meta.roleTeam ?? '';
 }
 
 function isStoryteller(userId) {
@@ -2182,7 +2181,7 @@ function toggleAlignment(name) {
   playerMeta[name] = { ...(playerMeta[name] ?? {}), alignment: cycle[cur], alignAuto: false };
   savePlayerMeta(name);
   refreshMetaCells(name);
-  if (colorSource === 'notes') refreshPageColors();
+  refreshPageColors();
 }
 
 function refreshPageColors() {
@@ -2193,7 +2192,7 @@ function refreshPageColors() {
 }
 
 function refreshMetaCells(name, { recolorPage = false } = {}) {
-  if (recolorPage && colorSource === 'notes') refreshPageColors();
+  if (recolorPage) refreshPageColors();
   const escaped = CSS.escape(name);
   const nameCell = document.querySelector(`#notes-table td.notes-player-name[data-player="${escaped}"]`);
   const roleCell = document.querySelector(`#notes-table td.notes-meta-role[data-player="${escaped}"]`);
@@ -3091,7 +3090,8 @@ function parseScriptJson(json, fallbackName) {
     .map(r => (typeof r === 'string' ? { id: r } : r));
   return {
     author: meta.author ?? '',
-    name: meta.name ?? fallbackName,
+    // An empty or whitespace-only name is as useless as a missing one.
+    name: (typeof meta.name === 'string' && meta.name.trim()) || fallbackName,
     roles,
     background: meta.background ?? null,
     logo: meta.logo ?? null,
@@ -3330,6 +3330,30 @@ function complexityTagHtml(c) {
     + `<span class="script-lib-cx-bar"><span style="width:${Math.max(Math.round(t * 100), 6)}%;background:hsl(${Math.round(120 - t * 120)},70%,50%)"></span></span></span>`;
 }
 
+// ── Labels ───────────────────────────────────────────────────────────────────
+// User-assigned tags on library scripts. Add a label by adding a row here; the
+// row toggle and the filter button are generated from this list.
+const SCRIPT_LABELS = [
+  { key: 'fun', name: 'Seems fun' },
+];
+// Stored as { [scriptLabelKey]: [labelKey, …] }. Keyed by name + author rather
+// than file path, so a label survives moving the file between category folders
+// (and the Firefox cache, which never kept paths).
+const SCRIPT_LABELS_KEY = 'botc-companion-script-labels';
+const scriptLabelKey = (s) => `${s.name}\n${s.author ?? ''}`;
+let scriptLabels = (() => {
+  try { return JSON.parse(localStorage.getItem(SCRIPT_LABELS_KEY) || '{}') || {}; } catch { return {}; }
+})();
+const scriptHasLabel = (s, label) => !!scriptLabels[scriptLabelKey(s)]?.includes(label);
+function toggleScriptLabel(s, label) {
+  const key = scriptLabelKey(s);
+  const current = scriptLabels[key] ?? [];
+  const next = current.includes(label) ? current.filter(l => l !== label) : [...current, label];
+  if (next.length) scriptLabels[key] = next; else delete scriptLabels[key];
+  try { localStorage.setItem(SCRIPT_LABELS_KEY, JSON.stringify(scriptLabels)); } catch { /* ignore */ }
+  return next.includes(label);
+}
+
 // ── UI ────────────────────────────────────────────────────────────────────────
 const SCRIPT_LIB_CACHE_KEY = 'scriptLibrary';
 let scriptLibrary = [];
@@ -3439,6 +3463,9 @@ function initScriptLibrary() {
       cx: scriptComplexity(s.rolesByTeam),
     })).filter(s => {
       if (base3Only && !s.base3) return false;
+      if (oneDemonOnly && s.rolesByTeam.demon?.length !== 1) return false;
+      // Multiple selected labels narrow: the script must carry all of them.
+      for (const label of labelFilter) if (!scriptHasLabel(s, label)) return false;
       // Unrated scripts can't be placed in a bucket, so any difficulty filter hides them.
       if (difficultyFilter.size && !(s.cx && difficultyFilter.has(difficultyLevel(s.cx.score)))) return false;
       if (!q) return true;
@@ -3473,6 +3500,10 @@ function initScriptLibrary() {
             ${s.base3 ? '<span class="script-lib-tag" title="Only Trouble Brewing, Bad Moon Rising and Sects &amp; Violets characters">Base 3</span>' : ''}
             ${s.cx ? complexityTagHtml(s.cx) : ''}
             <span class="script-lib-role-count">${s.roleNames.length} roles</span>
+            ${SCRIPT_LABELS.map(l => {
+              const on = scriptHasLabel(s, l.key);
+              return `<button type="button" class="script-lib-label-btn${on ? ' active' : ''}" data-cat="${esc(cat)}" data-idx="${i}" data-label="${esc(l.key)}" aria-pressed="${on}" title="Label: ${esc(l.name)}">${esc(l.name)}</button>`;
+            }).join('')}
             <button type="button" class="script-lib-apply" data-cat="${esc(cat)}" data-idx="${i}">Apply</button>
           </div>
           <div class="script-lib-roles" style="display:none">${rolesHtml}</div>
@@ -3501,6 +3532,18 @@ function initScriptLibrary() {
         const open = rolesEl.style.display !== 'none';
         rolesEl.style.display = open ? 'none' : '';
         chevron.textContent = open ? '▸' : '▾';
+      });
+    });
+
+    // Toggled in place rather than re-rendered, so expanded rows stay open and
+    // a script unlabelled while its filter is on doesn't vanish mid-click.
+    resultsEl.querySelectorAll('.script-lib-label-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const script = byCategory[btn.dataset.cat][Number(btn.dataset.idx)];
+        const on = toggleScriptLabel(script, btn.dataset.label);
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-pressed', String(on));
       });
     });
 
@@ -3534,6 +3577,27 @@ function initScriptLibrary() {
     base3Btn.classList.toggle('toggle-btn-active', base3Only);
     renderResults();
   });
+  let oneDemonOnly = false;
+  const oneDemonBtn = document.getElementById('script-lib-one-demon-btn');
+  oneDemonBtn?.addEventListener('click', () => {
+    oneDemonOnly = !oneDemonOnly;
+    oneDemonBtn.classList.toggle('toggle-btn-active', oneDemonOnly);
+    renderResults();
+  });
+  const labelFilter = new Set();
+  const labelFiltersEl = document.getElementById('script-lib-label-filters');
+  if (labelFiltersEl) {
+    labelFiltersEl.innerHTML = SCRIPT_LABELS.map(l =>
+      `<button type="button" class="toggle-btn script-lib-label-filter-btn" data-label="${esc(l.key)}">${esc(l.name)}</button>`).join('');
+    labelFiltersEl.querySelectorAll('.script-lib-label-filter-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const label = btn.dataset.label;
+        if (labelFilter.has(label)) labelFilter.delete(label); else labelFilter.add(label);
+        btn.classList.toggle('toggle-btn-active', labelFilter.has(label));
+        renderResults();
+      });
+    });
+  }
   document.querySelectorAll('.script-lib-diff-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const level = btn.dataset.level;
@@ -4636,16 +4700,15 @@ function handlePlayerActionPick(seat) {
 const _nightOrder = () => (typeof BOTC_NIGHT_ORDER !== 'undefined' ? BOTC_NIGHT_ORDER : { firstNight: [], otherNight: [] });
 const _nightSignalScripts = () => (typeof BOTC_NIGHT_SIGNAL_SCRIPTS !== 'undefined' ? BOTC_NIGHT_SIGNAL_SCRIPTS : {});
 
-// normalized role id → [{name, isDead, id, seat}], honoring the source-of-truth
-// setting: grimoire tokens first (storyteller always sees them), notes-grid
-// role assignments as the override/fallback.
+// normalized role id → [{name, isDead, id, seat}]: grimoire tokens first
+// (storyteller always sees them), notes-grid role assignments as the fallback.
 function playersByRoleId() {
   const map = {};
   for (const p of currentState?.players ?? []) {
     const name = displayName(p, p.seat);
     const metaRole = playerMeta[name]?.roleId || null;
     const grimRole = p.roleId || null;
-    const roleId = colorSource === 'notes' ? (metaRole ?? grimRole) : (grimRole ?? metaRole);
+    const roleId = grimRole ?? metaRole;
     if (!roleId) continue;
     (map[_normalizeId(roleId)] ??= []).push({ name, isDead: !!p.isDead, id: p.id, seat: p.seat });
   }
@@ -4969,19 +5032,6 @@ document.querySelectorAll('section:not(#ws-section) h2').forEach(h2 => {
   });
 });
 
-document.getElementById('color-source-toggle').addEventListener('click', () => {
-  colorSource = colorSource === 'grimoire' ? 'notes' : 'grimoire';
-  const isNotes = colorSource === 'notes';
-  document.getElementById('ct-switch').setAttribute('aria-checked', String(isNotes));
-  document.getElementById('color-source-toggle').classList.toggle('ct-active', isNotes);
-  saveSettings();
-  renderState(currentState);
-  renderTimeline();
-  renderNominations();
-  renderChats();
-  renderMessages();
-});
-
 document.getElementById('toggle-night').addEventListener('click', (e) => {
   showNightChats = !showNightChats;
   e.target.textContent = showNightChats ? 'hide night' : 'show night';
@@ -5004,7 +5054,6 @@ const SETTINGS_KEY = 'botc-companion-settings';
 function loadSettings() {
   try {
     const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
-    if (s.colorSource === 'grimoire' || s.colorSource === 'notes') colorSource = s.colorSource;
     if (typeof s.mergePhases === 'boolean') mergePhases = s.mergePhases;
     if (Array.isArray(s.customTimerPresets)) customTimerPresets = s.customTimerPresets;
     if (Array.isArray(s.customSignalPresets)) customSignalPresets = s.customSignalPresets;
@@ -5014,14 +5063,11 @@ function loadSettings() {
 
 function saveSettings() {
   try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ colorSource, mergePhases, customTimerPresets, customSignalPresets, nightSignalUnlocks: [...nightSignalUnlocks] }));
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ mergePhases, customTimerPresets, customSignalPresets, nightSignalUnlocks: [...nightSignalUnlocks] }));
   } catch { /* ignore */ }
 }
 
 function applySettingsToUI() {
-  const isNotes = colorSource === 'notes';
-  document.getElementById('ct-switch').setAttribute('aria-checked', String(isNotes));
-  document.getElementById('color-source-toggle').classList.toggle('ct-active', isNotes);
   const ms = document.getElementById('merge-switch');
   ms.classList.toggle('on', mergePhases);
   ms.setAttribute('aria-checked', String(mergePhases));

@@ -38,14 +38,6 @@
 		<div id="settings-wrap">
 			<button id="settings-btn" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></button>
 			<div id="settings-popup">
-				<div class="settings-row settings-row-col">
-					<span class="ct-title">source of truth</span>
-					<div id="color-source-toggle" class="color-toggle">
-						<span class="ct-label ct-left">grimoire</span>
-						<button class="ct-switch" id="ct-switch" role="switch" aria-checked="false"></button>
-						<span class="ct-label ct-right">notes</span>
-					</div>
-				</div>
 				<div class="settings-row">
 					<span class="ct-title">merge day/night</span>
 					<button class="ct-switch on" id="merge-switch" role="switch" aria-checked="true"></button>
@@ -326,6 +318,10 @@
 					<input id="script-lib-search" class="sig-custom-input" placeholder="search name, author, or role…" />
 					<div class="script-lib-filter-row">
 						<button id="script-lib-base3-btn" type="button" class="toggle-btn" title="Only Trouble Brewing, Bad Moon Rising and Sects &amp; Violets characters">Base 3</button>
+						<button id="script-lib-one-demon-btn" type="button" class="toggle-btn" title="Scripts with exactly one Demon">1 Demon</button>
+						<span class="script-lib-filter-sep"></span>
+						<span class="script-lib-filter-label">Label</span>
+						<span id="script-lib-label-filters" class="script-lib-label-filters"></span>
 						<span class="script-lib-filter-sep"></span>
 						<span class="script-lib-filter-label">Difficulty</span>
 						<button type="button" class="toggle-btn script-lib-diff-btn" data-level="easy">Easy</button>
