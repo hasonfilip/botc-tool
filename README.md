@@ -114,3 +114,11 @@ The companion page loads its fonts from Google Fonts, and a custom script can po
 | `tabs` | Opens and communicates with the companion panel tab |
 | `scripting` | Re-injects the page hook after extension reloads |
 | `https://botc.app/*` | Reads game state from the botc.app page and sends storyteller commands to it |
+
+## Disclaimer
+
+BOTC Tool is unofficial, community-created content. It is not made, endorsed or supported by The Pandemonium Institute, and it is free and non-commercial.
+
+Blood on the Clocktower, its characters, ability text and artwork are trademarks and copyright of Steven Medway and The Pandemonium Institute. The character data and icons bundled here are theirs, included under the [Community Created Content Policy](https://bloodontheclocktower.com/pages/community-created-content-policy).
+
+The tool is a companion to the official app at [botc.app](https://botc.app), not a replacement for it: it does nothing without a game running there.
