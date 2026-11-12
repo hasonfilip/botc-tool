@@ -172,9 +172,33 @@ async function handleNominationFrame(eventName, eventData, ts) {
     return;
   }
 
+  // lock [L] / lock [L, vote] — the clock hand. L > 1 locks the seat L − 1
+  // places clockwise of the nominee (the nominee last, at L = seats + 1) and
+  // carries the vote the storyteller's client held for it at that moment.
+  // That value is what the app counts, whatever `vote` frames said or say later.
+  if (eventName === 'lock' && Array.isArray(eventData) && typeof eventData[0] === 'number') {
+    const [locked, value] = eventData;
+    const seatCount = latestState?.players?.length ?? 0;
+    const entry = { ...pendingNomination, locked };
+    if (locked > 1 && seatCount > 0 && (value === 0 || value === 1)) {
+      const seat = (pendingNomination.nomineeSeat + locked - 1) % seatCount;
+      entry.handState = { ...pendingNomination.handState, [seat]: value };
+    }
+    await store.set({ pendingNomination: entry });
+    await sendToCompanion({ type: 'NOMINATIONS_UPDATE', nominations, pendingNomination: entry });
+    return;
+  }
+
   if (eventName === 'vote' && Array.isArray(eventData)) {
     // vote [seat, 0|1] — track live hand state; seat indices here are real seat numbers
     const [seat, value] = eventData;
+    // The hand has already passed this seat: its vote is locked in, and a late
+    // hand change (the frame still arrives) doesn't count.
+    const seatCount = latestState?.players?.length ?? 0;
+    if (seatCount > 0 && typeof pendingNomination.locked === 'number') {
+      const offset = (((seat - pendingNomination.nomineeSeat) % seatCount) + seatCount) % seatCount;
+      if (pendingNomination.locked >= (offset || seatCount) + 1) return;
+    }
     // A real toggle (up→down→up) must not be eaten by the duplicate window
     _nomDedupMap.delete('vote' + JSON.stringify([seat, value ? 0 : 1]));
     const handState = { ...pendingNomination.handState, [seat]: value };
@@ -198,6 +222,30 @@ async function handleNominationFrame(eventName, eventData, ts) {
     await store.set({ pendingNomination: entry });
     await sendToCompanion({ type: 'NOMINATIONS_UPDATE', nominations, pendingNomination: entry });
   }
+}
+
+// The app's own vote tally, posted by the page bridge on every vote mutation.
+// Rebuilding hands from WS frames alone drops votes (our own vote as a player
+// is never echoed back, frames get lost to the dedup window or a reconnect),
+// so the store's tally overrides whatever the frames added up to.
+async function handleVoteClock(clock) {
+  const { nominations, pendingNomination } = await store.get();
+  if (!pendingNomination || !Array.isArray(clock?.nomination) || !Array.isArray(clock.yesSeats)) return;
+  if (clock.nomination[0] !== pendingNomination.nominatorSeat || clock.nomination[1] !== pendingNomination.nomineeSeat) return;
+  // A secret vote hides other hands from players — the store knows less than the frames.
+  if (clock.isHidden) return;
+  const yes = [...clock.yesSeats].sort((a, b) => a - b);
+  const current = Object.entries(pendingNomination.handState ?? {})
+    .filter(([, v]) => v === 1).map(([s]) => Number(s)).sort((a, b) => a - b);
+  const counted = pendingNomination.counted && !clock.isInProgress;
+  const sameHands = yes.length === current.length && yes.every((s, i) => s === current[i]);
+  const sameFinal = !counted || (yes.length === pendingNomination.yesSeats.length
+    && yes.every(s => pendingNomination.yesSeats.includes(s)));
+  if (sameHands && sameFinal) return;
+  const entry = { ...pendingNomination, handState: Object.fromEntries(yes.map(s => [s, 1])) };
+  if (counted) entry.yesSeats = yes;
+  await store.set({ pendingNomination: entry });
+  await sendToCompanion({ type: 'NOMINATIONS_UPDATE', nominations, pendingNomination: entry });
 }
 
 // ── Text messages ─────────────────────────────────────────────────────────
@@ -516,6 +564,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (!(await isActiveBridgeTab(senderTabId))) return;
       if (payload.type === 'STATE') return handleStatePayload(payload);
       if (payload.type === 'WS_RECV' || payload.type === 'WS_SEND') return handleWsPayload(payload);
+      if (payload.type === 'VOTE_CLOCK') await handleVoteClock(payload.data);
       await sendToCompanion({ type: 'BOTC_UPDATE', payload });
     });
     return;

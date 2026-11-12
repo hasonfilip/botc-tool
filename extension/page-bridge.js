@@ -86,6 +86,9 @@
       // ties a player who's already marked.
       isHidden: !!v.isHidden,
       tally: (v.votes ?? []).reduce((sum, x) => sum + (x || 0), 0),
+      // Seats with a hand up, straight from the app's own tally — the truth the
+      // nomination history is reconciled against (WS frames alone miss votes).
+      yesSeats: (v.votes ?? []).flatMap((x, seat) => (x ? [seat] : [])),
       markedSeat: (getStore()?.state?.players?.players ?? []).findIndex(pl => pl?.status?.includes('marked')),
       nomineeIsTraveller: Array.isArray(v.nomination)
         && getStore()?.state?.players?.players?.[v.nomination[1]]?.role?.team === 'traveller',
@@ -571,7 +574,7 @@
     store.subscribe((mutation) => {
       // Vote clock ticks go out on their own, undebounced — a full state
       // rebuild per tick would be wasted work and lag the hand.
-      if (VOTE_CLOCK_MUTATIONS.has(mutation.type)) post({ type: 'VOTE_CLOCK', data: voteClockOf() });
+      if (VOTE_CLOCK_MUTATIONS.has(mutation.type) || mutation.type.startsWith('vote/')) post({ type: 'VOTE_CLOCK', data: voteClockOf() });
       if (mutation.type === 'session/addSignal' || mutation.type === 'session/clearSignals' || mutation.type.startsWith('session/') && /timer/i.test(mutation.type)) debouncedSend();
     });
   };
