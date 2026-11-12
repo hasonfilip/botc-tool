@@ -97,9 +97,6 @@ botc.app page
 |---|---|
 | `extension/` | The extension itself — the folder you load |
 | `extension/data/` | Bundled data: roles and icons, ability chip specs, night order, night signal drafts, nomination alerts, difficulty ratings |
-| `dev/` | Offline UI harness with dummy data. Currently out of date: it predates the storyteller tools and no longer matches the companion's markup |
-| `explore/` | DevTools snippet for poking at botc.app |
-| `docs/botc-app-commands.md` | Every command the companion can send and the store call behind it, plus how to add one |
 | `night-order-*.txt` | Source lists that `extension/data/nightOrder.js` was generated from |
 | `jinxes.json` | Jinx data, not used by the extension yet |
 
