@@ -2758,10 +2758,16 @@ function isTimerPaused(timer) {
   return paused > 0 && paused < timer.expiration;
 }
 
-// Remaining ms of the app's timer, or null when none is running.
+const TIMER_DONE_LINGER_MS = 5000;
+
+// Remaining ms of the app's timer, or null when none is running (or it ended
+// more than a moment ago).
 function timerRemaining(timer) {
   if (!timer?.expiration) return null;
   const now = isTimerPaused(timer) ? Number(timer.paused) : Date.now();
+  // botc.app never clears an expired timer from its store — its own widget just
+  // stops drawing it 5s after the end. Same here, or "Time's up" stays forever.
+  if (now - timer.expiration > TIMER_DONE_LINGER_MS) return null;
   return Math.max(0, timer.expiration - now);
 }
 
