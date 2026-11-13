@@ -12,9 +12,17 @@ let activeBridgeTabId = null;
 async function isActiveBridgeTab(tabId) {
   if (tabId == null || tabId === activeBridgeTabId) return true;
   if (activeBridgeTabId === null) { activeBridgeTabId = tabId; return true; }
-  try { await chrome.tabs.get(activeBridgeTabId); return false; }
-  catch { activeBridgeTabId = tabId; return true; }
+  try {
+    // A tab that has left /play (back to the lobby, another site) no longer
+    // runs a game — holding on to it would shut out the tab that does.
+    const active = await chrome.tabs.get(activeBridgeTabId);
+    if (isPlayUrl(active.url)) return false;
+  } catch { /* closed */ }
+  activeBridgeTabId = tabId;
+  return true;
 }
+
+const isPlayUrl = (url) => typeof url === 'string' && url.startsWith('https://botc.app/play');
 
 async function resolveCompanionTabId() {
   if (companionTabId !== null) {
@@ -68,9 +76,10 @@ function enqueue(fn) {
 // ── Bridge connectivity ───────────────────────────────────────────────────
 
 // Ping the content script in a botc.app tab; if it's missing (tab was open
-// before the extension loaded), inject the scripts programmatically. Note a
-// late-injected WebSocket hook can't capture an already-open socket, so live
-// WS events still need a tab reload — but state scraping works immediately.
+// before the extension loaded), inject the scripts programmatically. A
+// late-injected WebSocket hook can't capture an already-open socket, but only
+// the raw WS log depends on it: state, nominations, chats and messages all
+// come from the store, which can be subscribed to at any time.
 async function ensureBridge(tab) {
   try {
     await chrome.tabs.sendMessage(tab.id, { type: 'FORCE_UPDATE' });
@@ -94,6 +103,33 @@ async function connectToTabs() {
   if (results.includes('alive')) return 'alive';
   if (results.includes('injected')) return 'injected';
   return 'failed';
+}
+
+// A tab the browser has frozen or discarded never answers, so nothing waits
+// on one for long.
+const TIMED_OUT = Symbol('timed-out');
+const within = (ms, promise) => Promise.race([promise, new Promise(r => setTimeout(() => r(TIMED_OUT), ms))]);
+
+// The companion's periodic liveness check. PING goes through the injector to
+// the page bridge, which answers with a CONN payload (relayed to the companion
+// like any other bridge message) — so 'alive' here only means the injector
+// took the message; the CONN arriving is what proves the bridge itself.
+// → 'no-tab' | 'asleep' | 'alive' | 'injected' | 'failed'
+async function checkConnection() {
+  const tabs = await chrome.tabs.query({ url: 'https://botc.app/play*' });
+  if (tabs.length === 0) return 'no-tab';
+  const tab = tabs.find(t => t.id === activeBridgeTabId) ?? tabs[0];
+  if (tab.discarded || tab.frozen) return 'asleep';
+  try {
+    const res = await within(3500, chrome.tabs.sendMessage(tab.id, { type: 'PING' }));
+    return res === TIMED_OUT ? 'asleep' : 'alive';
+  } catch {
+    // No injector in the tab (it was open before the extension loaded).
+    const res = await within(5000, ensureBridge(tab));
+    if (res === TIMED_OUT) return 'asleep';
+    if (res !== 'failed') chrome.tabs.sendMessage(tab.id, { type: 'PING' }).catch(() => {});
+    return res;
+  }
 }
 
 // ── WS frame parsing & dedup ──────────────────────────────────────────────
@@ -150,6 +186,9 @@ async function handleNominationFrame(eventName, eventData, ts) {
       for (const p of latestState?.players ?? []) {
         if (p.name != null) seatNames[p.seat] = p.name;
       }
+      // The store's vote clock may have opened this one already (it sees the
+      // same nomination, and can beat the frame here).
+      if (pendingNomination && pendingNomination.nominatorSeat === nominatorSeat && pendingNomination.nomineeSeat === nomineeSeat) return;
       const entry = { ts, nominatorSeat, nomineeSeat, seatNames, highscore, handState: {}, yesSeats: [] };
       await store.set({ pendingNomination: entry });
       // The companion needs the open nomination too, not just closed ones: it
@@ -224,28 +263,86 @@ async function handleNominationFrame(eventName, eventData, ts) {
   }
 }
 
-// The app's own vote tally, posted by the page bridge on every vote mutation.
-// Rebuilding hands from WS frames alone drops votes (our own vote as a player
-// is never echoed back, frames get lost to the dedup window or a reconnect),
-// so the store's tally overrides whatever the frames added up to.
+// The app's own vote state, posted by the page bridge on every vote mutation.
+// It does two jobs. It opens, advances and closes the nomination entry on its
+// own, so the log doesn't depend on WS frames (they're missed whenever the hook
+// didn't catch the socket; when frames do arrive, both paths agree and the
+// second to land is a no-op). And its tally overrides the hands rebuilt from
+// frames, which drop votes: our own vote as a player is never echoed back, and
+// frames get lost to the dedup window or a reconnect.
+const REOPEN_WINDOW_MS = 10000;
+
 async function handleVoteClock(clock) {
-  const { nominations, pendingNomination } = await store.get();
-  if (!pendingNomination || !Array.isArray(clock?.nomination) || !Array.isArray(clock.yesSeats)) return;
-  if (clock.nomination[0] !== pendingNomination.nominatorSeat || clock.nomination[1] !== pendingNomination.nomineeSeat) return;
-  // A secret vote hides other hands from players — the store knows less than the frames.
-  if (clock.isHidden) return;
-  const yes = [...clock.yesSeats].sort((a, b) => a - b);
-  const current = Object.entries(pendingNomination.handState ?? {})
-    .filter(([, v]) => v === 1).map(([s]) => Number(s)).sort((a, b) => a - b);
-  const counted = pendingNomination.counted && !clock.isInProgress;
-  const sameHands = yes.length === current.length && yes.every((s, i) => s === current[i]);
-  const sameFinal = !counted || (yes.length === pendingNomination.yesSeats.length
-    && yes.every(s => pendingNomination.yesSeats.includes(s)));
-  if (sameHands && sameFinal) return;
-  const entry = { ...pendingNomination, handState: Object.fromEntries(yes.map(s => [s, 1])) };
-  if (counted) entry.yesSeats = yes;
-  await store.set({ pendingNomination: entry });
-  await sendToCompanion({ type: 'NOMINATIONS_UPDATE', nominations, pendingNomination: entry });
+  if (!clock) return;
+  let { nominations, pendingNomination, latestState } = await store.get();
+  const open = Array.isArray(clock.nomination) && clock.nomination.length >= 2 ? clock.nomination : null;
+  const isOpen = (n) => !!n && !!open && n.nominatorSeat === open[0] && n.nomineeSeat === open[1];
+  const before = pendingNomination;
+  const countBefore = nominations.length;
+
+  // Closed, or replaced by another nomination. An empty store before the
+  // session is live (page load, reconnect) is not a close.
+  if (pendingNomination && !isOpen(pendingNomination) && (open || clock.connected)) {
+    nominations = [...nominations, { ...pendingNomination, closedTs: Date.now() }];
+    pendingNomination = null;
+  }
+
+  if (open && !pendingNomination) {
+    const last = nominations[nominations.length - 1];
+    if (isOpen(last) && last.closedTs && Date.now() - last.closedTs < REOPEN_WINDOW_MS) {
+      // Same nomination back within seconds: the store was resyncing (it's
+      // briefly empty while a gamestate is applied), not a new nomination.
+      const { closedTs, ...entry } = last;
+      nominations = nominations.slice(0, -1);
+      pendingNomination = entry;
+    } else {
+      const [nominatorSeat, nomineeSeat] = open;
+      const seatNames = {};
+      for (const p of latestState?.players ?? []) {
+        if (p.name != null) seatNames[p.seat] = p.name;
+      }
+      pendingNomination = {
+        ts: Date.now(), nominatorSeat, nomineeSeat, seatNames,
+        highscore: votesNeeded(latestState?.players ?? [], nomineeSeat, clock.highscore),
+        handState: {}, yesSeats: [],
+      };
+    }
+  }
+
+  // Only while the store actually shows this nomination — an empty store has
+  // no hands, and would wipe the ones recorded.
+  if (isOpen(pendingNomination)) {
+    let entry = pendingNomination;
+    const handsUp = (e) => Object.entries(e.handState ?? {})
+      .filter(([, v]) => v === 1).map(([s]) => Number(s)).sort((a, b) => a - b);
+
+    if (typeof clock.locked === 'number' && clock.locked !== entry.locked) entry = { ...entry, locked: clock.locked };
+
+    // A secret vote hides other hands from players — the store knows less than the frames.
+    if (!clock.isHidden && Array.isArray(clock.yesSeats)) {
+      const yes = [...clock.yesSeats].sort((a, b) => a - b);
+      const current = handsUp(entry);
+      if (yes.length !== current.length || yes.some((s, i) => s !== current[i])) {
+        entry = { ...entry, handState: Object.fromEntries(yes.map(s => [s, 1])) };
+      }
+    }
+
+    // Count started / ended — what the voteInProgress frame says.
+    if (clock.isInProgress && !entry.voting) entry = { ...entry, voting: true, counted: false };
+    else if (!clock.isInProgress && entry.voting) entry = { ...entry, voting: false, counted: true, yesSeats: handsUp(entry) };
+
+    // Once counted, the final yes votes follow the app's tally too.
+    if (entry.counted && !clock.isInProgress && !clock.isHidden) {
+      const yes = handsUp(entry);
+      const final = entry.yesSeats ?? [];
+      if (yes.length !== final.length || yes.some(s => !final.includes(s))) entry = { ...entry, yesSeats: yes };
+    }
+    pendingNomination = entry;
+  }
+
+  if (pendingNomination === before && nominations.length === countBefore) return;
+  await store.set({ nominations, pendingNomination });
+  await sendToCompanion({ type: 'NOMINATIONS_UPDATE', nominations, pendingNomination });
 }
 
 // ── Text messages ─────────────────────────────────────────────────────────
@@ -287,6 +384,9 @@ async function handleChannelChange(userId, newChannel, ts) {
   const myId = latestState?.myUserId ? String(latestState.myUserId) : null;
   if (userId === 'me' && myId) userId = myId;
   if (isDup(_chanDedupMap, `${userId}|${newChannel}`)) return;
+  // Already there: the second source reporting the same move, or the app
+  // re-listing who is where after a voice reconnect.
+  if (newChannel && channelPresence[newChannel] && userId in channelPresence[newChannel].participants) return;
 
   // Leave old channel
   for (const [ch, info] of Object.entries(channelPresence)) {
@@ -318,6 +418,19 @@ async function handleChannelChange(userId, newChannel, ts) {
   }
 
   await store.set({ channelPresence });
+}
+
+// Events the page bridge read from botc.app's store rather than off the wire.
+// They feed the same handlers as the WS frames; those dedup the two sources.
+async function handleStoreEvent(payload) {
+  const d = payload.data ?? {};
+  if (payload.name === 'channelChange' && d.userId) {
+    await handleChannelChange(String(d.userId), d.channel ?? '', Date.now());
+  } else if (payload.name === 'textMessage' && d.message !== undefined) {
+    await handleTextMessage(d.senderId ?? 'unknown', d.recipientId ?? '', d.message, null, Date.now());
+  } else if (payload.name === 'textMessageIndicator' && d.recipientId) {
+    await handleTextMessage(d.senderId ?? 'unknown', d.recipientId, null, d.length ?? null, Date.now());
+  }
 }
 
 // ── Timeline ──────────────────────────────────────────────────────────────
@@ -564,6 +677,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (!(await isActiveBridgeTab(senderTabId))) return;
       if (payload.type === 'STATE') return handleStatePayload(payload);
       if (payload.type === 'WS_RECV' || payload.type === 'WS_SEND') return handleWsPayload(payload);
+      if (payload.type === 'STORE_EVENT') return handleStoreEvent(payload);
       if (payload.type === 'VOTE_CLOCK') await handleVoteClock(payload.data);
       await sendToCompanion({ type: 'BOTC_UPDATE', payload });
     });
@@ -630,9 +744,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === 'RECONNECT') {
+  if (message.type === 'CHECK_CONNECTION') {
     (async () => {
-      sendResponse({ result: await connectToTabs() });
+      let result;
+      try { result = await checkConnection(); } catch { result = 'failed'; }
+      sendResponse({ result });
     })();
     return true;
   }

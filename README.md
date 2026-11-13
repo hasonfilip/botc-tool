@@ -8,7 +8,7 @@ It opens a separate tab next to your botc.app game. As a player it gives you a n
 
 ## Features
 
-The header shows the session, current phase, player and alive counts, the script, the storytellers, and a connection indicator (seconds since the last signal, with a reload prompt if the connection goes stale). The **Storyteller / Player** switch picks which view you get; it follows your storyteller status in botc.app, and **Become Storyteller** takes or gives up the role from the panel.
+The header shows the session, current phase, player and alive counts, the script, the storytellers, and a connection indicator (botc.app's own connection state and ping, and a notice when the botc.app tab is closed, asleep or needs a reload). The **Storyteller / Player** switch picks which view you get; it follows your storyteller status in botc.app, and **Become Storyteller** takes or gives up the role from the panel.
 
 ### For everyone
 
@@ -43,7 +43,7 @@ The extension is not on any store. Load it as an unpacked extension:
 4. Click **Load unpacked**
 5. Select the `extension/` folder inside this repo
 6. Click the extension icon in the toolbar to open the companion panel
-7. If the botc.app tab was already open, the extension connects to it automatically — game state works right away, but live events (nominations, chats, messages) need a one-time reload of the botc.app tab (the companion shows a notice when this applies)
+7. If the botc.app tab was already open, the extension connects to it automatically — game state, nominations, chats and messages are read from botc.app's store and work right away; only the raw WebSocket log needs a reload of the botc.app tab
 
 Requires Chrome/Chromium 111+.
 

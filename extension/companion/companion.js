@@ -3652,43 +3652,65 @@ function initScriptLibrary() {
 
 // ── WS heartbeat ──────────────────────────────────────────────────────────
 
-let lastWsTs = Date.now(); // start counting from page load so timer is always visible
-let lastReconnectTry = 0;
+// Two questions, answered separately. Is our bridge alive in the botc.app tab?
+// — the background pings it every CONN_CHECK_MS and the bridge answers with a
+// CONN payload. Is botc.app itself connected? — that CONN carries the app's own
+// session state from its store. Frame traffic says neither: a quiet lobby is
+// silent for up to a minute with everything healthy.
+const CONN_CHECK_MS = 10000;
+const CONN_STALE_MS = 3 * CONN_CHECK_MS + 2000; // three pings in a row unanswered
+let conn = null;             // last CONN payload from the page bridge
+let lastConnTs = Date.now(); // when it arrived (page load until the first one)
+let bridgeCheck = null;      // last CHECK_CONNECTION result
 
-function touchWsHeartbeat() {
-  lastWsTs = Date.now();
+function applyConn(data) {
+  conn = data;
+  lastConnTs = Date.now();
+  renderConnStatus();
 }
 
-function tryReconnect() {
-  sendBg({ type: 'RECONNECT' });
+function connStatus() {
+  if (bridgeCheck === 'no-tab') return { level: 'warn', text: 'botc.app is not open' };
+  if (bridgeCheck === 'asleep') return { level: 'warn', text: 'botc.app tab is asleep — switch to it' };
+  if (bridgeCheck === 'failed') return { level: 'bad', text: 'not attached — reload the botc.app tab' };
+  if (Date.now() - lastConnTs > CONN_STALE_MS) return { level: 'bad', text: 'bridge not responding — reload the botc.app tab' };
+  if (!conn) return { level: '', text: 'connecting…' };
+  if (!conn.attached) return { level: 'warn', text: 'waiting for botc.app to load' };
+  if (conn.reconnecting) return { level: 'warn', text: 'botc.app is reconnecting…' };
+  if (!conn.connected) return { level: '', text: 'no live session' };
+  // Game state, nominations, chats and messages come from the store and still
+  // work; only the raw frame log is blind until the tab is reloaded.
+  if (conn.wsHooked === false) return { level: 'warn', text: 'connected · no WS log until the botc.app tab is reloaded' };
+  return { level: 'ok', text: conn.ping > 0 ? `connected · ${conn.ping} ms` : 'connected' };
 }
 
-(function tickHeartbeat() {
-  if (lastWsTs !== null) {
-    const secs = Math.floor((Date.now() - lastWsTs) / 1000);
-    const el = document.getElementById('ws-heartbeat');
-    const timerEl = document.getElementById('ws-heartbeat-timer');
-    const msgEl = document.getElementById('ws-heartbeat-msg');
-    if (el && timerEl && msgEl) {
-      timerEl.textContent = `${secs}s since last signal`;
-        if (secs >= 30) {
-          msgEl.textContent = '— reload the botc.app tab';
-          const t = Math.min((secs - 30) / 60, 1);
-          const g = Math.round(200 * (1 - t));
-          el.style.color = `rgb(255,${g},0)`;
-          // Try to recover automatically before the user has to reload
-          if (Date.now() - lastReconnectTry > 30000) {
-            lastReconnectTry = Date.now();
-            tryReconnect();
-          }
-        } else {
-          msgEl.textContent = '';
-          el.style.color = '';
-        }
-    }
-  }
-  setTimeout(tickHeartbeat, 1000);
-})();
+function renderConnStatus() {
+  const el = document.getElementById('ws-heartbeat');
+  const textEl = document.getElementById('ws-heartbeat-timer');
+  if (!el || !textEl) return;
+  // Opened straight from disk (dummy mode): there is no extension to talk to.
+  if (!chrome.runtime?.id) { textEl.textContent = ''; return; }
+  const { level, text } = connStatus();
+  textEl.textContent = text;
+  el.dataset.level = level;
+}
+
+function checkConnection() {
+  sendBg({ type: 'CHECK_CONNECTION' }, (response) => {
+    const result = response?.result ?? null;
+    const wasUp = bridgeCheck === 'alive' || bridgeCheck === 'injected';
+    const isUp = result === 'alive' || result === 'injected';
+    // Coming back from no tab / asleep: give the bridge a fresh window to
+    // answer rather than judging it by a CONN from before the gap.
+    if (isUp && !wasUp) { conn = null; lastConnTs = Date.now(); }
+    bridgeCheck = result;
+    renderConnStatus();
+  });
+}
+
+checkConnection();
+setInterval(checkConnection, CONN_CHECK_MS);
+setInterval(renderConnStatus, 1000);
 
 // ── WS log ────────────────────────────────────────────────────────────────
 
@@ -5571,7 +5593,6 @@ sendBg({ type: 'GET_STATE' }, (response) => {
   applyFullRefresh(response);
   const wsEvents = response.wsEvents ?? [];
   wsEvents.forEach(appendWsEvent);
-  if (wsEvents.length) touchWsHeartbeat();
 });
 
 function applyFullRefresh(response) {
@@ -5613,7 +5634,8 @@ chrome.runtime.onMessage.addListener((message) => {
       renderState(payload.data); patchTimelineNames(); materializeStatusChips(); renderTimeline(); renderNotesGrid(); refreshPlayerTimeline();
       if (nameMapGrew) { renderNominations(); renderChats(); renderMessages(); refreshPlayerTimeline(); }
     }
-    else if (payload.type === 'WS_RECV' || payload.type === 'WS_SEND') { touchWsHeartbeat(); appendWsEvent(payload); }
+    else if (payload.type === 'WS_RECV' || payload.type === 'WS_SEND') { appendWsEvent(payload); }
+    else if (payload.type === 'CONN') { applyConn(payload.data); }
     else if (payload.type === 'VOTE_CLOCK') { voteClock = payload.data; updateVoteClock(); }
     else if (payload.type === 'NEEDS_RELOAD') { showReloadPrompt(); }
     return;

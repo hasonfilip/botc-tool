@@ -1,6 +1,11 @@
 // Registered in the manifest as a MAIN-world content script at document_start,
 // so it runs in the page context before any page script — guaranteeing the
 // WebSocket hook is in place before botc.app opens its connection.
+// It has to load on every botc.app page, not just /play: the site is one
+// single-page app, so going from the lobby (/) or a /join link into a game is a
+// client-side route change that never loads /play as a page. And socket.io
+// keeps the WebSocket constructor it found when its module loaded, so a hook
+// installed any later than that never sees a socket — not even a new one.
 // Watches localStorage, scrapes DOM, and posts structured state to
 // injector.js via window.postMessage.
 
@@ -12,7 +17,13 @@
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  const post = (payload) => window.postMessage({ source: 'botc-bridge', payload }, '*');
+  // Only the grimoire page is a game; in the lobby the bridge just waits.
+  const onPlayPage = () => location.pathname.startsWith('/play');
+
+  const post = (payload) => {
+    if (!onPlayPage()) return;
+    window.postMessage({ source: 'botc-bridge', payload }, '*');
+  };
 
   const getMyUserId = () => {
     try { return JSON.parse(atob(localStorage.getItem('token').split('.')[1])).id ?? null; }
@@ -74,6 +85,9 @@
     if (drive.active && v.voteTimer !== drive.timerId && v.voteTimer !== 'paused') drive.active = false;
     return {
       nomination: Array.isArray(v.nomination) ? [...v.nomination] : false,
+      // A closed nomination only means something while the session is live —
+      // before the gamestate lands (page load, reconnect) the store is just empty.
+      connected: !!getStore()?.state?.session?.isConnected,
       locked: v.locked,
       speed: v.speed,
       isInProgress: !!v.isInProgress,
@@ -531,7 +545,7 @@
 
   // ── Initial state — wait for grimoire to render ───────────────────────────
 
-  const sendState = () => post({ type: 'STATE', data: buildState() });
+  const sendState = () => { if (onPlayPage()) post({ type: 'STATE', data: buildState() }); };
 
   const waitForGrimoire = () => {
     const poll = () => {
@@ -568,17 +582,74 @@
     'vote/setHighscore', 'vote/setNominationType', 'vote/setSelectedPlayer',
     'vote/toggleIsHidden',
   ]);
+  // ── Connection status ─────────────────────────────────────────────────────
+  // botc.app's own view of its session socket, straight from the store — the
+  // companion's connection indicator. Counting WebSocket frames instead says
+  // nothing in a quiet lobby (the app pings once a minute) and nothing at all
+  // while socket.io is still on its HTTP long-polling transport.
+  // `ping` is the app's last round trip in ms: -1 never measured, 0 disconnected.
+  let hookedSockets = 0;
+  const connOf = () => {
+    const s = getStore()?.state?.session;
+    return {
+      attached: !!s,
+      connected: !!s?.isConnected,
+      reconnecting: !!s?.isReconnecting,
+      ping: typeof s?.ping === 'number' ? s.ping : -1,
+      sessionId: s?.sessionId || '',
+      // Whether the WebSocket hook caught any socket. False with a live session
+      // means the bridge got here after the app's code had loaded.
+      wsHooked: hookedSockets > 0,
+    };
+  };
+  const postConn = () => post({ type: 'CONN', data: connOf() });
+  const CONN_MUTATIONS = new Set([
+    'session/toggleConnected', 'session/toggleReconnecting', 'session/setPing', 'session/setSessionId',
+  ]);
+
   const waitForStoreSubscribe = () => {
     const store = getStore();
     if (!store) { setTimeout(waitForStoreSubscribe, 500); return; }
+    postConn();
     store.subscribe((mutation) => {
+      if (CONN_MUTATIONS.has(mutation.type)) postConn();
       // Vote clock ticks go out on their own, undebounced — a full state
       // rebuild per tick would be wasted work and lag the hand.
       if (VOTE_CLOCK_MUTATIONS.has(mutation.type) || mutation.type.startsWith('vote/')) post({ type: 'VOTE_CLOCK', data: voteClockOf() });
+      // Voice channels and text messages, as the app itself applied them. Same
+      // events the WebSocket hook reads off the wire, but these don't depend on
+      // the hook having caught the socket (or on the socket being a WebSocket at
+      // all); the background dedups the two sources against each other.
+      if (mutation.type === 'chat/setUserChannel' && mutation.payload?.userId != null) {
+        post({ type: 'STORE_EVENT', name: 'channelChange', data: { userId: String(mutation.payload.userId), channel: mutation.payload.value || '' } });
+      }
+      if (mutation.type === 'chat/addTextMessageIndicator' && mutation.payload?.senderId != null && mutation.payload?.recipientId) {
+        const { senderId, recipientId, length } = mutation.payload;
+        post({ type: 'STORE_EVENT', name: 'textMessageIndicator', data: { senderId: String(senderId), recipientId: String(recipientId), length: length ?? null } });
+      }
       if (mutation.type === 'session/addSignal' || mutation.type === 'session/clearSignals' || mutation.type.startsWith('session/') && /timer/i.test(mutation.type)) debouncedSend();
     });
   };
   waitForStoreSubscribe();
+
+  // Text messages are read from the action, not the addTextMessage mutation:
+  // the mutation rewrites the text into sanitized HTML, the action still has
+  // it as typed (and as it travels on the wire). No senderId = sent by us.
+  const waitForActionSubscribe = () => {
+    const store = getStore();
+    if (!store) { setTimeout(waitForActionSubscribe, 500); return; }
+    store.subscribeAction((action, state) => {
+      if (action.type !== 'chat/textMessage') return;
+      const { message, recipientId, senderId, isSystem } = action.payload ?? {};
+      if (isSystem || typeof message !== 'string' || !message || !state.session?.sessionId) return;
+      post({ type: 'STORE_EVENT', name: 'textMessage', data: {
+        senderId: senderId == null ? 'me' : String(senderId),
+        recipientId: recipientId ? String(recipientId) : '',
+        message: message.substring(0, 250),
+      } });
+    });
+  };
+  waitForActionSubscribe();
 
   const _setItem = localStorage.setItem.bind(localStorage);
   localStorage.setItem = function (key, value) {
@@ -607,6 +678,9 @@
   window.addEventListener('message', (event) => {
     if (event.source !== window || event.data?.source !== 'botc-bridge-cmd') return;
     if (event.data?.type === 'FORCE_UPDATE') { sendState(); return; }
+    // Liveness check from the background: the answer proves this bridge (not
+    // just the injector) is alive, and carries the app's connection state.
+    if (event.data?.type === 'PING') { postConn(); return; }
     if (event.data?.type === 'SEND_SIGNAL') {
       try {
         const store = getStore();
@@ -807,6 +881,7 @@
   window.WebSocket = function (url, protocols) {
     const ws = protocols ? new _WS(url, protocols) : new _WS(url);
 
+    hookedSockets++;
     post({ type: 'WS_OPEN', url });
 
     const _send = ws.send.bind(ws);

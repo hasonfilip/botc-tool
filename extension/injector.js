@@ -1,6 +1,8 @@
 // Relay between page-bridge.js (registered in the manifest as a MAIN-world
 // content script, so the WebSocket hook is installed synchronously before any
 // page script runs) and the background service worker.
+// Like the bridge, it loads on every botc.app page so it's already there when
+// the app routes into /play without a page load.
 
 const safePost = (msg) => {
   try { chrome.runtime.sendMessage(msg); } catch { /* extension reloaded, ignore */ }

@@ -267,6 +267,19 @@ header h1 {
   font-variant-numeric: tabular-nums;
 }
 
+.conn-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dead);
+}
+
+.ws-heartbeat[data-level="ok"] .conn-dot { background: #58c27d; }
+.ws-heartbeat[data-level="warn"] { color: var(--accent-text); }
+.ws-heartbeat[data-level="warn"] .conn-dot { background: var(--accent); }
+.ws-heartbeat[data-level="bad"] { color: var(--evil); }
+.ws-heartbeat[data-level="bad"] .conn-dot { background: var(--evil); }
+
 .badge {
   background: var(--surface-2);
   color: var(--text);
