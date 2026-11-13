@@ -1011,7 +1011,7 @@ function getNotesColumns() {
   for (const p of phases) {
     const num = (p.match(/(\d+)\s*$/) ?? [, p])[1];
     if (!byNum.has(num)) {
-      const g = { key: `r${num}`, label: `D/N ${num}`, phases: [], cls: 'notes-merged', addPhase: null };
+      const g = { key: `r${num}`, label: `N/D ${num}`, phases: [], cls: 'notes-merged', addPhase: null };
       byNum.set(num, g);
       groups.push(g);
     }
