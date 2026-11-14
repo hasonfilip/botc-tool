@@ -2320,7 +2320,8 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
 .script-lib-cx-bar { width: 28px; height: 5px; border-radius: 3px; background: var(--border); overflow: hidden; }
 .script-lib-cx-bar > span { display: block; height: 100%; border-radius: 3px; }
 .script-lib-role-count { color: var(--muted); font-size: 11px; margin-left: auto; flex-shrink: 0; }
-.script-lib-label-filters { display: contents; }
+.script-lib-label-group, .script-lib-label-filters { display: contents; }
+.script-lib-label-group[hidden] { display: none; }
 /* Unset labels stay faint so a library of unlabelled rows isn't noisy */
 .script-lib-label-btn {
   flex-shrink: 0;
@@ -2343,6 +2344,23 @@ tr[data-player].player-pinned td { color: #ffb300 !important; font-weight: 700; 
   color: var(--accent);
   border: 1px solid var(--accent);
 }
+/* Favourite star: just the glyph — faint when off, gold when on */
+.script-lib-fav-btn {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  padding: 0 2px;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  font-family: inherit;
+  cursor: pointer;
+  opacity: 0.45;
+}
+.script-lib-row:hover .script-lib-fav-btn, .script-lib-fav-btn:focus-visible { opacity: 1; }
+.script-lib-fav-btn:hover { color: var(--text); }
+.script-lib-fav-btn.active { opacity: 1; color: #f5c518; }
+.script-lib-fav-filter-btn { font-size: 14px; line-height: 1; }
 .script-lib-apply {
   flex-shrink: 0;
   background: var(--accent);

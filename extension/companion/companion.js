@@ -3353,10 +3353,10 @@ function complexityTagHtml(c) {
 
 // ── Labels ───────────────────────────────────────────────────────────────────
 // User-assigned tags on library scripts. Add a label by adding a row here; the
-// row toggle and the filter button are generated from this list.
-const SCRIPT_LABELS = [
-  { key: 'fun', name: 'Seems fun' },
-];
+// row toggle and the filter button are generated from this list. While the
+// list is empty the whole label UI (row toggles and filter group) is hidden.
+// Keys are what's stored, so keep them stable when renaming a label.
+const SCRIPT_LABELS = [];
 // Stored as { [scriptLabelKey]: [labelKey, …] }. Keyed by name + author rather
 // than file path, so a label survives moving the file between category folders
 // (and the Firefox cache, which never kept paths).
@@ -3373,6 +3373,26 @@ function toggleScriptLabel(s, label) {
   if (next.length) scriptLabels[key] = next; else delete scriptLabels[key];
   try { localStorage.setItem(SCRIPT_LABELS_KEY, JSON.stringify(scriptLabels)); } catch { /* ignore */ }
   return next.includes(label);
+}
+
+// ── Favourites ───────────────────────────────────────────────────────────────
+// Separate from labels: a single star per script. Stored as an array of
+// scriptLabelKey()s. Seeded once from the old 'fun' label, which was the
+// favourite before it got its own storage.
+const SCRIPT_FAVOURITES_KEY = 'botc-companion-script-favourites';
+let scriptFavourites = (() => {
+  try {
+    const raw = localStorage.getItem(SCRIPT_FAVOURITES_KEY);
+    if (raw != null) return new Set(JSON.parse(raw) || []);
+  } catch { /* fall through to migration */ }
+  return new Set(Object.keys(scriptLabels).filter(k => scriptLabels[k].includes('fun')));
+})();
+const isScriptFavourite = (s) => scriptFavourites.has(scriptLabelKey(s));
+function toggleScriptFavourite(s) {
+  const key = scriptLabelKey(s);
+  if (scriptFavourites.has(key)) scriptFavourites.delete(key); else scriptFavourites.add(key);
+  try { localStorage.setItem(SCRIPT_FAVOURITES_KEY, JSON.stringify([...scriptFavourites])); } catch { /* ignore */ }
+  return scriptFavourites.has(key);
 }
 
 // ── UI ────────────────────────────────────────────────────────────────────────
@@ -3485,6 +3505,7 @@ function initScriptLibrary() {
     })).filter(s => {
       if (base3Only && !s.base3) return false;
       if (oneDemonOnly && s.rolesByTeam.demon?.length !== 1) return false;
+      if (favouritesOnly && !isScriptFavourite(s)) return false;
       // Multiple selected labels narrow: the script must carry all of them.
       for (const label of labelFilter) if (!scriptHasLabel(s, label)) return false;
       // Unrated scripts can't be placed in a bucket, so any difficulty filter hides them.
@@ -3526,6 +3547,10 @@ function initScriptLibrary() {
               return `<button type="button" class="script-lib-label-btn${on ? ' active' : ''}" data-cat="${esc(cat)}" data-idx="${i}" data-label="${esc(l.key)}" aria-pressed="${on}" title="Label: ${esc(l.name)}">${esc(l.name)}</button>`;
             }).join('')}
             <button type="button" class="script-lib-apply" data-cat="${esc(cat)}" data-idx="${i}">Apply</button>
+            ${(() => {
+              const fav = isScriptFavourite(s);
+              return `<button type="button" class="script-lib-fav-btn${fav ? ' active' : ''}" data-cat="${esc(cat)}" data-idx="${i}" aria-pressed="${fav}" aria-label="Favourite" title="Favourite">★</button>`;
+            })()}
           </div>
           <div class="script-lib-roles" style="display:none">${rolesHtml}</div>
         </div>`;
@@ -3568,6 +3593,16 @@ function initScriptLibrary() {
       });
     });
 
+    resultsEl.querySelectorAll('.script-lib-fav-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const script = byCategory[btn.dataset.cat][Number(btn.dataset.idx)];
+        const on = toggleScriptFavourite(script);
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-pressed', String(on));
+      });
+    });
+
     resultsEl.querySelectorAll('.script-lib-apply').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -3605,7 +3640,16 @@ function initScriptLibrary() {
     oneDemonBtn.classList.toggle('toggle-btn-active', oneDemonOnly);
     renderResults();
   });
+  let favouritesOnly = false;
+  const favouritesBtn = document.getElementById('script-lib-fav-filter-btn');
+  favouritesBtn?.addEventListener('click', () => {
+    favouritesOnly = !favouritesOnly;
+    favouritesBtn.classList.toggle('toggle-btn-active', favouritesOnly);
+    renderResults();
+  });
   const labelFilter = new Set();
+  const labelGroupEl = document.getElementById('script-lib-label-group');
+  if (labelGroupEl) labelGroupEl.hidden = !SCRIPT_LABELS.length;
   const labelFiltersEl = document.getElementById('script-lib-label-filters');
   if (labelFiltersEl) {
     labelFiltersEl.innerHTML = SCRIPT_LABELS.map(l =>
