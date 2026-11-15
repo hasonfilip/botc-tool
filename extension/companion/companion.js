@@ -52,9 +52,9 @@ const PREDEFINED_TAGS = [
 
 // Chips that tint their own cell. Default label is editable per chip.
 const CELL_COLORS = {
-  good:      { label: '👍 Good ping', title: 'Good ping (blue)' },
-  evil:      { label: '👎 Evil ping', title: 'Evil ping (red)' },
-  droisoned: { label: '🍺 Droisoned', title: 'Drunk or poisoned (sick green)' },
+  good:      { label: 'Good ping', title: 'Good ping (blue)' },
+  evil:      { label: 'Evil ping', title: 'Evil ping (red)' },
+  droisoned: { label: 'Droisoned', title: 'Drunk or poisoned (sick green)' },
 };
 
 // Roles that can cause a droison (cause drunkenness/poison, or are themselves a
@@ -82,7 +82,39 @@ const ICON_SVG = {
   markSkull: _svg(30, '<path d="M12 3a8 8 0 0 0-5 14.2V21h10v-3.8A8 8 0 0 0 12 3z"></path><circle cx="9" cy="12" r="1.6" fill="currentColor"></circle><circle cx="15" cy="12" r="1.6" fill="currentColor"></circle><path d="M10 21v-2M14 21v-2"></path>', ' stroke-width="1.8"'),
   ghostVote: _svg(10, '<circle cx="12" cy="12" r="6" fill="currentColor"></circle>'),
   ghostVoteSpent: _svg(10, '<circle cx="12" cy="12" r="7"></circle><path d="M7 17 17 7"></path>', ' stroke-width="2.4"'),
+  // Log and notes glyphs (timeline, nominations, conversations, messages).
+  logSkull: _svg(12, '<path d="M12 3a8 8 0 0 0-5 14.2V21h10v-3.8A8 8 0 0 0 12 3z"></path><path d="M9 12h.01M15 12h.01M10 21v-2M14 21v-2"></path>'),
+  logGhost: _svg(12, '<path d="M12 2a8 8 0 0 0-8 8v12l3-3 2.5 2.5L12 19l2.5 2.5L17 19l3 3V10a8 8 0 0 0-8-8z"></path><path d="M9 10h.01M15 10h.01"></path>'),
+  logRevive: _svg(12, '<path d="M12 5v14M5 12h14"></path>', ' stroke-width="2.6"'),
+  logExile: _svg(12, '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"></path>'),
+  logLock: _svg(12, '<rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path>'),
+  logPublic: _svg(12, '<path d="m3 11 18-5v12L3 14z"></path><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"></path>'),
+  logClock: _svg(12, '<circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path>'),
+  logEye: _svg(11, '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"></path><circle cx="12" cy="12" r="3"></circle>'),
+  logAxe: _svg(12, '<path d="m14 12-8.5 8.5a2.12 2.12 0 0 1-3-3L11 9"></path><path d="M15 13 9 7l4-4 6 6h3a8 8 0 0 1-7 7z"></path>'),
+  logShield: _svg(12, '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>'),
+  logNominate: _svg(12, '<path d="M11 5 6 9H2v6h4l5 4z"></path><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>'),
+  logHand: _svg(12, '<path d="M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v6M10 10.5V6a2 2 0 0 0-4 0v8"></path><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-6-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"></path>'),
+  logChat: _svg(12, '<path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>'),
+  logMoon: _svg(12, '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path>'),
+  logMail: _svg(12, '<rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m3 7 9 6 9-6"></path>'),
+  logWarn: _svg(12, '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path><path d="M12 9v4M12 17h.01"></path>'),
+  thumbUp: _svg(13, '<path d="M7 10v11M15 5.9 14 10h5.8a2 2 0 0 1 1.9 2.6l-2.3 7A2 2 0 0 1 17.5 21H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1h2.8a2 2 0 0 0 1.8-1.1L12 2a3.1 3.1 0 0 1 3 3.9z"></path>'),
+  thumbDown: _svg(13, '<path d="M17 14V3M9 18.1 10 14H4.2a2 2 0 0 1-1.9-2.6l2.3-7A2 2 0 0 1 6.5 3H20a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-2.8a2 2 0 0 0-1.8 1.1L12 22a3.1 3.1 0 0 1-3-3.9z"></path>'),
+  droplet: _svg(13, '<path d="M12 2.7 6.3 8.4a8 8 0 1 0 11.4 0z"></path>'),
+  trash: _svg(14, '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"></path>'),
+  pin: _svg(11, '<path d="M12 17v5M9 10.8V4h6v6.8l2.5 3.2v2h-11v-2z"></path>'),
 };
+
+// Status-tag chips are saved with an emoji in their data; draw the matching
+// line icon instead, falling back to whatever was stored for unknown ids.
+function tagChipIcon(chip) {
+  if (chip.name === 'Exiled') return ICON_SVG.logExile;
+  return { dead: ICON_SVG.logSkull, executed: ICON_SVG.logAxe, revived: ICON_SVG.logRevive, survived: ICON_SVG.logShield }[chip.id]
+    ?? esc(chip.icon ?? '');
+}
+// Cell-colour chips saved before the emoji were dropped from the default labels.
+const cellColorLabel = (label) => String(label ?? '').replace(/^(?:👍|👎|🍺)\s*/u, '');
 
 // "THE FIRST / Day" in the middle of the grimoire circle.
 const ORDINALS = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'eleventh', 'twelfth'];
@@ -390,7 +422,7 @@ function renderTimeline() {
         const team = playerTeamByName(name);
         const blockIsDay = block.label.startsWith('Day');
         const isExile = team === 'traveller' && blockIsDay && d.type === 'death';
-        const icon = d.type === 'ghostvote' ? '👻' : d.type === 'revive' ? '🌱' : isExile ? '👋' : '💀';
+        const icon = d.type === 'ghostvote' ? ICON_SVG.logGhost : d.type === 'revive' ? ICON_SVG.logRevive : isExile ? ICON_SVG.logExile : ICON_SVG.logSkull;
         const ghostTarget = d.type === 'ghostvote' ? (() => { const n = nominationAt(d.ts); return n ? ` on ${esc(seatName(n.nomineeSeat))}` : ''; })() : '';
         const action = d.type === 'ghostvote' ? `ghost vote${ghostTarget}` : d.type === 'revive' ? 'revived' : isExile ? 'exiled' : 'died';
         const cls = d.type === 'revive' ? 'revive' : d.type === 'ghostvote' ? 'ghostvote' : '';
@@ -609,7 +641,7 @@ function renderNominations() {
       </div>
       <div class="nom-voters${yesNames.length === 0 ? ' nom-none' : ''}">
         <span class="nom-voters-label">${votersLabel}</span>
-        ${yesNames.length > 0 ? yesNames.map(n => `${isGhostVoter(n) ? '👻 ' : ''}<span class="role-name ${playerTeamByName(n)}" data-player="${esc(n)}">${esc(dn(n))}</span>`).join('<span class="nom-voter-sep">,</span> ') : ''}
+        ${yesNames.length > 0 ? yesNames.map(n => `${isGhostVoter(n) ? `<span title="Ghost vote">${ICON_SVG.logGhost}</span>` : ''}<span class="role-name ${playerTeamByName(n)}" data-player="${esc(n)}">${esc(dn(n))}</span>`).join('<span class="nom-voter-sep">,</span> ') : ''}
       </div>
     `;
     list.appendChild(li);
@@ -669,7 +701,7 @@ function isObserver(userId) {
 function formatParticipant(userId) {
   const name = resolveParticipant(userId);
   if (isStoryteller(userId)) return `<span class="chat-st" data-player="${esc(name)}">${esc(dn(name))}</span>`;
-  if (isObserver(userId)) return `<span class="observer-name"><span class="observer-eye">👁</span>${esc(dn(name))}</span>`;
+  if (isObserver(userId)) return `<span class="observer-name"><span class="observer-eye" title="Spectator">${ICON_SVG.logEye}</span>${esc(dn(name))}</span>`;
   const team = playerTeamByName(name);
   return `<span class="role-name ${team}" data-player="${esc(name)}">${esc(dn(name))}</span>`;
 }
@@ -767,7 +799,7 @@ function renderChats() {
     li.className = `chat-entry chat-${session.type}`;
     li.innerHTML = `
       <div class="chat-header">
-        <span class="chat-type">${typeLabel}</span>
+        <span class="chat-type" title="${typeLabel}">${typeLabel}</span>
         <span class="chat-participants">${names.join('<span class="chat-sep">, </span>')}</span>
         <span class="chat-time">${fmt(session.ts)} – ${fmt(session.end)} · ${dur}</span>
       </div>
@@ -813,7 +845,7 @@ function renderMessages() {
       : `<div class="msg-body msg-private-hint">${msg.length ? `${msg.length} chars` : 'private message'}</div>`;
     li.innerHTML = `
       <div class="msg-header">
-        <span class="msg-badge ${isPrivate ? 'msg-badge-private' : 'msg-badge-public'}">${isPrivate ? '🔒' : '📢'}</span>
+        <span class="msg-badge ${isPrivate ? 'msg-badge-private' : 'msg-badge-public'}" title="${isPrivate ? 'Private' : 'Public'}">${isPrivate ? ICON_SVG.logLock : ICON_SVG.logPublic}</span>
         <span class="msg-parties">${senderSpan}${recipientSpan ? `<span class="msg-arrow">→</span>${recipientSpan}` : ''}</span>
         <span class="msg-time">${fmt(msg.ts)}</span>
       </div>
@@ -855,7 +887,7 @@ function buildPlayerEvents(name) {
     const raisedHand = yesSeats.has(playerSeat);
     const wasTracked = trackedSeats.has(playerSeat);
     const usedGhostVote = raisedHand && fullTimeline.some(ev => ev.type === 'ghostvote' && ev.name === name && Math.abs(ev.ts - nom.ts) < 120000);
-    const ghostSuffix = usedGhostVote ? ' 👻' : '';
+    const ghostSuffix = usedGhostVote ? ` ${ICON_SVG.logGhost}` : '';
 
     const isNominator = nominator === name;
     const isNominee = nominee === name;
@@ -900,7 +932,7 @@ function buildPlayerEvents(name) {
   // Messages
   for (const msg of allTextMessages) {
     const isPrivate = !!msg.recipientId;
-    const badge = isPrivate ? '🔒' : '📢';
+    const badge = isPrivate ? ICON_SVG.logLock : ICON_SVG.logPublic;
     if (msg.senderName === name) {
       const to = msg.recipientId ? formatParticipant(msg.recipientId) : '<span class="ptl-msg-public">public</span>';
       const body = msg.message ? `<span class="ptl-msg-body">${esc(msg.message)}</span>` : `<span class="ptl-msg-body">${msg.length ?? '?'} chars</span>`;
@@ -931,11 +963,11 @@ function openPlayerTimeline(name) {
   list.innerHTML = '';
 
   const typeIcon = {
-    'death': '💀', 'revive': '🌱', 'ghostvote': '👻',
-    'nom-made': '⚖', 'nom-received': '⚖',
-    'voted-yes': '✋', 'voted-no': '✋',
-    'chat-public': '🗣', 'chat-private': '🔒', 'chat-night': '🌙',
-    'msg-sent': '✉', 'msg-received': '✉',
+    'death': ICON_SVG.logSkull, 'revive': ICON_SVG.logRevive, 'ghostvote': ICON_SVG.logGhost,
+    'nom-made': ICON_SVG.logNominate, 'nom-received': ICON_SVG.logNominate,
+    'voted-yes': ICON_SVG.logHand, 'voted-no': ICON_SVG.logHand,
+    'chat-public': ICON_SVG.logChat, 'chat-private': ICON_SVG.logLock, 'chat-night': ICON_SVG.logMoon,
+    'msg-sent': ICON_SVG.logMail, 'msg-received': ICON_SVG.logMail,
   };
 
   let lastPhase = null;
@@ -1070,7 +1102,7 @@ function chipHtml(chip, player, phase, idx) {
       return `<span class="token-chip role-chip role-name ${chip.team ?? ''}" ${attrs}>${icon}${esc(chip.name)}</span>`;
     }
     if (chip.type === 'tag') {
-      const content = chip.icon ? `${chip.icon} ${esc(chip.name ?? chip.label ?? '')}` : esc(chip.label ?? '');
+      const content = chip.icon ? `${tagChipIcon(chip)} ${esc(chip.name ?? chip.label ?? '')}` : esc(chip.label ?? '');
       return `<span class="token-chip tag-chip" ${attrs}>${content}</span>`;
     }
     if (chip.type === 'note') {
@@ -1089,7 +1121,7 @@ function chipHtml(chip, player, phase, idx) {
         }
       }
       const inherited = chip.auto ? ' cc-inherited' : '';
-      return `<span class="token-chip cellcolor-chip cc-${esc(chip.id)}${inherited}" ${attrs}>${esc(chip.label ?? '')}${sourceHtml}</span>`;
+      return `<span class="token-chip cellcolor-chip cc-${esc(chip.id)}${inherited}" ${attrs}>${esc(cellColorLabel(chip.label))}${sourceHtml}</span>`;
     }
     if (chip.type === 'ability') {
       const resolvedUrl = _iconUrl({ id: chip.roleId, iconUrl: chip.iconUrl });
@@ -1142,7 +1174,7 @@ function classifyDeath(player, phase, ev) {
 }
 
 // When the timeline records a death/revive, drop a real, editable, persisted
-// status chip into the right cell — exactly like clicking the 💀/🌱 button.
+// status chip into the right cell — exactly like clicking the Died / Revived button.
 // The chip is created once and tagged `auto`. On later passes we re-classify our
 // own untouched auto chip (e.g. Died → Executed once the following Night starts),
 // but never recreate or override one the user has edited or deleted.
@@ -1249,17 +1281,17 @@ function getPopover() {
     <div class="tp-main-row">
       <input type="text" class="tp-note-input" placeholder="note" />
       <div class="tp-status-tags">
-        <button class="tp-tag-btn" data-tag-id="dead"      data-tag-icon="💀" data-tag-name="Died"               title="Dead">💀</button>
-        <button class="tp-tag-btn" data-tag-id="executed"  data-tag-icon="🪓" data-tag-name="Executed"           title="Executed">🪓</button>
-        <button class="tp-tag-btn" data-tag-id="revived"   data-tag-icon="🌱" data-tag-name="Revived"            title="Revived">🌱</button>
-        <button class="tp-tag-btn" data-tag-id="survived"  data-tag-icon="🛡️" data-tag-name="Survived"          title="Survived execution">🛡️</button>
+        <button class="tp-tag-btn" data-tag-id="dead"      data-tag-icon="💀" data-tag-name="Died"               title="Dead">${ICON_SVG.logSkull}</button>
+        <button class="tp-tag-btn" data-tag-id="executed"  data-tag-icon="🪓" data-tag-name="Executed"           title="Executed">${ICON_SVG.logAxe}</button>
+        <button class="tp-tag-btn" data-tag-id="revived"   data-tag-icon="🌱" data-tag-name="Revived"            title="Revived">${ICON_SVG.logRevive}</button>
+        <button class="tp-tag-btn" data-tag-id="survived"  data-tag-icon="🛡️" data-tag-name="Survived"          title="Survived execution">${ICON_SVG.logShield}</button>
       </div>
       <div class="tp-color-tags">
-        <button class="tp-color-btn cc-good"      data-color-id="good"      title="Good ping (blue)">👍</button>
-        <button class="tp-color-btn cc-evil"      data-color-id="evil"      title="Evil ping (red)">👎</button>
-        <button class="tp-color-btn cc-droisoned" data-color-id="droisoned" title="Drunk or poisoned (sick green)">🍺</button>
+        <button class="tp-color-btn cc-good"      data-color-id="good"      title="Good ping (blue)">${ICON_SVG.thumbUp}</button>
+        <button class="tp-color-btn cc-evil"      data-color-id="evil"      title="Evil ping (red)">${ICON_SVG.thumbDown}</button>
+        <button class="tp-color-btn cc-droisoned" data-color-id="droisoned" title="Drunk or poisoned (sick green)">${ICON_SVG.droplet}</button>
       </div>
-      <button class="tp-x-btn" type="button" title="Remove / cancel">🗑</button>
+      <button class="tp-x-btn" type="button" title="Remove / cancel" aria-label="Remove">${ICON_SVG.trash}</button>
     </div>
     <div class="tp-source-section" style="display:none">
       <span class="tp-source-label">source</span>
@@ -1772,7 +1804,7 @@ function openPopover(player, phase, anchorEl, chipIdx = null) {
 
   // Pre-fill the input when editing a note chip or a colored-cell chip's label
   noteInput.value = chip?.type === 'note' ? chip.text
-    : chip?.type === 'cellcolor' ? (chip.label ?? '')
+    : chip?.type === 'cellcolor' ? cellColorLabel(chip.label)
     : '';
 
   // Source picker only applies to colored-cell chips
@@ -2202,7 +2234,7 @@ function refreshMetaCells(name, { recolorPage = false } = {}) {
   const color = metaNameColor(name);
   const tint = metaRowTint(name);
   nameCell.style.color = color;
-  nameCell.style.background = tint;
+  nameCell.style.backgroundImage = tint ? `linear-gradient(${tint},${tint})` : '';
   if (row) row.style.background = tint;
   const meta = playerMeta[name] ?? {};
   if (roleCell) {
@@ -2346,8 +2378,8 @@ function renderNotesGrid() {
     const tint = metaRowTint(name);
     const dead = player.isDead ? ' dead' : '';
     const usedGhostVote = player.isDead && fullTimeline.some(ev => ev.type === 'ghostvote' && ev.name === name);
-    const statusIcons = (player.isDead ? '<span class="pn-status-icon pn-dead" title="Dead">💀</span>' : '')
-                      + (usedGhostVote ? '<span class="pn-status-icon pn-voteless" title="Used ghost vote">👻</span>' : '');
+    const statusIcons = (player.isDead ? `<span class="pn-status-icon pn-dead" title="Dead">${ICON_SVG.logSkull}</span>` : '')
+                      + (usedGhostVote ? `<span class="pn-status-icon pn-voteless" title="Used ghost vote">${ICON_SVG.logGhost}</span>` : '');
     const icon = meta.roleIconUrl ? `<img class="tp-role-icon" src="${esc(meta.roleIconUrl)}" />` : '';
     const roleColorClass = meta.alignment === 'evil' ? 'demon'
                          : meta.alignment === 'good' ? 'townsfolk'
@@ -2360,9 +2392,10 @@ function renderNotesGrid() {
     const a = meta.alignment ?? '';
     const alignHtml = a ? `<span class="meta-align-badge ${alignClass[a]}">${alignLabel[a]}</span>` : '';
     const tintStyle = tint ? `background:${tint}` : '';
+    const nameTintStyle = tint ? `background-image:linear-gradient(${tint},${tint})` : '';
     html += `<tr style="${tintStyle}">`;
     const pinned = pinnedPlayers.has(name);
-    html += `<td class="notes-player-name${dead}" data-player="${esc(name)}" style="${color ? `color:${color};` : ''}${tintStyle}"><button class="pin-hl-btn${pinned ? ' pinned' : ''}" data-pin="${esc(name)}" title="Pin highlight">☀</button><span class="notes-player-name-text">${esc(dn(name))}</span>${statusIcons}</td>`;
+    html += `<td class="notes-player-name${dead}" data-player="${esc(name)}" style="${color ? `color:${color};` : ''}${nameTintStyle}"><button class="pin-hl-btn${pinned ? ' pinned' : ''}" data-pin="${esc(name)}" title="Pin highlight" aria-label="Pin highlight">${ICON_SVG.pin}</button><span class="notes-player-name-text">${esc(dn(name))}</span>${statusIcons}</td>`;
     const roleLocked = isTraveller ? ' role-locked' : '';
     html += `<td class="notes-meta-cell notes-meta-role${roleLocked}" data-player="${esc(name)}">${roleHtml}</td>`;
     html += `<td class="notes-meta-cell notes-meta-align" data-player="${esc(name)}">${alignHtml}</td>`;
@@ -2455,7 +2488,7 @@ const SIGNAL_TOKEN_DEFS = [
   { id: 'three',      label: '3',                             cls: 'sig-chip-num' },
   { id: 'four',       label: '4',                             cls: 'sig-chip-num' },
   { id: 'five',       label: '5',                             cls: 'sig-chip-num' },
-  { id: 'grimoire',   label: '🗺️ Grimoire Snapshot',          cls: '' },
+  { id: 'grimoire',   label: 'Grimoire Snapshot',             cls: '' },
 ];
 
 // Split into "self report" (You are evil, role X, Bluffs: ...) and "other
@@ -4981,10 +5014,10 @@ function renderNightOrderColumn(night) {
     const icon = url ? `<img class="tp-role-icon" src="${esc(url)}" />` : '';
     const holders = byRole[e.id] ?? [];
     const names = holders.map(h => {
-      const icon = h.id ? '<span class="sig-hist-icon">💬</span>' : '';
+      const icon = h.id ? `<span class="sig-hist-icon">${ICON_SVG.logChat}</span>` : '';
       const clickAttrs = h.id ? ` data-uid="${esc(String(h.id))}" data-night="${esc(nightLabel)}"` : '';
       return `<span class="norder-holder${h.id ? ' sig-hist-holder' : ''}"${clickAttrs} title="${h.id ? 'Signals sent this night' : ''}">
-        <span class="role-name ${playerTeamByName(h.name)}${h.isDead ? ' norder-dead' : ''}" data-player="${esc(h.name)}">${h.isDead ? '💀 ' : ''}${esc(dn(h.name))}</span>${icon}
+        <span class="role-name ${playerTeamByName(h.name)}${h.isDead ? ' norder-dead' : ''}" data-player="${esc(h.name)}">${h.isDead ? ICON_SVG.logSkull : ''}${esc(dn(h.name))}</span>${icon}
       </span>`;
     }).join('<span class="norder-sep">, </span>');
     const drafts = holders.map(h => {
@@ -4996,7 +5029,7 @@ function renderNightOrderColumn(night) {
         const label = esc(entry.blockedBy?.roleName ?? '?');
         return `<div class="norder-draft norder-draft-locked">
           <span class="norder-draft-name">${esc(dn(h.name))}:</span>
-          <span class="norder-lock-label">🔒 waiting on ${label}</span>
+          <span class="norder-lock-label">${ICON_SVG.logLock} waiting on ${label}</span>
           <button class="norder-unlock" data-night="${night}" data-blocker-role="${esc(entry.blockedBy?.roleId ?? '')}" data-blocker-uid="${esc(String(entry.blockedBy?.uid ?? ''))}">Unlock anyway</button>
         </div>`;
       }
@@ -5017,12 +5050,12 @@ function renderNightOrderColumn(night) {
             `<button class="norder-override${v === current ? ' active' : ''}" data-key="${esc(key)}" data-field="${esc(ov.field)}" data-value="${esc(v)}">${esc(signalTokenDef(v)?.label ?? v)}</button>`
           ).join('');
         }
-        const warning = entry.warning ? `<span class="norder-warning" title="${esc(entry.warning)}">⚠️</span>` : '';
-        controls = `${toggle}<button class="norder-send" data-key="${esc(key)}">Send</button>${warning}`;
+        const warning = entry.warning ? `<span class="norder-warning" title="${esc(entry.warning)}">${ICON_SVG.logWarn}</span>` : '';
+        controls = `${toggle}${warning}<button class="norder-send" data-key="${esc(key)}">Send</button>`;
       }
       else if (entry.status === 'sent') controls = `<span class="norder-sent-label">Sent</span>`;
       else if (entry.status === 'manual') controls = `<button class="norder-compose" data-key="${esc(key)}">Compose…</button>`;
-      else if (entry.status === 'waiting') controls = `<span class="norder-waiting-label">⏳ waiting for their in-app selection</span>`;
+      else if (entry.status === 'waiting') controls = `<span class="norder-waiting-label">${ICON_SVG.logClock} waiting for their in-app selection</span>`;
       else if (entry.status === 'needs-input') {
         const inputs = script.inputs ?? [];
         controls = inputs.map((inputSpec) => {
@@ -5076,6 +5109,13 @@ function renderNightOrder() {
 
   recomputeNightSignalQueue();
   columnsEl.innerHTML = Array.from({ length: totalNights }, (_, i) => renderNightOrderColumn(i + 1)).join('');
+  // The newest night is the one being run: mark it, and bring it into view
+  // when it first appears (earlier nights stay a scroll away).
+  columnsEl.lastElementChild?.classList.add('is-current');
+  if (columnsEl.offsetParent && columnsEl.dataset.nights !== String(totalNights)) {
+    columnsEl.dataset.nights = String(totalNights);
+    columnsEl.scrollLeft = columnsEl.scrollWidth;
+  }
   columnsEl.querySelectorAll('.sig-hist-holder').forEach(holder => {
     holder.addEventListener('click', (e) => {
       e.stopPropagation();
