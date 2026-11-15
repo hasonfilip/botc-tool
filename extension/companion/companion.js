@@ -1335,6 +1335,9 @@ function getPopover() {
     label: 'label' in changes ? changes.label : cur.label,
     source: 'source' in changes ? changes.source : cur.source,
     fromNowOn: 'fromNowOn' in changes ? changes.fromNowOn : cur.fromNowOn,
+    // Where an ongoing droison was cut short (see the remove handler);
+    // re-ticking "from now on" starts it running to the end again.
+    until: 'fromNowOn' in changes ? undefined : cur.until,
   });
 
   // ── Note input ──────────────────────────────────────────────────────────────
@@ -1403,10 +1406,27 @@ function getPopover() {
     if (chipIdx === null || chipIdx === undefined) { closePopover(); return; }
     const key = `${player}|${phase}`;
     const chips = cellTokens[key] ?? [];
-    chips.splice(chipIdx, 1);
+    const [removed] = chips.splice(chipIdx, 1);
     cellTokens[key] = chips;
     saveTokens(player, phase);
     refreshCellChips(player, phase);
+
+    // An ongoing ("from now on") droison spans later phases, so removing one
+    // has to reach them too. Removing the original clears every inherited
+    // copy; removing an inherited copy ends the droison from that phase on.
+    if (removed?.type === 'cellcolor' && removed.id === 'droisoned' && (removed.auto || removed.fromNowOn)) {
+      if (removed.auto) {
+        const phases = getPhaseColumns();
+        for (let i = phases.indexOf(phase) - 1; i >= 0; i--) {
+          const origin = (cellTokens[`${player}|${phases[i]}`] ?? [])
+            .find(c => c.type === 'cellcolor' && c.id === 'droisoned' && !c.auto && c.fromNowOn);
+          if (origin) { origin.until = phase; saveTokens(player, phases[i]); break; }
+        }
+      }
+      document.activeElement?.blur?.(); // the grid won't rebuild under a focused note input
+      lastNotesKey = null;
+      renderNotesGrid();
+    }
 
     // Keep editing: jump to the neighbouring chip — the one to the left, or the
     // next one to the right if the deleted chip was the leftmost.
@@ -2297,7 +2317,8 @@ function propagateDroison() {
       const userDroison = chips.find(c => c.type === 'cellcolor' && c.id === 'droisoned' && !c.auto);
       const autoIdx = chips.findIndex(c => c.type === 'cellcolor' && c.id === 'droisoned' && c.auto);
 
-      if (userDroison?.fromNowOn) active = { label: userDroison.label, source: userDroison.source };
+      if (userDroison?.fromNowOn) active = { label: userDroison.label, source: userDroison.source, until: userDroison.until };
+      if (active && active.until === phase) active = null; // cut short here by the user
 
       const wantCopy = active && !userDroison; // inherit only where the user hasn't placed their own
       if (wantCopy) {
