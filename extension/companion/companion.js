@@ -4846,8 +4846,9 @@ function updateVoteTarget() {
   document.getElementById('vt-reset').hidden = h === 0;
 }
 
-// Shut up and listen: on while the bridge holds its seat; can only start with
-// no nomination open, a free seat (botc.app caps at 20) and the type free to change.
+// Shut up and listen: on while the bridge holds its seat; can start over an
+// open nomination (not mid-count) with a free seat (botc.app caps at 20) and
+// the type free to change.
 function updateShutUpButton() {
   const btn = document.getElementById('players-shut-up-btn');
   if (!btn) return;
@@ -4856,7 +4857,7 @@ function updateShutUpButton() {
   const why = !voteClock ? 'Not connected to botc.app'
     : on ? ''
     : (currentState?.players?.length ?? 0) >= 20 ? 'All 20 seats are taken'
-    : voteClock.nomination ? 'Close the open nomination first'
+    : voteClock.isInProgress || (voteClock.nomination && voteClock.locked > 0 && voteClock.locked <= (currentState?.players?.length ?? 0)) ? 'A vote is being counted'
     : voteClock.bigwigInPlay ? 'The Big Wig is in play: the nomination type can’t change'
     : '';
   btn.disabled = !!why;

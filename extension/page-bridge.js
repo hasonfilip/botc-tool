@@ -214,7 +214,8 @@
   };
 
   // Shut up and listen: an empty seat that nominates itself under nominee
-  // focus, so the room's attention goes to nobody and the storyteller can talk.
+  // focus (overriding any open nomination), so the room's attention goes to
+  // nobody and the storyteller can talk.
   // Toggled off, the nomination is dropped unlogged, the previous type comes
   // back and the seat goes. Lives only in this page — a reload forgets it.
   const MAX_SEATS = 20;
@@ -238,9 +239,13 @@
       return;
     }
     const npcs = store.state.players?.npcs ?? [];
-    if (v.nomination || v.isInProgress || v.locked > 0 || npcs.some(r => r?.id === 'bigwig')) return;
-    if (players().length >= MAX_SEATS) return;
+    const n = players().length;
+    // An open nomination is overridden — closed the app's way (logged only if
+    // it was counted) — but not one whose count is under way.
+    const counting = v.isInProgress || (v.nomination && v.locked > 0 && v.locked <= n);
+    if (counting || npcs.some(r => r?.id === 'bigwig') || n >= MAX_SEATS) return;
     const prevType = v.nominationType ?? 'regular';
+    if (v.nomination) closeNomination(store);
     await store.dispatch('players/addPlayer');
     const seat = players().length - 1;
     if (seat < 0 || players()[seat]?.id !== null) return;
