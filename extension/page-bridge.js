@@ -564,7 +564,13 @@
       spectators: scrapeSpectators(),
       roles: scrapedRoles.length ? scrapedRoles : storageRoles,
       edition: storage.edition ?? null,
-      bluffs: storage.bluffs ?? [],
+      // Demon bluffs as role ids — live store first (the localStorage mirror
+      // can lag behind or be missing), same source as the grimoire snapshot.
+      bluffs: (() => {
+        const live = getStore()?.state?.bluffs;
+        const src = Array.isArray(live) ? live : (Array.isArray(storage.bluffs) ? storage.bluffs : []);
+        return src.map(roleIdOf).filter(Boolean);
+      })(),
       reminders: storage.reminders ?? [],
       // Live store first — the localStorage mirror can lag behind a pause/resume.
       voteClock: voteClockOf(),

@@ -2905,7 +2905,29 @@ const SIGNAL_TOKEN_DEFS = [
   { id: 'four',       label: '4',                             cls: 'sig-chip-num' },
   { id: 'five',       label: '5',                             cls: 'sig-chip-num' },
   { id: 'grimoire',   label: 'Grimoire Snapshot',             cls: '' },
+  // Placeholders, filled in per recipient at send time (see expandOwnTokens) —
+  // so one "You are …" can go to several players, each getting their own.
+  { id: 'own-align',  label: 'their alignment',               cls: 'sig-chip-own' },
+  { id: 'own-role',   label: 'their role',                    cls: 'sig-chip-role sig-chip-own' },
 ];
+
+const OWN_TOKEN_IDS = new Set(['own-align', 'own-role']);
+
+// The message as one recipient should get it: "their alignment"/"their role"
+// become that player's actual alignment and role (dropped if unknown).
+function expandOwnTokens(message, player) {
+  return message.flatMap(t => {
+    if (t.id === 'own-align') {
+      const ge = player ? impliedAlignmentGE(player) : null;
+      return ge ? [{ id: ge === 'e' ? 'evil' : 'good' }] : [];
+    }
+    if (t.id === 'own-role') {
+      const role = scriptRoleId(player?.roleId);
+      return role ? [{ id: 'role', data: role }] : [];
+    }
+    return [t];
+  });
+}
 
 // Split into "self report" (You are evil, role X, Bluffs: ...) and "other
 // player report" (This player is X, Demon is Y) — these two sets are rarely
@@ -2968,6 +2990,105 @@ function renderSignalPreview() {
 function updateSignalSendBtn() {
   const btn = document.getElementById('signal-send-btn');
   if (btn) btn.disabled = !stMessage.length || !stRecipientIds.size;
+  renderSignalSuggestions();
+}
+
+// ── Signal suggestions — what usually follows the phrase just added ────────
+// "You are" → the recipient's alignment and role, "Bluffs:" → the demon
+// bluffs, "This player is" → a player, then their role, "Demon is" /
+// "Minions are" → whoever holds those roles. Each suggestion appends one or
+// more tokens, so the common message is a click or two.
+
+// A grimoire/bluff role id, as the id this game's script uses (what role
+// tokens carry) — null if it isn't on the script.
+function scriptRoleId(id) {
+  if (!id) return null;
+  const roles = currentState?.roles ?? [];
+  const norm = _normalizeId(id);
+  return (roles.find(r => r.id === id) ?? roles.find(r => _normalizeId(r.id) === norm))?.id ?? null;
+}
+
+function signalSuggestions() {
+  const players = (currentState?.players ?? []).slice().sort((a, b) => a.seat - b.seat);
+  const roleOf = (p) => scriptRoleId(p?.roleId);
+  const roleName = (id) => currentState?.roles?.find(r => r.id === id)?.name ?? id;
+  const teamOf = (p) => currentState?.roles?.find(r => r.id === roleOf(p))?.team ?? p.team ?? '';
+  const playerName = (p) => dn(displayName(p, p.seat));
+  const playerTok = (p) => ({ id: 'player', data: p.seat });
+  const roleTok = (id) => ({ id: 'role', data: id });
+  const recipient = stRecipientIds.size === 1
+    ? players.find(p => String(p.id) === [...stRecipientIds][0])
+    : null;
+
+  // The last phrase in the message, and the players/roles added after it.
+  let k = stMessage.length - 1;
+  while (k >= 0 && (stMessage[k].id === 'player' || stMessage[k].id === 'role')) k--;
+  const kw = stMessage[k]?.id;
+  const tail = stMessage.slice(k + 1);
+  const tailSeats = tail.filter(t => t.id === 'player').map(t => t.data);
+  const tailRoles = tail.filter(t => t.id === 'role').map(t => t.data);
+  const out = [];
+
+  if (kw === 'you' && !tail.length && stRecipientIds.size > 1) {
+    out.push({ label: 'their alignment & role', cls: 'own', tokens: [{ id: 'own-align' }, { id: 'own-role' }] });
+    out.push({ label: 'their alignment', cls: 'own', tokens: [{ id: 'own-align' }] });
+    out.push({ label: 'their role', cls: 'own', tokens: [{ id: 'own-role' }] });
+  } else if (kw === 'own-align' && stMessage[k - 1]?.id === 'you' && !tail.length) {
+    out.push({ label: 'their role', cls: 'own', tokens: [{ id: 'own-role' }] });
+  } else if (kw === 'you' && !tail.length && recipient) {
+    const align = impliedAlignmentGE(recipient) === 'e' ? 'evil' : impliedAlignmentGE(recipient) === 'g' ? 'good' : null;
+    const role = roleOf(recipient);
+    if (align && role) out.push({ label: `${align} ${roleName(role)}`, cls: align, tokens: [{ id: align }, roleTok(role)] });
+    if (align) out.push({ label: align, cls: align, tokens: [{ id: align }] });
+    if (role) out.push({ label: roleName(role), cls: 'role', tokens: [roleTok(role)] });
+  } else if ((kw === 'good' || kw === 'evil') && stMessage[k - 1]?.id === 'you' && !tail.length && recipient) {
+    const role = roleOf(recipient);
+    if (role) out.push({ label: roleName(role), cls: 'role', tokens: [roleTok(role)] });
+  } else if (kw === 'bluffs') {
+    const bluffs = [...new Set((currentState?.bluffs ?? [])
+      .map(b => scriptRoleId(typeof b === 'string' ? b : b?.id)).filter(Boolean))]
+      .filter(id => !tailRoles.includes(id));
+    if (bluffs.length > 1) out.push({ label: bluffs.map(roleName).join(', '), cls: 'role', tokens: bluffs.map(roleTok) });
+    bluffs.forEach(id => out.push({ label: roleName(id), cls: 'role', tokens: [roleTok(id)] }));
+  } else if (kw === 'demon' || kw === 'minions') {
+    const team = kw === 'demon' ? 'demon' : 'minion';
+    const holders = players.filter(p => teamOf(p) === team && !tailSeats.includes(p.seat));
+    if (holders.length > 1) out.push({ label: holders.map(playerName).join(', '), cls: 'evil', tokens: holders.map(playerTok) });
+    holders.forEach(p => out.push({ label: playerName(p), cls: 'player', tokens: [playerTok(p)] }));
+  } else if (kw === 'claim') {
+    // "This player is" X [and Y] — then the role of one of them.
+    if (!tailRoles.length) {
+      tailSeats.forEach(seat => {
+        const p = players.find(x => x.seat === seat);
+        const role = roleOf(p);
+        if (role) out.push({ label: roleName(role), hint: playerName(p), cls: 'role', tokens: [roleTok(role)] });
+      });
+    }
+    if (tailSeats.length < 2 && !tailRoles.length) {
+      players
+        .filter(p => !tailSeats.includes(p.seat) && p !== recipient)
+        .forEach(p => out.push({ label: playerName(p), cls: 'player', dead: p.isDead, tokens: [playerTok(p)] }));
+    }
+  }
+  return out;
+}
+
+function renderSignalSuggestions() {
+  const el = document.getElementById('signal-suggest');
+  if (!el) return;
+  const items = signalSuggestions();
+  el.hidden = !items.length;
+  el.innerHTML = items.map((s, i) =>
+    `<button type="button" class="sig-suggest-btn sig-suggest-${s.cls}${s.dead ? ' sig-suggest-dead' : ''}" data-i="${i}">`
+    + `${esc(s.label)}${s.hint ? `<span class="sig-suggest-hint">${esc(s.hint)}</span>` : ''}</button>`
+  ).join('');
+  el.querySelectorAll('.sig-suggest-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      stMessage.push(...items[Number(btn.dataset.i)].tokens.map(t => ({ ...t })));
+      renderSignalPreview();
+      updateSignalSendBtn();
+    });
+  });
 }
 
 // session.signals is keyed by recipient — "storyteller" mirrors outbound-only
@@ -3377,7 +3498,16 @@ function initSignalPanel() {
     addCustomSignalToken();
     if (!stMessage.length || !stRecipientIds.size) return;
     const userIds = [...stRecipientIds];
-    sendBg({ type: 'SEND_SIGNAL', userIds, message: stMessage });
+    if (stMessage.some(t => OWN_TOKEN_IDS.has(t.id))) {
+      // Personalized: one signal per recipient, each with their own alignment/role.
+      for (const uid of userIds) {
+        const player = (currentState?.players ?? []).find(p => String(p.id) === uid);
+        const message = expandOwnTokens(stMessage, player);
+        if (message.length) sendBg({ type: 'SEND_SIGNAL', userIds: [uid], message });
+      }
+    } else {
+      sendBg({ type: 'SEND_SIGNAL', userIds, message: stMessage });
+    }
     stMessage = [];
     renderSignalPreview();
     updateSignalSendBtn();

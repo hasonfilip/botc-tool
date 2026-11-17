@@ -2736,6 +2736,38 @@ tr:hover .pin-hl-btn, .pin-hl-btn:focus-visible { opacity: 0.55; }
   padding: 0;
   font-family: inherit;
 }
+/* Suggested continuations of the message — dashed outline chips, coloured
+   like the tokens they'd add. */
+.sig-suggest { display: flex; flex-wrap: wrap; gap: 4px; }
+.sig-suggest[hidden] { display: none; }
+.sig-suggest-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border: 1px dashed currentColor;
+  border-radius: 6px;
+  background: none;
+  color: var(--text2);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.5;
+  cursor: pointer;
+  opacity: 0.8;
+  transition: opacity 0.1s, background 0.1s;
+}
+.sig-suggest-btn::before { content: '+'; opacity: 0.7; }
+.sig-suggest-btn:hover { opacity: 1; background: var(--surface-3); }
+.sig-suggest-good   { color: var(--townsfolk); }
+.sig-suggest-evil   { color: var(--minion); }
+.sig-suggest-role   { color: var(--accent-text); }
+.sig-suggest-player { color: var(--traveller); }
+.sig-suggest-own    { color: var(--text); font-style: italic; }
+.sig-suggest-dead   { opacity: 0.45; }
+/* Per-recipient placeholders: filled in at send time, so they read as slots. */
+.sig-chip-own { font-style: italic; border: 1px dashed currentColor; }
+.sig-suggest-hint   { color: var(--muted); }
+
 .sig-chip-remove:hover { background: rgba(255,255,255,0.08); }
 .sig-chip-remove:hover { color: var(--evil); }
 
