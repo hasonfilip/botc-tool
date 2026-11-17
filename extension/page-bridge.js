@@ -115,6 +115,7 @@
       // While we're not driving, the app's own speed is the truth (it may have
       // been changed in botc.app's settings).
       drive: { active: drive.active, pattern: drive.pattern, speed: drive.active ? drive.speed : v.speed },
+      shutUp: !!shutUp,
     };
   };
 
@@ -210,6 +211,43 @@
     store.commit('vote/setVoteTimer');
     store.dispatch('vote/addLogEntry');
     store.commit('vote/nomination');
+  };
+
+  // Shut up and listen: an empty seat that nominates itself under nominee
+  // focus, so the room's attention goes to nobody and the storyteller can talk.
+  // Toggled off, the nomination is dropped unlogged, the previous type comes
+  // back and the seat goes. Lives only in this page — a reload forgets it.
+  const MAX_SEATS = 20;
+  let shutUp = null; // { seat, prevType }
+  const handleShutUp = async () => {
+    const store = getStore();
+    const v = store?.state?.vote;
+    if (!v) return;
+    const players = () => store.state.players?.players ?? [];
+    if (shutUp) {
+      const { seat, prevType } = shutUp;
+      shutUp = null;
+      if (Array.isArray(v.nomination) && v.nomination[0] === seat && v.nomination[1] === seat) {
+        drive.active = false;
+        store.commit('vote/setVoteTimer');
+        store.commit('vote/nomination');
+      }
+      if (!v.nomination && v.nominationType !== prevType) store.commit('vote/setNominationType', prevType);
+      if (players()[seat]?.id === null) await store.dispatch('players/removePlayers', [seat]);
+      postClock();
+      return;
+    }
+    const npcs = store.state.players?.npcs ?? [];
+    if (v.nomination || v.isInProgress || v.locked > 0 || npcs.some(r => r?.id === 'bigwig')) return;
+    if (players().length >= MAX_SEATS) return;
+    const prevType = v.nominationType ?? 'regular';
+    await store.dispatch('players/addPlayer');
+    const seat = players().length - 1;
+    if (seat < 0 || players()[seat]?.id !== null) return;
+    shutUp = { seat, prevType };
+    store.commit('vote/setNominationType', 'focus');
+    store.dispatch('vote/nominatePlayer', [seat, seat]);
+    postClock();
   };
 
   const handleVoteDrive = (msg) => {
@@ -722,6 +760,9 @@
         const value = Math.max(0, Math.round(Number(event.data.value) || 0));
         getStore()?.commit('vote/setHighscore', value);
       } catch { /* page not ready or store unavailable */ }
+    }
+    if (event.data?.type === 'SHUT_UP') {
+      handleShutUp().catch(() => { /* page not ready or store unavailable */ });
     }
     if (event.data?.type === 'VOTE_DRIVE') {
       try { handleVoteDrive(event.data); } catch { /* page not ready or store unavailable */ }

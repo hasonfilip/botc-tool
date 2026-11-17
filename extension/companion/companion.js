@@ -3490,6 +3490,7 @@ function initSignalPanel() {
     sendBg({ type: 'REMOVE_EMPTY_SEATS' });
   };
   document.getElementById('players-remove-empty-btn')?.addEventListener('click', removeEmptySeats);
+  document.getElementById('players-shut-up-btn')?.addEventListener('click', () => sendBg({ type: 'SHUT_UP' }));
 
   document.getElementById('players-nominate-btn')?.addEventListener('click', () => setPlayerActionMode('nominate'));
   document.getElementById('players-swap-btn')?.addEventListener('click', () => setPlayerActionMode('swap'));
@@ -4845,6 +4846,24 @@ function updateVoteTarget() {
   document.getElementById('vt-reset').hidden = h === 0;
 }
 
+// Shut up and listen: on while the bridge holds its seat; can only start with
+// no nomination open, a free seat (botc.app caps at 20) and the type free to change.
+function updateShutUpButton() {
+  const btn = document.getElementById('players-shut-up-btn');
+  if (!btn) return;
+  const on = !!voteClock?.shutUp;
+  btn.classList.toggle('toggle-btn-active', on);
+  const why = !voteClock ? 'Not connected to botc.app'
+    : on ? ''
+    : (currentState?.players?.length ?? 0) >= 20 ? 'All 20 seats are taken'
+    : voteClock.nomination ? 'Close the open nomination first'
+    : voteClock.bigwigInPlay ? 'The Big Wig is in play: the nomination type can’t change'
+    : '';
+  btn.disabled = !!why;
+  btn.title = why || (on ? 'Scrap the nomination, restore the nomination type and remove the seat'
+    : 'Add an empty seat that nominates itself under nominee focus, so nobody has the floor. Click again to scrap it and put things back');
+}
+
 function wireVoteTarget() {
   document.getElementById('vt-minus')?.addEventListener('click', () => setVotesToExecute(votesToExecute() - 1));
   document.getElementById('vt-plus')?.addEventListener('click', () => setVotesToExecute(votesToExecute() + 1));
@@ -4899,6 +4918,7 @@ function renderNomHands() {
 }
 
 function renderPlayers() {
+  updateShutUpButton();
   const table = document.getElementById('player-table');
   if (!table) return;
   const players = currentState?.players ?? [];
@@ -6144,7 +6164,7 @@ chrome.runtime.onMessage.addListener((message) => {
     }
     else if (payload.type === 'WS_RECV' || payload.type === 'WS_SEND') { appendWsEvent(payload); }
     else if (payload.type === 'CONN') { applyConn(payload.data); }
-    else if (payload.type === 'VOTE_CLOCK') { voteClock = payload.data; updateVoteClock(); }
+    else if (payload.type === 'VOTE_CLOCK') { voteClock = payload.data; updateVoteClock(); updateShutUpButton(); }
     else if (payload.type === 'NEEDS_RELOAD') { showReloadPrompt(); }
     return;
   }

@@ -170,6 +170,10 @@ function votesNeeded(players, nomineeSeat, highscore) {
   return Math.max(Math.ceil(alive / 2), (highscore ?? 0) + 1);
 }
 
+// An empty seat nominating itself is Shut up and listen, not a real
+// nomination: it's kept out of the history when it closes.
+const isShutUpNomination = (n) => !!n && n.nominatorSeat === n.nomineeSeat && n.seatNames?.[n.nomineeSeat] == null;
+
 async function handleNominationFrame(eventName, eventData, ts) {
   if (isDup(_nomDedupMap, eventName + JSON.stringify(eventData))) return;
 
@@ -194,6 +198,9 @@ async function handleNominationFrame(eventName, eventData, ts) {
       // The companion needs the open nomination too, not just closed ones: it
       // counts toward the per-day nominate-once limits the moment it's made.
       await sendToCompanion({ type: 'NOMINATIONS_UPDATE', nominations, pendingNomination: entry });
+    } else if (eventData.nomination === false && isShutUpNomination(pendingNomination)) {
+      await store.set({ pendingNomination: null });
+      await sendToCompanion({ type: 'NOMINATIONS_UPDATE', nominations, pendingNomination: null });
     } else if (eventData.nomination === false && pendingNomination) {
       await store.set({ nominations: [...nominations, pendingNomination], pendingNomination: null });
       await sendToCompanion({ type: 'NOMINATIONS_UPDATE', nominations: [...nominations, pendingNomination], pendingNomination: null });
@@ -283,7 +290,7 @@ async function handleVoteClock(clock) {
   // Closed, or replaced by another nomination. An empty store before the
   // session is live (page load, reconnect) is not a close.
   if (pendingNomination && !isOpen(pendingNomination) && (open || clock.connected)) {
-    nominations = [...nominations, { ...pendingNomination, closedTs: Date.now() }];
+    if (!isShutUpNomination(pendingNomination)) nominations = [...nominations, { ...pendingNomination, closedTs: Date.now() }];
     pendingNomination = null;
   }
 
@@ -658,7 +665,7 @@ chrome.runtime.onStartup.addListener(() => { connectToTabs(); });
 
 // Storyteller commands relayed verbatim to the active botc.app tab's bridge.
 const COMPANION_COMMANDS = new Set([
-  'SEND_SIGNAL', 'SET_TIMER', 'PAUSE_TIMER', 'VOTE_DRIVE', 'SET_HIGHSCORE', 'END_GAME', 'GONG',
+  'SEND_SIGNAL', 'SET_TIMER', 'PAUSE_TIMER', 'VOTE_DRIVE', 'SHUT_UP', 'SET_HIGHSCORE', 'END_GAME', 'GONG',
   'ADD_SEAT', 'SHUFFLE_SEATS', 'REMOVE_EMPTY_SEATS',
   'BECOME_STORYTELLER', 'STEP_DOWN_STORYTELLER', 'LOAD_CUSTOM_SCRIPT',
   'NEXT_PHASE', 'NOMINATE', 'REMOVE_SEAT', 'CLEAR_GRIMOIRE', 'SET_PLAYER_PROPERTY',
