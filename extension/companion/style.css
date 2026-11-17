@@ -1031,6 +1031,7 @@ section.collapsed h2 { margin-bottom: 0; }
   transition: background 0.12s, color 0.12s, box-shadow 0.12s;
 }
 .player-filter-chip:hover { background: var(--surface-3); color: var(--text); }
+.player-filter-chip.player-filter-st:not(.active) { color: var(--yes); }
 .player-filter-chip.active {
   background: var(--accent-soft);
   color: var(--accent-text);
@@ -1080,7 +1081,7 @@ section.collapsed h2 { margin-bottom: 0; }
 .ptl-msg-public { color: var(--muted); }
 
 [data-player] { cursor: pointer; border-radius: 3px; }
-#notes-table [data-player] { cursor: default; }
+:is(#notes-table, #role-notes-table) [data-player] { cursor: default; }
 [data-player].player-hl { background: rgba(233,180,76,0.16); box-shadow: 0 0 0 1px rgba(233,180,76,0.28); }
 tr[data-player].player-hl td { background: rgba(233,180,76,0.08); }
 #player-table [data-player].player-hl { background: none; box-shadow: none; }
@@ -1234,13 +1235,13 @@ tr:hover .pin-hl-btn, .pin-hl-btn:focus-visible { opacity: 0.55; }
 .notes-scroll { overflow-x: auto; }
 
 /* An open sheet: hairlines under rows and between phase columns, no outer box. */
-#notes-table {
+:is(#notes-table, #role-notes-table) {
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
 }
 
-#notes-table th {
+:is(#notes-table, #role-notes-table) th {
   padding: 4px 10px 9px;
   font-size: 11px;
   font-weight: 600;
@@ -1252,23 +1253,23 @@ tr:hover .pin-hl-btn, .pin-hl-btn:focus-visible { opacity: 0.55; }
   white-space: nowrap;
   text-align: left;
 }
-#notes-table th.notes-player-col { padding-left: 17px; }  /* past the pin button */
-#notes-table th.notes-align-col { text-align: center; }
-#notes-table th.notes-phase-col { border-left: 1px solid var(--line); }
+:is(#notes-table, #role-notes-table) th.notes-player-col { padding-left: 17px; }  /* past the pin button */
+:is(#notes-table, #role-notes-table) th.notes-align-col { text-align: center; }
+:is(#notes-table, #role-notes-table) th.notes-phase-col { border-left: 1px solid var(--line); }
 
 /* Phase columns say night or day with the label's colour, not a filled bar. */
-#notes-table th.notes-night  { color: var(--night); }
-#notes-table th.notes-day    { color: var(--accent-text); }
-#notes-table th.notes-merged { color: var(--text2); }
+:is(#notes-table, #role-notes-table) th.notes-night  { color: var(--night); }
+:is(#notes-table, #role-notes-table) th.notes-day    { color: var(--accent-text); }
+:is(#notes-table, #role-notes-table) th.notes-merged { color: var(--text2); }
 
-#notes-table td {
+:is(#notes-table, #role-notes-table) td {
   border-bottom: 1px solid var(--line);
   vertical-align: top;
 }
-#notes-table tbody tr:last-child td { border-bottom: none; }
+:is(#notes-table, #role-notes-table) tbody tr:last-child td { border-bottom: none; }
 
-#notes-table td.notes-player-name,
-#notes-table td.notes-meta-cell { vertical-align: middle; }
+:is(#notes-table, #role-notes-table) td.notes-player-name,
+:is(#notes-table, #role-notes-table) td.notes-meta-cell { vertical-align: middle; }
 
 .notes-player-col { position: sticky; left: 0; background: var(--bg); z-index: 1; }
 
@@ -1284,6 +1285,9 @@ tr:hover .pin-hl-btn, .pin-hl-btn:focus-visible { opacity: 0.55; }
   white-space: nowrap;
 }
 .notes-meta-align { user-select: none; text-align: center; }
+/* Hairlines between Player | Role | Align, same as between phase columns. */
+:is(#notes-table, #role-notes-table) td.notes-meta-cell,
+:is(#notes-table, #role-notes-table) th.notes-meta-col { border-left: 1px solid var(--line); }
 .notes-meta-cell:hover { background: rgba(255,255,255,0.04); }
 
 .meta-role-chip { font-size: 11px; display: inline-flex; align-items: center; gap: 3px; padding: 2px 6px; }
@@ -1465,6 +1469,61 @@ tr:hover .pin-hl-btn, .pin-hl-btn:focus-visible { opacity: 0.55; }
 }
 
 .token-chip:hover { filter: brightness(1.25); }
+.token-chip[draggable] { -webkit-user-drag: element; }
+
+/* Hover "×" on a chip's corner: delete without opening the popover. */
+.token-chip { position: relative; }
+.chip-x {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 15px;
+  height: 15px;
+  display: none;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--text2);
+  font: 600 11px/1 var(--font);
+  cursor: pointer;
+}
+.token-chip:hover .chip-x { display: grid; }
+.chip-x:hover { background: var(--evil); color: #fff; }
+
+:is(#notes-table, #role-notes-table) td.notes-cell.drop-target { box-shadow: inset 0 0 0 2px var(--accent); }
+
+/* Role notes: a table of its own above the player grid, sharing its phase columns. */
+#role-notes-table { margin-bottom: 18px; border-bottom: 1px solid var(--border); }
+:is(#notes-table, #role-notes-table) td.notes-row-label { padding: 6px 10px 6px 17px; font-weight: 400; }
+.notes-row-label-inner { display: flex; align-items: center; gap: 8px; }
+.notes-custom-label { color: var(--text); padding: 2px 6px; cursor: text; overflow: hidden; text-overflow: ellipsis; }
+.notes-custom-label:hover { color: var(--accent-text); }
+.notes-label-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--sunken);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  padding: 2px 6px;
+  outline: none;
+}
+.notes-row-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.notes-assign-btn, .notes-row-remove {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.notes-assign-btn:hover { color: var(--accent-text); text-decoration: underline; text-underline-offset: 3px; }
+.notes-row-remove { font-size: 14px; line-height: 1; opacity: 0.6; }
+.notes-row-remove:hover { opacity: 1; color: var(--evil); }
 
 .token-chip .tp-role-icon {
   width: 28px;
@@ -1475,7 +1534,7 @@ tr:hover .pin-hl-btn, .pin-hl-btn:focus-visible { opacity: 0.55; }
 .role-chip { background: var(--surface-2); }
 .tag-chip  { background: var(--surface-2); color: var(--text2); }
 .tag-chip .btn-icon { color: var(--muted); margin: 0; }
-.note-chip { background: var(--surface-2); color: var(--text); font-style: italic; }
+.note-chip { background: var(--surface-2); color: var(--text); font-style: italic; white-space: pre-wrap; }
 .ability-chip { background: var(--surface-2); gap: 4px; flex-wrap: wrap; }
 .confirmed-chip { background: rgba(125,211,150,0.14); color: var(--yes); }
 
@@ -1501,9 +1560,9 @@ tr:hover .pin-hl-btn, .pin-hl-btn:focus-visible { opacity: 0.55; }
 .cellcolor-chip.cc-inherited { opacity: 0.6; border: 1px dashed currentColor; }
 
 /* The tint applied to the whole cell (only the cell, not the row) */
-#notes-table td.notes-cell.cc-cell-good      { background: rgba(95,143,234,0.10); }
-#notes-table td.notes-cell.cc-cell-evil      { background: rgba(255,107,97,0.09); }
-#notes-table td.notes-cell.cc-cell-droisoned { background: rgba(154,205,50,0.09); }
+:is(#notes-table, #role-notes-table) td.notes-cell.cc-cell-good      { background: rgba(95,143,234,0.10); }
+:is(#notes-table, #role-notes-table) td.notes-cell.cc-cell-evil      { background: rgba(255,107,97,0.09); }
+:is(#notes-table, #role-notes-table) td.notes-cell.cc-cell-droisoned { background: rgba(154,205,50,0.09); }
 
 /* ── Ability chip value badges ── */
 .ab-val {
@@ -1552,7 +1611,7 @@ tr:hover .pin-hl-btn, .pin-hl-btn:focus-visible { opacity: 0.55; }
   box-shadow: 0 12px 32px rgba(0,0,0,0.55);
   flex-direction: column;
   gap: 8px;
-  min-width: 320px;
+  min-width: 360px;
   max-width: min(680px, calc(100vw - 24px));
 }
 
@@ -1567,12 +1626,29 @@ tr:hover .pin-hl-btn, .pin-hl-btn:focus-visible { opacity: 0.55; }
   background: var(--bg);
   border: 1px solid var(--border);
   color: var(--text);
-  padding: 4px 8px;
-  border-radius: 5px;
-  font-size: 12px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  font-size: 13px;
+  line-height: 1.4;
   font-family: inherit;
   outline: none;
-  width: 140px;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 34px;
+  max-height: 40vh;
+  resize: none;
+  overflow-y: auto;
+  display: block;
+}
+.tp-note-input::placeholder { color: var(--muted); }
+
+.tp-hint { display: flex; gap: 12px; font-size: 10px; color: var(--muted); white-space: nowrap; }
+.tp-hint kbd {
+  font: inherit;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text2);
 }
 
 .tp-note-input:focus { border-color: var(--accent); }
@@ -1869,7 +1945,7 @@ tr:hover .pin-hl-btn, .pin-hl-btn:focus-visible { opacity: 0.55; }
 .tp-ab-opt-btn.active { background: rgba(233,180,76,0.4); border-color: var(--accent); }
 
 
-#notes-table th.notes-player-col { position: sticky; left: 0; background: var(--bg); z-index: 2; }
+:is(#notes-table, #role-notes-table) th.notes-player-col { position: sticky; left: 0; background: var(--bg); z-index: 2; }
 
 /* ── WS log ── */
 

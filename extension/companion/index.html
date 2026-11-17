@@ -62,8 +62,9 @@
 
 	<main>
 		<section id="notes-section">
-			<h2><span class="chevron">▾</span> Notes <button id="clear-notes" class="toggle-btn">clear</button></h2>
+			<h2><span class="chevron">▾</span> Notes <button id="add-note-row" class="toggle-btn" title="Add a row for a role whose player you don't know yet, or under a label of your own">+ role notes</button> <button id="clear-notes" class="toggle-btn">clear</button></h2>
 			<div class="notes-scroll">
+				<table id="role-notes-table" style="display:none"></table>
 				<table id="notes-table"></table>
 			</div>
 		</section>

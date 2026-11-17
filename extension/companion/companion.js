@@ -32,7 +32,8 @@ let hoveredSeat = null; // seat under the cursor, for the nomination hand previe
 let materializedStatus = new Set(); // event keys already turned into a status chip — never recreate, even after edit/delete
 let playerMeta = {}; // { name: { roleId, roleName, roleTeam, roleIconUrl, alignment } }
 let lastNotesKey = '';
-let notesFixedColWidths = null; // { player, role, align } in px — set once, never shrunk
+let notesFixedColWidths = null; // { player, role, align } in px — re-measured when names/roles/rows change, never shrunk
+let notesFixedKey = null;       // what the widths above were measured for
 let pinnedPlayers = new Set();
 let stMessage = [];
 let stRecipientIds = new Set();
@@ -728,12 +729,17 @@ function createPlayerFilter({ barId, toggleId, clearId, onChange }) {
     toggleBtn.classList.toggle('toggle-btn-active', shown);
     clearBtn.style.display = picked.size ? '' : 'none';
     clearBtn.textContent = `✕ clear ${picked.size}`;
-    const names = [...new Set([...(currentState?.players ?? []).map(p => p.name).filter(Boolean), ...picked])];
-    const key = JSON.stringify([names.map(n => [n, dn(n)]), [...picked]]);
+    // Storytellers take part in conversations too, so they get chips after the
+    // players — under the same name the entries show them with.
+    const sts = currentState?.storytellers ?? [];
+    const stNames = new Set((sts.length ? sts.map(st => { const n = resolveParticipant(st.id); return n === st.id ? null : n; }) : (currentState?.storytellerNames ?? []))
+      .filter(n => typeof n === 'string' && n)); // an unresolved storyteller is still a bare id — no chip until named
+    const names = [...new Set([...(currentState?.players ?? []).map(p => p.name).filter(Boolean), ...stNames, ...picked])];
+    const key = JSON.stringify([names.map(n => [n, dn(n), stNames.has(n)]), [...picked]]);
     if (key === lastKey) return;
     lastKey = key;
     bar.innerHTML = names.map(n =>
-      `<button class="player-filter-chip${picked.has(n) ? ' active' : ''}" data-filter-player="${esc(n)}">${esc(dn(n))}</button>`
+      `<button class="player-filter-chip${stNames.has(n) ? ' player-filter-st' : ''}${picked.has(n) ? ' active' : ''}" data-filter-player="${esc(n)}"${stNames.has(n) ? ' title="Storyteller"' : ''}>${esc(dn(n))}</button>`
     ).join('');
   }
 
@@ -1012,6 +1018,173 @@ document.getElementById('player-timeline-overlay').addEventListener('click', clo
 
 // ── Notes grid ───────────────────────────────────────────────────────────
 
+// Things you hear about a role without knowing who holds it don't belong in the
+// player grid. They get a table of their own above it — one row per role, or
+// per label you type yourself — sharing the grid's phase columns. Rows store
+// their chips in cellTokens exactly like a player would, under an owner key no
+// player name can take: '@role:<roleId>' or '@note:<id>' (free-text label, kept
+// in `labels`). The row list itself lives in playerMeta under NOTE_ROWS_KEY, so
+// it is saved, restored and reset together with the notes.
+const NOTE_ROWS_KEY = '@noteRows';
+const extraNoteRows = () => playerMeta[NOTE_ROWS_KEY]?.rows ?? [];
+const noteRowLabel = (owner) => playerMeta[NOTE_ROWS_KEY]?.labels?.[owner] ?? 'General';
+const rowRoleId = (owner) => (typeof owner === 'string' && owner.startsWith('@role:')) ? owner.slice(6) : null;
+const noteRowRole = (owner) => {
+  const id = rowRoleId(owner);
+  if (!id) return null;
+  return (currentState?.roles ?? []).find(r => r.id === id)
+    ?? _roles().find(r => r.id === _normalizeId(id))
+    ?? { id, name: id, team: '' };
+};
+
+function saveExtraNoteRows(rows, labels = playerMeta[NOTE_ROWS_KEY]?.labels ?? {}) {
+  labels = Object.fromEntries(Object.entries(labels).filter(([owner]) => rows.includes(owner)));
+  playerMeta[NOTE_ROWS_KEY] = { rows, labels };
+  sendBg({ type: 'SAVE_PLAYER_META', name: NOTE_ROWS_KEY, meta: playerMeta[NOTE_ROWS_KEY] });
+  lastNotesKey = null;
+  renderNotesGrid();
+}
+
+const noteRowPhases = (owner) => Object.keys(cellTokens)
+  .filter(k => k.startsWith(`${owner}|`))
+  .map(k => k.slice(owner.length + 1));
+
+// `value` is a role-row owner key, or { custom: 'label' } for a free-text row.
+function addExtraNoteRow(value) {
+  let owner = value;
+  if (value?.custom) {
+    owner = `@note:${Date.now().toString(36)}`;
+    saveExtraNoteRows([...extraNoteRows(), owner], { ...(playerMeta[NOTE_ROWS_KEY]?.labels ?? {}), [owner]: value.custom });
+  } else if (!extraNoteRows().includes(owner)) {
+    saveExtraNoteRows([...extraNoteRows(), owner]);
+  }
+  // Straight into the newest column: a row is added because there's something to write down.
+  const cells = document.querySelectorAll(`.notes-scroll td.notes-cell[data-player="${CSS.escape(owner)}"]`);
+  const cell = cells[cells.length - 1];
+  if (cell) openPopover(owner, cell.dataset.phase, cell, null);
+}
+
+function removeExtraNoteRow(owner) {
+  const phases = noteRowPhases(owner).filter(ph => (cellTokens[`${owner}|${ph}`] ?? []).length);
+  if (phases.length && !confirm('Remove this row and its notes?')) return;
+  for (const ph of phases) { cellTokens[`${owner}|${ph}`] = []; saveTokens(owner, ph); }
+  saveExtraNoteRows(extraNoteRows().filter(o => o !== owner));
+}
+
+// "So that's who the Empath is": hand everything noted on a role row over to a
+// player, phase by phase, and set that player's role unless the grimoire has
+// already filled it in.
+function assignNoteRowToPlayer(owner, player) {
+  for (const ph of noteRowPhases(owner)) {
+    const chips = (cellTokens[`${owner}|${ph}`] ?? []).filter(c => !(c.type === 'cellcolor' && c.auto));
+    if (chips.length) {
+      cellTokens[`${player}|${ph}`] = [...(cellTokens[`${player}|${ph}`] ?? []), ...chips];
+      saveTokens(player, ph);
+    }
+    cellTokens[`${owner}|${ph}`] = [];
+    saveTokens(owner, ph);
+  }
+  const role = noteRowRole(owner);
+  const meta = playerMeta[player] ?? {};
+  if (role && !(meta.roleId && meta.roleAuto)) {
+    playerMeta[player] = { ...meta, roleId: role.id, roleName: role.name, roleTeam: role.team ?? '', roleIconUrl: _iconUrl(role), roleAuto: false };
+    savePlayerMeta(player);
+    refreshPageColors();
+  }
+  saveExtraNoteRows(extraNoteRows().filter(o => o !== owner));
+}
+
+// Small searchable list popover: type to filter, arrows to move, Enter to pick.
+// items: [{ label, cls?, iconUrl?, sub?, value }]
+let _listPicker = null;
+// With allowCustom, whatever is typed can also be picked as-is: onPick({ custom: text }).
+function openListPicker(anchorEl, items, onPick, placeholder = 'Search…', allowCustom = false) {
+  if (!_listPicker) {
+    _listPicker = document.createElement('div');
+    _listPicker.id = 'notes-list-picker';
+    _listPicker.className = 'mrp-popover';
+    _listPicker.innerHTML = '<input class="mrp-search" type="text" /><div class="mrp-list"></div>';
+    document.body.appendChild(_listPicker);
+    const search = _listPicker.querySelector('.mrp-search');
+    const list = _listPicker.querySelector('.mrp-list');
+    const close = () => { _listPicker.style.display = 'none'; };
+    const pick = (el) => {
+      if (el?.dataset.custom) {
+        const text = search.value.trim();
+        close();
+        if (text) _listPicker._onPick({ custom: text });
+        return;
+      }
+      const item = _listPicker._items[Number(el?.dataset.i)];
+      if (!item) return;
+      close();
+      _listPicker._onPick(item.value);
+    };
+    _listPicker._render = () => {
+      const q = search.value.trim().toLowerCase();
+      list.innerHTML = _listPicker._items.map((it, i) => {
+        if (q && !it.label.toLowerCase().includes(q)) return '';
+        const icon = it.iconUrl ? `<img class="tp-role-icon" src="${esc(it.iconUrl)}" />` : '';
+        const sub = it.sub ? `<span class="mrp-sub">${esc(it.sub)}</span>` : '';
+        return `<div class="mrp-item ${it.cls ?? ''}" data-i="${i}" tabindex="-1">${icon}<span class="mrp-name">${esc(it.label)}</span>${sub}</div>`;
+      }).join('');
+      // Listed after the matches, so Enter still takes the first role that fits.
+      if (_listPicker._allowCustom && q) {
+        list.innerHTML += `<div class="mrp-item" data-custom="1" tabindex="-1"><span class="mrp-name">“${esc(search.value.trim())}”</span><span class="mrp-sub">own label</span></div>`;
+      }
+      if (!list.innerHTML) list.innerHTML = '<div class="mrp-empty">Nothing matches.</div>';
+    };
+    search.addEventListener('input', _listPicker._render);
+    list.addEventListener('click', (e) => pick(e.target.closest('.mrp-item')));
+    _listPicker.addEventListener('keydown', (e) => {
+      const els = [...list.querySelectorAll('.mrp-item')];
+      const idx = els.indexOf(document.activeElement);
+      if (e.key === 'ArrowDown') { e.preventDefault(); (els[idx + 1] ?? els[els.length - 1])?.focus(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); if (idx > 0) els[idx - 1].focus(); else search.focus(); }
+      else if (e.key === 'Enter') { e.preventDefault(); pick(idx >= 0 ? els[idx] : els[0]); }
+      else if (e.key === 'Escape') { e.stopPropagation(); close(); }
+    });
+    document.addEventListener('mousedown', (e) => {
+      if (_listPicker.style.display === 'flex' && !_listPicker.contains(e.target)) close();
+    });
+  }
+  const pop = _listPicker;
+  pop._items = items;
+  pop._onPick = onPick;
+  pop._allowCustom = allowCustom;
+  const search = pop.querySelector('.mrp-search');
+  search.value = '';
+  search.placeholder = placeholder;
+  pop._render();
+  pop.style.display = 'flex';
+  const rect = anchorEl.getBoundingClientRect();
+  const below = window.innerHeight - rect.bottom > pop.offsetHeight + 8 || window.innerHeight - rect.bottom > rect.top;
+  pop.style.top = below
+    ? `${rect.bottom + window.scrollY + 2}px`
+    : `${Math.max(window.scrollY + 4, rect.top + window.scrollY - pop.offsetHeight - 2)}px`;
+  pop.style.left = `${Math.max(8, Math.min(rect.left + window.scrollX, window.innerWidth - pop.offsetWidth - 8))}px`;
+  search.focus();
+}
+
+function openAddNoteRowPicker(anchorEl) {
+  const have = new Set(extraNoteRows());
+  const pool = currentState?.roles?.length ? currentState.roles : _roles();
+  const items = pool.filter(r => !have.has(`@role:${r.id}`))
+    .map(r => ({ label: r.name ?? r.id, cls: `role-name ${r.team ?? ''}`, iconUrl: _iconUrl(r), value: `@role:${r.id}` }));
+  openListPicker(anchorEl, items, addExtraNoteRow, 'Pick a role or type your own label…', true);
+}
+
+function openAssignNoteRowPicker(owner, anchorEl) {
+  const roleId = rowRoleId(owner);
+  const players = (currentState?.players ?? []).map(p => {
+    const name = p.name ?? `Seat ${p.seat + 1}`;
+    const meta = playerMeta[name] ?? {};
+    return { label: name, sub: meta.roleName ?? '', value: name, match: !!roleId && meta.roleId === roleId };
+  });
+  players.sort((a, b) => b.match - a.match); // whoever already carries this role comes first
+  openListPicker(anchorEl, players, (name) => assignNoteRowToPlayer(owner, name), 'Who is it?');
+}
+
 function getPhaseColumns() {
   const phases = [];
   const seen = new Set();
@@ -1095,8 +1268,18 @@ function abilityValBadges(chip) {
   return badges.slice(0, 4).join('');
 }
 
+const CHIP_X_HTML = '<button type="button" class="chip-x" title="Remove" aria-label="Remove">×</button>';
+
+// A chip plus its hover "×". Inherited droison copies aren't draggable: they
+// follow their origin, so moving one would just be undone by the next pass.
 function chipHtml(chip, player, phase, idx) {
-    const attrs = `data-player="${esc(player)}" data-phase="${esc(phase)}" data-idx="${idx}"`;
+  const html = chipBodyHtml(chip, player, phase, idx);
+  return html && html.replace(/<\/span>$/, `${CHIP_X_HTML}</span>`);
+}
+
+function chipBodyHtml(chip, player, phase, idx) {
+    const drag = chip.type === 'cellcolor' && chip.auto ? '' : ' draggable="true"';
+    const attrs = `data-player="${esc(player)}" data-phase="${esc(phase)}" data-idx="${idx}"${drag}`;
     if (chip.type === 'role') {
       const icon = chip.iconUrl ? `<img class="tp-role-icon" src="${esc(chip.iconUrl)}" />` : '';
       return `<span class="token-chip role-chip role-name ${chip.team ?? ''}" ${attrs}>${icon}${esc(chip.name)}</span>`;
@@ -1106,6 +1289,7 @@ function chipHtml(chip, player, phase, idx) {
       return `<span class="token-chip tag-chip" ${attrs}>${content}</span>`;
     }
     if (chip.type === 'note') {
+      if (!chip.text) return ''; // being typed — pruned when the popover closes
       return `<span class="token-chip note-chip" ${attrs}>${esc(chip.text)}</span>`;
     }
     if (chip.type === 'cellcolor') {
@@ -1248,7 +1432,7 @@ function applyCellColorClass(cell, player, phases) {
 function refreshCellChips(player, phase) {
   const col = columnForPhase(phase);
   if (!col) return;
-  const cell = document.querySelector(`#notes-table td.notes-cell[data-player="${CSS.escape(player)}"][data-col="${CSS.escape(col.key)}"]`);
+  const cell = document.querySelector(`.notes-scroll td.notes-cell[data-player="${CSS.escape(player)}"][data-col="${CSS.escape(col.key)}"]`);
   if (!cell) return;
   cell.querySelector('.cell-chips').innerHTML = cellChipsHtml(player, col.phases);
   applyCellColorClass(cell, player, col.phases);
@@ -1269,8 +1453,56 @@ function saveTokens(player, phase) {
   sendBg({ type: 'SAVE_TOKENS', player, phase, tokens: cellTokens[`${player}|${phase}`] ?? [] });
 }
 
+// Removes one chip. An ongoing ("from now on") droison spans later phases, so
+// removing one has to reach them too: removing the original clears every
+// inherited copy; removing an inherited copy ends the droison from that phase on.
+function removeChip(player, phase, idx) {
+  const key = `${player}|${phase}`;
+  const chips = cellTokens[key] ?? [];
+  if (idx < 0 || idx >= chips.length) return chips;
+  const [removed] = chips.splice(idx, 1);
+  cellTokens[key] = chips;
+  saveTokens(player, phase);
+  refreshCellChips(player, phase);
+
+  if (removed?.type === 'cellcolor' && removed.id === 'droisoned' && (removed.auto || removed.fromNowOn)) {
+    if (removed.auto) {
+      const phases = getPhaseColumns();
+      for (let i = phases.indexOf(phase) - 1; i >= 0; i--) {
+        const origin = (cellTokens[`${player}|${phases[i]}`] ?? [])
+          .find(c => c.type === 'cellcolor' && c.id === 'droisoned' && !c.auto && c.fromNowOn);
+        if (origin) { origin.until = phase; saveTokens(player, phases[i]); break; }
+      }
+    }
+    document.activeElement?.blur?.(); // the grid won't rebuild under a focused note input
+    lastNotesKey = null;
+    renderNotesGrid();
+  }
+  return chips;
+}
+
+// Moves a chip to another cell (drag & drop). Inside a merged round column the
+// chip keeps its own phase; anywhere else it lands in the column's default one.
+function moveChip(from, toPlayer, toCell) {
+  const col = getNotesColumns().find(c => c.key === toCell.dataset.col);
+  if (!col) return;
+  const toPhase = col.phases.includes(from.phase) ? from.phase : col.addPhase;
+  if (from.player === toPlayer && from.phase === toPhase) return;
+  const src = cellTokens[`${from.player}|${from.phase}`] ?? [];
+  const chip = src[from.idx];
+  if (!chip) return;
+  src.splice(from.idx, 1);
+  saveTokens(from.player, from.phase);
+  const { auto, until, ...moved } = chip; // a moved chip is the user's own from here on
+  cellTokens[`${toPlayer}|${toPhase}`] = [...(cellTokens[`${toPlayer}|${toPhase}`] ?? []), moved];
+  saveTokens(toPlayer, toPhase);
+  lastNotesKey = null;
+  renderNotesGrid();
+}
+
 // Single global popover
 let _popover = null;
+let _popoverAnchor = null; // the cell the popover hangs off
 let _popoverTarget = null; // { player, phase, chipIdx } — chipIdx null = add mode
 
 function getPopover() {
@@ -1278,8 +1510,8 @@ function getPopover() {
   _popover = document.createElement('div');
   _popover.id = 'token-popover';
   _popover.innerHTML = `
+    <textarea class="tp-note-input" rows="1" placeholder="Type a note…" spellcheck="false"></textarea>
     <div class="tp-main-row">
-      <input type="text" class="tp-note-input" placeholder="note" />
       <div class="tp-status-tags">
         <button class="tp-tag-btn" data-tag-id="dead"      data-tag-icon="💀" data-tag-name="Died"               title="Dead">${ICON_SVG.logSkull}</button>
         <button class="tp-tag-btn" data-tag-id="executed"  data-tag-icon="🪓" data-tag-name="Executed"           title="Executed">${ICON_SVG.logAxe}</button>
@@ -1302,6 +1534,7 @@ function getPopover() {
       <div class="tp-ability-tabs"></div>
       <div class="tp-ability-form"></div>
     </div>
+    <div class="tp-hint"><span><kbd>Enter</kbd> done</span><span><kbd>Shift</kbd>+<kbd>Enter</kbd> new line</span><span><kbd>Alt</kbd>+<kbd>←↑↓→</kbd> next cell</span><span><kbd>Esc</kbd> close</span></div>
   `;
   document.body.appendChild(_popover);
 
@@ -1348,9 +1581,12 @@ function getPopover() {
     const cur = (chipIdx !== null && chipIdx !== undefined) ? (cellTokens[`${player}|${phase}`] ?? [])[chipIdx] : null;
     if (cur?.type === 'cellcolor') {
       editCellColor(cur, { label: val }); // editing a colored cell's label, not a note
-    } else if (val) {
+    } else if (val || cur?.type === 'note') {
+      // An emptied note stays as a blank placeholder (keeping its position)
+      // until the popover closes, which prunes it.
       commit({ type: 'note', text: val });
     }
+    autoGrow();
     const q = val.toLowerCase();
     abilityTabs.querySelectorAll('.tp-ab-tab').forEach(btn => {
       btn.style.display = (!q || btn.title.toLowerCase().includes(q)) ? '' : 'none';
@@ -1360,7 +1596,37 @@ function getPopover() {
   // Enter confirms (the note is already saved live) and closes; Esc is handled
   // by the global handler below.
   noteInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); closePopover(); }
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); closePopover(); }
+  });
+
+  // The note box grows with its text, so long notes stay fully visible.
+  const autoGrow = () => {
+    noteInput.style.height = 'auto';
+    noteInput.style.height = `${noteInput.scrollHeight + 2}px`;
+    positionPopover();
+  };
+  _popover._autoGrow = autoGrow;
+
+  // Alt+arrows: hop to the neighbouring cell without reaching for the mouse.
+  _popover.addEventListener('keydown', (e) => {
+    if (!e.altKey || !e.key.startsWith('Arrow')) return;
+    const cell = _popoverAnchor;
+    if (!cell?.isConnected) return;
+    e.preventDefault();
+    let next = null;
+    if (e.key === 'ArrowLeft') next = cell.previousElementSibling;
+    else if (e.key === 'ArrowRight') next = cell.nextElementSibling;
+    else {
+      const ci = [...cell.parentElement.children].indexOf(cell);
+      let row = cell.parentElement;
+      do { row = e.key === 'ArrowUp' ? row.previousElementSibling : row.nextElementSibling; }
+      while (row && !row.querySelector('.notes-cell'));
+      next = row?.children[ci];
+    }
+    if (!next?.classList.contains('notes-cell')) return;
+    closePopover();
+    next.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    openPopover(next.dataset.player, next.dataset.phase, next, null);
   });
 
   // ── Cell-color buttons ───────────────────────────────────────────────────────
@@ -1404,29 +1670,7 @@ function getPopover() {
     if (!_popoverTarget) return;
     const { player, phase, chipIdx } = _popoverTarget;
     if (chipIdx === null || chipIdx === undefined) { closePopover(); return; }
-    const key = `${player}|${phase}`;
-    const chips = cellTokens[key] ?? [];
-    const [removed] = chips.splice(chipIdx, 1);
-    cellTokens[key] = chips;
-    saveTokens(player, phase);
-    refreshCellChips(player, phase);
-
-    // An ongoing ("from now on") droison spans later phases, so removing one
-    // has to reach them too. Removing the original clears every inherited
-    // copy; removing an inherited copy ends the droison from that phase on.
-    if (removed?.type === 'cellcolor' && removed.id === 'droisoned' && (removed.auto || removed.fromNowOn)) {
-      if (removed.auto) {
-        const phases = getPhaseColumns();
-        for (let i = phases.indexOf(phase) - 1; i >= 0; i--) {
-          const origin = (cellTokens[`${player}|${phases[i]}`] ?? [])
-            .find(c => c.type === 'cellcolor' && c.id === 'droisoned' && !c.auto && c.fromNowOn);
-          if (origin) { origin.until = phase; saveTokens(player, phases[i]); break; }
-        }
-      }
-      document.activeElement?.blur?.(); // the grid won't rebuild under a focused note input
-      lastNotesKey = null;
-      renderNotesGrid();
-    }
+    const chips = removeChip(player, phase, chipIdx);
 
     // Keep editing: jump to the neighbouring chip — the one to the left, or the
     // next one to the right if the deleted chip was the leftmost.
@@ -1435,7 +1679,8 @@ function getPopover() {
     else if (chips.length > 0) nextIdx = 0;      // right neighbour (shifted into place)
 
     const col = nextIdx !== null ? columnForPhase(phase) : null;
-    const cell = col && document.querySelector(`#notes-table td.notes-cell[data-player="${CSS.escape(player)}"][data-col="${CSS.escape(col.key)}"]`);
+    const cell = col && document.querySelector(`.notes-scroll td.notes-cell[data-player="${CSS.escape(player)}"][data-col="${CSS.escape(col.key)}"]`);
+    _popoverTarget = null; // the chip is gone — nothing left for closePopover to prune
     if (cell) openPopover(player, phase, cell, nextIdx);
     else closePopover();
   });
@@ -1443,7 +1688,11 @@ function getPopover() {
   document.addEventListener('mousedown', (e) => {
     if (_popover.style.display !== 'none' && !_popover.contains(e.target)) {
       closePopover();
-      document.addEventListener('click', e => e.stopPropagation(), { capture: true, once: true });
+      // A click elsewhere only dismisses — except on another notes cell, which
+      // opens straight away so hopping between cells takes one click, not two.
+      if (!e.target.closest?.('.notes-scroll .notes-cell')) {
+        document.addEventListener('click', e => e.stopPropagation(), { capture: true, once: true });
+      }
     }
   });
 
@@ -1811,13 +2060,38 @@ function getPopover() {
 }
 
 function closePopover() {
-  if (_popover) _popover.style.display = 'none';
+  if (_popover) {
+    // Hiding doesn't drop focus right away, and a focused note box blocks grid rebuilds.
+    if (_popover.contains(document.activeElement)) document.activeElement.blur();
+    _popover.style.display = 'none';
+  }
+  const t = _popoverTarget;
   _popoverTarget = null;
+  // Drop a note that was emptied while editing.
+  if (t && t.chipIdx !== null && t.chipIdx !== undefined) {
+    const chip = (cellTokens[`${t.player}|${t.phase}`] ?? [])[t.chipIdx];
+    if (chip?.type === 'note' && !chip.text) removeChip(t.player, t.phase, t.chipIdx);
+  }
+}
+
+function positionPopover() {
+  const pop = _popover;
+  const anchor = _popoverAnchor;
+  if (!pop || pop.style.display === 'none' || !anchor?.isConnected) return;
+  const rect = anchor.getBoundingClientRect();
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const fitsBelow = spaceBelow > pop.offsetHeight + 8 || spaceBelow > rect.top;
+  pop.style.top = fitsBelow
+    ? `${rect.bottom + window.scrollY + 2}px`
+    : `${Math.max(window.scrollY + 4, rect.top + window.scrollY - pop.offsetHeight - 2)}px`;
+  pop.style.left = `${Math.max(8, Math.min(rect.left + window.scrollX, window.innerWidth - pop.offsetWidth - 8))}px`;
 }
 
 function openPopover(player, phase, anchorEl, chipIdx = null) {
   const pop = getPopover();
+  if (_popoverTarget) closePopover(); // prune whatever the previous target left behind
   _popoverTarget = { player, phase, chipIdx };
+  _popoverAnchor = anchorEl;
 
   const chip = chipIdx !== null ? (cellTokens[`${player}|${phase}`] ?? [])[chipIdx] : null;
   const noteInput = pop.querySelector('.tp-note-input');
@@ -1834,7 +2108,7 @@ function openPopover(player, phase, anchorEl, chipIdx = null) {
   // Ability tabs — pre-select: editing chip > player's assigned role > none
   const existingAbilityRoleId = chip?.type === 'ability' ? chip.roleId
     : chip?.type === 'confirmed' ? chip.sourceRoleId
-    : (playerMeta[player]?.roleId ?? null);
+    : (rowRoleId(player) ?? playerMeta[player]?.roleId ?? null);
   pop.querySelector('.tp-ability-tabs').querySelectorAll('.tp-ab-tab').forEach(btn => { btn.style.display = ''; });
   try {
     pop._buildAbilityTabs(existingAbilityRoleId, chip?.type === 'ability' ? chip.inputs : null);
@@ -1842,15 +2116,10 @@ function openPopover(player, phase, anchorEl, chipIdx = null) {
     console.error('ability tabs error:', e);
   }
 
-  // Position
   pop.style.display = 'flex';
-  const rect = anchorEl.getBoundingClientRect();
-  const spaceBelow = window.innerHeight - rect.bottom;
-  pop.style.top = spaceBelow > 80
-    ? `${rect.bottom + window.scrollY + 2}px`
-    : `${rect.top + window.scrollY - pop.offsetHeight - 2}px`;
-  pop.style.left = `${Math.max(8, Math.min(rect.left + window.scrollX, window.innerWidth - pop.offsetWidth - 8))}px`;
+  pop._autoGrow(); // sizes the note box, then positions the popover
   noteInput.focus();
+  noteInput.setSelectionRange(noteInput.value.length, noteInput.value.length);
 }
 
 function savePlayerMeta(name) {
@@ -2308,8 +2577,8 @@ function measureMaxRoleChipWidth() {
 function propagateDroison() {
   const phases = getPhaseColumns();
   if (!phases.length || !currentState?.players?.length) return;
-  for (const p of currentState.players) {
-    const player = p.name ?? `Seat ${p.seat + 1}`;
+  const owners = [...currentState.players.map(p => p.name ?? `Seat ${p.seat + 1}`), ...extraNoteRows()];
+  for (const player of owners) {
     let active = null; // { label, source } carried forward from the latest origin
     for (const phase of phases) {
       const key = `${player}|${phase}`;
@@ -2343,13 +2612,15 @@ function renderNotesGrid() {
 
   // Skip rebuild if popover note textarea is focused
   if (document.activeElement?.classList.contains('tp-note-input')) return;
+  if (document.activeElement?.classList.contains('notes-label-input')) return;
   if (document.activeElement?.dataset?.player) return;
 
   const phases = getPhaseColumns();
   const cols = getNotesColumns();
   const players = currentState.players;
 
-  const key = JSON.stringify([players.map(p => [p.name, p.team, p.isDead]), phases, mergePhases]);
+  const extraRows = extraNoteRows();
+  const key = JSON.stringify([players.map(p => [p.name, p.team, p.isDead]), phases, mergePhases, extraRows]);
   if (key === lastNotesKey) return;
   lastNotesKey = key;
 
@@ -2357,8 +2628,13 @@ function renderNotesGrid() {
 
   const table = document.getElementById('notes-table');
 
-  const phaseColWidth = 110;
-  const w = notesFixedColWidths;
+  // The Player / Role / Align columns are sized to their content: whenever that
+  // content can change (names, script roles) the grid is first laid
+  // out automatically, measured, and rebuilt with those widths fixed — all
+  // before the browser paints, so only the final layout is ever seen.
+  const fixedKey = JSON.stringify([players.map(p => p.name), (currentState.roles ?? []).map(r => r.id)]);
+  const measuring = !notesFixedColWidths || fixedKey !== notesFixedKey;
+  const w = measuring ? null : notesFixedColWidths;
   const minPhaseWidth = 200;
 
   let html = '';
@@ -2399,8 +2675,8 @@ function renderNotesGrid() {
     const tint = metaRowTint(name);
     const dead = player.isDead ? ' dead' : '';
     const usedGhostVote = player.isDead && fullTimeline.some(ev => ev.type === 'ghostvote' && ev.name === name);
-    const statusIcons = (player.isDead ? `<span class="pn-status-icon pn-dead" title="Dead">${ICON_SVG.logSkull}</span>` : '')
-                      + (usedGhostVote ? `<span class="pn-status-icon pn-voteless" title="Used ghost vote">${ICON_SVG.logGhost}</span>` : '');
+    const statusIcons = measuring ? `<span class="pn-status-icon">${ICON_SVG.logSkull}</span><span class="pn-status-icon">${ICON_SVG.logGhost}</span>` : ((player.isDead ? `<span class="pn-status-icon pn-dead" title="Dead">${ICON_SVG.logSkull}</span>` : '')
+                      + (usedGhostVote ? `<span class="pn-status-icon pn-voteless" title="Used ghost vote">${ICON_SVG.logGhost}</span>` : ''));
     const icon = meta.roleIconUrl ? `<img class="tp-role-icon" src="${esc(meta.roleIconUrl)}" />` : '';
     const roleColorClass = meta.alignment === 'evil' ? 'demon'
                          : meta.alignment === 'good' ? 'townsfolk'
@@ -2432,24 +2708,28 @@ function renderNotesGrid() {
     }
     html += '</tr>';
   }
+
   html += '</tbody>';
   table.innerHTML = html;
+  initNotesTableEvents(table);
+  if (!measuring) renderRoleNotesTable(cols, w, extraRows);
 
-  if (!w) {
-    requestAnimationFrame(() => {
-      const ths = table.querySelectorAll('thead tr th');
-      if (ths.length < 3) return;
-      // Hidden (e.g. ST view on load) → everything measures 0. Wait until the
-      // grid is shown; applyViewRole re-renders it then.
-      if (!table.offsetParent) return;
+  if (measuring) {
+    // Hidden (e.g. ST view on load) → everything measures 0. Wait until the
+    // grid is shown; applyViewRole re-renders it then.
+    const ths = table.querySelectorAll('thead tr th');
+    if (table.offsetParent && ths.length >= 3) {
+      const prev = notesFixedColWidths ?? { player: 0, role: 0, align: 0 };
       notesFixedColWidths = {
-        player: ths[0].offsetWidth,
-        role: Math.max(ths[1].offsetWidth, measureMaxRoleChipWidth()),
-        align: ths[2].offsetWidth,
+        player: Math.max(prev.player, Math.ceil(ths[0].getBoundingClientRect().width)),
+        role: Math.max(prev.role, Math.ceil(ths[1].getBoundingClientRect().width), measureMaxRoleChipWidth()),
+        align: Math.max(prev.align, Math.ceil(ths[2].getBoundingClientRect().width)),
       };
+      notesFixedKey = fixedKey;
       lastNotesKey = null;
       renderNotesGrid();
-    });
+      return;
+    }
   }
 
   table.querySelectorAll('.notes-meta-role:not(.role-locked)').forEach(cell => {
@@ -2472,19 +2752,134 @@ function renderNotesGrid() {
   });
 
 
-  table.querySelectorAll('.notes-cell').forEach(cell => {
-    cell.addEventListener('click', (e) => {
-      const chip = e.target.closest('.token-chip[data-idx]');
-      if (chip) {
-        // Edit the chip in its own phase (a merged cell may mix Night & Day chips).
-        openPopover(cell.dataset.player, chip.dataset.phase, cell, Number(chip.dataset.idx));
-      } else {
-        openPopover(cell.dataset.player, cell.dataset.phase, cell, null);
-      }
-    });
-  });
+  table.querySelectorAll('.notes-cell').forEach(cell => cell.addEventListener('click', onNotesCellClick));
 
   applyHighlights(); applyPinnedHighlights();
+}
+
+// The role-notes table: same phase columns as the player grid, lined up with it
+// (its single Role column is as wide as Player + Role + Align together), and
+// hidden entirely while there are no rows.
+function renderRoleNotesTable(cols, w, rows) {
+  const table = document.getElementById('role-notes-table');
+  table.style.display = rows.length ? '' : 'none';
+  if (!rows.length) { table.innerHTML = ''; return; }
+  const main = document.getElementById('notes-table');
+  table.style.tableLayout = 'fixed';
+  table.style.width = main.style.width;
+  table.style.minWidth = main.style.minWidth;
+
+  let html = `<colgroup><col style="width:${w.player + w.role + w.align}px">${'<col>'.repeat(cols.length)}</colgroup>`;
+  html += '<thead><tr><th class="notes-player-col">Role / topic</th>';
+  cols.forEach((col, i) => {
+    html += `<th class="notes-phase-col ${col.cls}${i % 2 === 0 ? ' epoch-start' : ''}">${esc(col.label)}</th>`;
+  });
+  html += '</tr></thead><tbody>';
+  for (const owner of rows) {
+    const role = noteRowRole(owner);
+    const o = esc(owner);
+    const icon = role && _iconUrl(role) ? `<img class="tp-role-icon" src="${esc(_iconUrl(role))}" />` : '';
+    const label = role
+      ? `<span class="meta-role-chip role-name ${role.team ?? ''}">${icon}${esc(role.name)}</span>`
+      : `<span class="notes-custom-label" title="Click to rename">${esc(noteRowLabel(owner))}</span>`;
+    const assign = `<button type="button" class="notes-assign-btn" title="Found out who it is? Move these notes to that player">assign</button>`;
+    html += `<tr><td class="notes-player-name notes-row-label" data-row="${o}"><div class="notes-row-label-inner">${label}<span class="notes-row-actions">${assign}<button type="button" class="notes-row-remove" title="Remove this row" aria-label="Remove this row">×</button></span></div></td>`;
+    cols.forEach((col, i) => {
+      const ccId = cellColorId(owner, col.phases);
+      html += `<td class="notes-cell${i % 2 === 0 ? ' epoch-start' : ''}${ccId ? ` cc-cell-${ccId}` : ''}" data-player="${o}" data-col="${esc(col.key)}" data-phase="${esc(col.addPhase)}">
+        <div class="cell-chips">${cellChipsHtml(owner, col.phases)}</div>
+      </td>`;
+    });
+    html += '</tr>';
+  }
+  table.innerHTML = html + '</tbody>';
+  initNotesTableEvents(table);
+  table.querySelectorAll('.notes-cell').forEach(cell => cell.addEventListener('click', onNotesCellClick));
+}
+
+// Swap a free-text row label for an input: Enter / clicking away saves, Esc cancels.
+function renameNoteRow(owner, labelEl) {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'notes-label-input';
+  input.value = noteRowLabel(owner);
+  labelEl.replaceWith(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = (save) => {
+    if (done) return;
+    done = true;
+    const text = input.value.trim();
+    const meta = playerMeta[NOTE_ROWS_KEY] ?? {};
+    input.blur();
+    if (save && text) saveExtraNoteRows(meta.rows ?? [], { ...(meta.labels ?? {}), [owner]: text });
+    else { lastNotesKey = null; renderNotesGrid(); }
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.stopPropagation(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
+}
+
+function onNotesCellClick(e) {
+  const cell = e.currentTarget;
+  const chip = e.target.closest('.token-chip[data-idx]');
+  if (chip && e.target.closest('.chip-x')) {
+    e.stopPropagation(); // the chip is about to leave the DOM — don't let the click read as a name click
+    closePopover();
+    removeChip(cell.dataset.player, chip.dataset.phase, Number(chip.dataset.idx));
+  } else if (chip) {
+    // Edit the chip in its own phase (a merged cell may mix Night & Day chips).
+    openPopover(cell.dataset.player, chip.dataset.phase, cell, Number(chip.dataset.idx));
+  } else {
+    openPopover(cell.dataset.player, cell.dataset.phase, cell, null);
+  }
+}
+
+// Listeners that live on the table itself (it survives every rebuild): the
+// extra-row controls and dragging chips between cells.
+let _dragChip = null;
+function initNotesTableEvents(table) {
+  if (table._eventsReady) return;
+  table._eventsReady = true;
+
+  table.addEventListener('click', (e) => {
+    const assign = e.target.closest('.notes-assign-btn');
+    if (assign) { openAssignNoteRowPicker(assign.closest('[data-row]').dataset.row, assign); return; }
+    const custom = e.target.closest('.notes-custom-label');
+    if (custom) { renameNoteRow(custom.closest('[data-row]').dataset.row, custom); return; }
+    const remove = e.target.closest('.notes-row-remove');
+    if (remove) removeExtraNoteRow(remove.closest('[data-row]').dataset.row);
+  });
+
+  const clearDrop = () => document.querySelectorAll('.notes-scroll .drop-target').forEach(c => c.classList.remove('drop-target'));
+  table.addEventListener('dragstart', (e) => {
+    const chip = e.target.closest?.('.token-chip[data-idx][draggable]');
+    if (!chip) return;
+    closePopover();
+    _dragChip = { player: chip.dataset.player, phase: chip.dataset.phase, idx: Number(chip.dataset.idx) };
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', chip.textContent ?? '');
+  });
+  table.addEventListener('dragover', (e) => {
+    const cell = _dragChip && e.target.closest?.('.notes-cell');
+    if (!cell) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (!cell.classList.contains('drop-target')) { clearDrop(); cell.classList.add('drop-target'); }
+  });
+  table.addEventListener('drop', (e) => {
+    const cell = _dragChip && e.target.closest?.('.notes-cell');
+    if (!cell) return;
+    e.preventDefault();
+    const from = _dragChip;
+    _dragChip = null;
+    clearDrop();
+    moveChip(from, cell.dataset.player, cell);
+  });
+  table.addEventListener('dragend', () => { _dragChip = null; clearDrop(); });
 }
 
 // ── ST Panel ──────────────────────────────────────────────────────────────
@@ -5265,7 +5660,7 @@ function applyViewRole() {
   document.getElementById('script-wrap')?.style.setProperty('display', isStoryteller ? '' : 'none');
   document.getElementById('clear-grimoire-btn')?.style.setProperty('display', isStoryteller ? '' : 'none');
   document.getElementById('notes-section')?.style.setProperty('display', isStoryteller ? 'none' : '');
-  if (!isStoryteller && !notesFixedColWidths) { lastNotesKey = null; renderNotesGrid(); }
+  if (!isStoryteller) { lastNotesKey = null; renderNotesGrid(); }
 }
 
 document.getElementById('role-switch').addEventListener('click', () => {
@@ -5624,6 +6019,8 @@ document.getElementById('clear-ws').addEventListener('click', () => {
   document.getElementById('ws-log').innerHTML = '';
 });
 
+document.getElementById('add-note-row').addEventListener('click', (e) => openAddNoteRowPicker(e.currentTarget));
+
 document.getElementById('clear-notes').addEventListener('click', () => {
   if (!confirm('Clear all notes?')) return;
   cellTokens = {};
@@ -5675,7 +6072,7 @@ document.addEventListener('mouseout', e => {
 });
 
 document.addEventListener('click', e => {
-  if (e.target.closest('#notes-table') && !e.target.closest('.notes-player-name-text')) return;
+  if (e.target.closest('.notes-scroll') && !e.target.closest('.notes-player-name-text')) return;
   // A click already spent on a seat pick (nominate/swap/mark) means "pick this
   // one" and nothing else. The inner buttons stopPropagation to get that, but
   // the name span isn't a button — so without this, every pick made by clicking

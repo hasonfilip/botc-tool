@@ -12,7 +12,7 @@ The header shows the session, current phase, player and alive counts, the script
 
 ### For everyone
 
-- **Notes grid** — one cell per player per phase, holding role chips: ability inputs tailored to each character, predefined tags, and claimed roles, each with an importance level. Click a player to open a drawer with their full game history.
+- **Notes grid** — one cell per player per phase, holding role chips: ability inputs tailored to each character, predefined tags, and claimed roles, each with an importance level. Click a player to open a drawer with their full game history. Information about a role whose player you don't know yet goes into a separate role-notes table above the grid (added with "+ role notes"), with the same phase columns; a row can also carry a label you type yourself. Once you learn who it is, assign the row and its notes move to that player. Chips can be dragged between cells and removed with the × that appears on hover.
 - **Timeline** — Night/Day blocks with deaths, exiles and ghost votes, and the game result hidden behind a spoiler. Day and night can be merged into one block in settings.
 - **Nominations** — who nominated whom, the vote count and the individual voters, with hands tracked live.
 - **Conversations** — private, public and night channel visits with duration and participants, filterable by player.
