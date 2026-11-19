@@ -4331,12 +4331,15 @@ function initScriptLibrary() {
 
   function renderSuggestions() {
     const q = (searchInput.value ?? '').trim().toLowerCase();
-    suggestions = q ? suggestScriptRoles(getRoleIndex(), q, roleFilter) : [];
+    // One letter matches half the roles; wait for a second.
+    suggestions = q.length >= 2 ? suggestScriptRoles(getRoleIndex(), q, roleFilter).slice(0, 5) : [];
     suggestActive = 0;
     suggestEl.hidden = !suggestions.length;
-    suggestEl.innerHTML = suggestions.map((e, i) =>
-      `<div class="script-lib-role-option${i === 0 ? ' active' : ''}" role="option" data-i="${i}">${roleIconHtml(e)}<span class="script-lib-role-option-name">${esc(e.name)}</span><span class="script-lib-role-option-count">${e.count} script${e.count === 1 ? '' : 's'}</span></div>`).join('')
-      + (suggestions.length ? '<div class="script-lib-role-hint">Enter: only scripts with this exact role</div>' : '');
+    // An inline row, not a dropdown: a dropdown covered the very scripts the
+    // name search had just found.
+    suggestEl.innerHTML = '<span class="script-lib-role-hint" title="Pick a role to show only scripts with exactly that role (Enter picks the highlighted one)">Role:</span>'
+      + suggestions.map((e, i) =>
+        `<button type="button" class="script-lib-role-option${i === 0 ? ' active' : ''}" role="option" data-i="${i}" title="Only scripts with ${esc(e.name)}">${roleIconHtml(e)}<span class="script-lib-role-option-name">${esc(e.name)}</span><span class="script-lib-role-option-count">${e.count}</span></button>`).join('');
     suggestEl.querySelectorAll('.script-lib-role-option').forEach(opt => {
       // mousedown, not click: the input's blur would hide the list first.
       opt.addEventListener('mousedown', (ev) => { ev.preventDefault(); pickSuggestion(Number(opt.dataset.i)); });
@@ -4360,7 +4363,6 @@ function initScriptLibrary() {
 
   searchInput?.addEventListener('input', () => { renderSuggestions(); renderResults(); });
   searchInput?.addEventListener('focus', renderSuggestions);
-  searchInput?.addEventListener('blur', () => { suggestEl.hidden = true; });
   searchInput?.addEventListener('keydown', (ev) => {
     const open = !suggestEl.hidden && suggestions.length;
     if (ev.key === 'ArrowDown' && open) { ev.preventDefault(); setSuggestActive(suggestActive + 1); }

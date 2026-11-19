@@ -3721,32 +3721,33 @@ tr:hover .pin-hl-btn, .pin-hl-btn:focus-visible { opacity: 0.55; }
 }
 .script-lib-search-wrap:focus-within { border-color: var(--accent); }
 .script-lib-role-suggest {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  z-index: 5;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-  padding: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  flex-wrap: nowrap;
 }
 .script-lib-role-suggest[hidden] { display: none; }
 .script-lib-role-option {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 8px;
-  border-radius: 6px;
-  font-size: 13px;
-  color: var(--text);
+  gap: 5px;
+  flex-shrink: 0;
+  padding: 2px 8px 2px 5px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text2);
   cursor: pointer;
 }
+.script-lib-role-option:hover { background: var(--surface-3); color: var(--text); }
 .script-lib-role-option .tp-role-icon, .script-lib-role-filter .tp-role-icon { width: 18px; height: 18px; object-fit: contain; }
-.script-lib-role-option.active { background: var(--surface-3); }
-.script-lib-role-option-count { margin-left: auto; color: var(--muted); font-size: 11px; }
-.script-lib-role-hint { color: var(--muted); font-size: 10px; padding: 4px 8px 2px; }
+.script-lib-role-option.active { border-color: var(--accent); color: var(--text); }
+.script-lib-role-option-count { color: var(--muted); font-size: 10px; }
+.script-lib-role-hint { color: var(--muted); font-size: 11px; flex-shrink: 0; cursor: help; }
 .script-lib-role-chips { display: contents; }
 .script-lib-role-filter {
   cursor: default;
