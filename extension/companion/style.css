@@ -2427,6 +2427,77 @@ tr:hover .pin-hl-btn, .pin-hl-btn:focus-visible { opacity: 0.55; }
 #script-library-filters { display: flex; flex-direction: column; gap: 8px; }
 .script-lib-filter-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .script-lib-filter-label { color: var(--muted); font-size: 11px; }
+/* Dual-thumb difficulty slider: two range inputs over one green→red track,
+   dimmed outside the picked range. Only the thumbs take pointer events. */
+.script-lib-diff-range {
+  --lo: 0%;
+  --hi: 100%;
+  position: relative;
+  flex: 1;
+  min-width: 100px;
+  margin-left: 6px;
+  height: 22px;
+  display: inline-block;
+  cursor: pointer;
+  touch-action: none;
+}
+.script-lib-diff-track {
+  position: absolute;
+  left: 7px;
+  right: 7px;
+  top: 50%;
+  height: 5px;
+  transform: translateY(-50%);
+  border-radius: 3px;
+  background:
+    linear-gradient(to right, rgba(12,12,14,0.75) var(--lo), transparent var(--lo), transparent var(--hi), rgba(12,12,14,0.75) var(--hi)),
+    linear-gradient(to right, hsl(120,70%,50%), hsl(60,70%,50%), hsl(0,70%,50%));
+  opacity: 0.55;
+  transition: opacity 0.12s;
+}
+.script-lib-diff-range.active .script-lib-diff-track,
+.script-lib-diff-range:hover .script-lib-diff-track { opacity: 1; }
+.script-lib-diff-range input[type=range] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  margin: 0;
+  background: none;
+  pointer-events: none;
+  -webkit-appearance: none;
+  appearance: none;
+  z-index: 2;
+}
+.script-lib-diff-range input[type=range]::-webkit-slider-runnable-track { background: none; border: none; }
+.script-lib-diff-range input[type=range]::-moz-range-track { background: none; border: none; }
+.script-lib-diff-range input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text);
+  border: 2px solid var(--surface);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+  cursor: grab;
+}
+.script-lib-diff-range input[type=range]::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text);
+  border: 2px solid var(--surface);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+  cursor: grab;
+}
+.script-lib-diff-range input[type=range]:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--accent); }
+.script-lib-diff-range input[type=range]:focus-visible::-moz-range-thumb { outline: 2px solid var(--accent); }
+.script-lib-diff-range.dragging input[type=range]::-webkit-slider-thumb { cursor: grabbing; transform: scale(1.15); }
+.script-lib-diff-range.dragging input[type=range]::-moz-range-thumb { cursor: grabbing; transform: scale(1.15); }
+.script-lib-diff-value { color: var(--text2); font-size: 11px; min-width: 40px; text-align: center; font-variant-numeric: tabular-nums; }
+.script-lib-segmented { display: inline-flex; background: var(--surface-2); border-radius: 6px; padding: 2px; gap: 2px; }
+.script-lib-segmented .toggle-btn { padding: 2px 8px; }
+.script-lib-segmented .toggle-btn:not(.toggle-btn-active) { background: transparent; }
+.script-lib-segmented .toggle-btn:not(.toggle-btn-active):hover { background: var(--surface-3); }
 .script-lib-filter-sep { width: 1px; height: 14px; background: var(--border); margin: 0 4px; }
 
 #script-library-results { max-height: 480px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }

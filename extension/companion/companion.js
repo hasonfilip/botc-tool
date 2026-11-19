@@ -3913,15 +3913,11 @@ function scriptComplexity(rolesByTeam) {
   return { score: Math.min(5, Math.max(1, score)), rated, total };
 }
 
-// Difficulty filter buckets on TPI's scale (1.5 beginner, 3 intermediate,
-// 4.5 hard): TB and simple teensies are easy, BMR medium, S&V right at the
-// hard line, Laissez un Faire / Passage of Time / Lunar Eclipse hard.
-const DIFFICULTY_LEVELS = [
-  { key: 'easy', max: 2.5 },
-  { key: 'medium', max: 3.5 },
-  { key: 'hard', max: Infinity },
-];
-const difficultyLevel = (score) => DIFFICULTY_LEVELS.find(l => score < l.max).key;
+// Difficulty filter range, on TPI's scale (1.5 beginner, 3 intermediate,
+// 4.5 hard): TB and simple teensies sit below 2.5, BMR around 3, S&V right at
+// 3.5, Laissez un Faire / Passage of Time / Lunar Eclipse above.
+const DIFFICULTY_MIN = 1;
+const DIFFICULTY_MAX = 5;
 
 // Short green→red bar tag.
 function complexityTagHtml(c) {
@@ -4137,7 +4133,7 @@ function initScriptLibrary() {
       // Multiple selected labels narrow: the script must carry all of them.
       for (const label of labelFilter) if (!scriptHasLabel(s, label)) return false;
       // Unrated scripts can't be placed in a bucket, so any difficulty filter hides them.
-      if (difficultyFilter.size && !(s.cx && difficultyFilter.has(difficultyLevel(s.cx.score)))) return false;
+      if (difficultyFiltered() && !(s.cx && s.cx.score >= difficultyRange.lo - 1e-9 && s.cx.score <= difficultyRange.hi + 1e-9)) return false;
       if (!q) return true;
       return s.name.toLowerCase().includes(q)
         || s.author.toLowerCase().includes(q)
@@ -4390,7 +4386,9 @@ function initScriptLibrary() {
       renderResults();
     });
   });
-  const difficultyFilter = new Set();
+  // The full range means no filtering, so unrated scripts still show.
+  const difficultyRange = { lo: DIFFICULTY_MIN, hi: DIFFICULTY_MAX };
+  const difficultyFiltered = () => difficultyRange.lo > DIFFICULTY_MIN || difficultyRange.hi < DIFFICULTY_MAX;
   const base3Btn = document.getElementById('script-lib-base3-btn');
   base3Btn?.addEventListener('click', () => {
     base3Only = !base3Only;
@@ -4427,14 +4425,70 @@ function initScriptLibrary() {
       });
     });
   }
-  document.querySelectorAll('.script-lib-diff-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const level = btn.dataset.level;
-      if (difficultyFilter.has(level)) difficultyFilter.delete(level); else difficultyFilter.add(level);
-      btn.classList.toggle('toggle-btn-active', difficultyFilter.has(level));
+  // Two range inputs stacked on one track; each thumb stops at the other.
+  const diffRangeEl = document.getElementById('script-lib-diff-range');
+  const diffLo = document.getElementById('script-lib-diff-lo');
+  const diffHi = document.getElementById('script-lib-diff-hi');
+  const diffValueEl = document.getElementById('script-lib-diff-value');
+  function syncDifficulty(moved) {
+    let lo = Number(diffLo.value), hi = Number(diffHi.value);
+    if (lo > hi) {
+      if (moved === diffLo) { lo = hi; diffLo.value = lo; } else { hi = lo; diffHi.value = hi; }
+    }
+    difficultyRange.lo = lo;
+    difficultyRange.hi = hi;
+    const pct = (v) => `${((v - DIFFICULTY_MIN) / (DIFFICULTY_MAX - DIFFICULTY_MIN)) * 100}%`;
+    diffRangeEl.style.setProperty('--lo', pct(lo));
+    diffRangeEl.style.setProperty('--hi', pct(hi));
+    diffValueEl.textContent = difficultyFiltered() ? `${lo.toFixed(1)}–${hi.toFixed(1)}` : 'Any';
+    diffRangeEl.classList.toggle('active', difficultyFiltered());
+  }
+  [diffLo, diffHi].forEach(input => input?.addEventListener('input', () => { syncDifficulty(input); renderResults(); }));
+  // Pointer handling is ours, not the inputs': a press anywhere on the slider
+  // grabs whichever thumb is closer, jumps it there and drags it. The inputs
+  // stay for keyboard use.
+  const diffValueAt = (clientX) => {
+    const r = diffRangeEl.getBoundingClientRect();
+    const t = Math.min(1, Math.max(0, (clientX - r.left - 7) / (r.width - 14)));
+    return Math.round((DIFFICULTY_MIN + t * (DIFFICULTY_MAX - DIFFICULTY_MIN)) * 10) / 10;
+  };
+  diffRangeEl?.addEventListener('pointerdown', (ev) => {
+    if (ev.button !== 0) return;
+    ev.preventDefault();
+    const v = diffValueAt(ev.clientX);
+    const lo = Number(diffLo.value), hi = Number(diffHi.value);
+    // Thumbs on top of each other: the direction of the press decides.
+    const thumb = lo === hi ? (v < lo ? diffLo : diffHi)
+      : Math.abs(v - lo) <= Math.abs(v - hi) ? diffLo : diffHi;
+    thumb.focus();
+    const move = (x) => {
+      const next = diffValueAt(x);
+      if (Number(thumb.value) === next) return;
+      thumb.value = next;
+      syncDifficulty(thumb);
       renderResults();
-    });
+    };
+    move(ev.clientX);
+    diffRangeEl.setPointerCapture(ev.pointerId);
+    diffRangeEl.classList.add('dragging');
+    const onMove = (e) => move(e.clientX);
+    const onUp = () => {
+      diffRangeEl.classList.remove('dragging');
+      diffRangeEl.removeEventListener('pointermove', onMove);
+      diffRangeEl.removeEventListener('pointerup', onUp);
+      diffRangeEl.removeEventListener('pointercancel', onUp);
+    };
+    diffRangeEl.addEventListener('pointermove', onMove);
+    diffRangeEl.addEventListener('pointerup', onUp);
+    diffRangeEl.addEventListener('pointercancel', onUp);
   });
+  // Double-click resets to the full range.
+  diffRangeEl?.addEventListener('dblclick', () => {
+    diffLo.value = DIFFICULTY_MIN; diffHi.value = DIFFICULTY_MAX;
+    syncDifficulty(null);
+    renderResults();
+  });
+  if (diffRangeEl) syncDifficulty(null);
 
   (async () => {
     try {

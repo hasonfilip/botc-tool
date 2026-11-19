@@ -351,16 +351,17 @@
 							<span class="script-lib-filter-label">Label</span>
 							<span id="script-lib-label-filters" class="script-lib-label-filters"></span>
 						</span>
-						<span class="script-lib-filter-sep"></span>
-						<span class="script-lib-filter-label">Difficulty</span>
-						<button type="button" class="toggle-btn script-lib-diff-btn" data-level="easy">Easy</button>
-						<button type="button" class="toggle-btn script-lib-diff-btn" data-level="medium">Medium</button>
-						<button type="button" class="toggle-btn script-lib-diff-btn" data-level="hard">Hard</button>
-						<span class="script-lib-filter-sep"></span>
-						<span class="script-lib-filter-label">Sort</span>
-						<button type="button" class="toggle-btn toggle-btn-active script-lib-sort-btn" data-sort="name">A–Z</button>
-						<button type="button" class="toggle-btn script-lib-sort-btn" data-sort="easiest">Easiest</button>
-						<button type="button" class="toggle-btn script-lib-sort-btn" data-sort="hardest">Hardest</button>
+						<span id="script-lib-diff-range" class="script-lib-diff-range" title="Difficulty — drag or click to set the range, double-click to reset">
+							<span class="script-lib-diff-track"></span>
+							<input id="script-lib-diff-lo" type="range" min="1" max="5" step="0.1" value="1" aria-label="Minimum difficulty" />
+							<input id="script-lib-diff-hi" type="range" min="1" max="5" step="0.1" value="5" aria-label="Maximum difficulty" />
+						</span>
+						<span id="script-lib-diff-value" class="script-lib-diff-value" title="Difficulty">Any</span>
+						<span class="script-lib-segmented" role="group" aria-label="Sort" title="Sort">
+							<button type="button" class="toggle-btn toggle-btn-active script-lib-sort-btn" data-sort="name">A–Z</button>
+							<button type="button" class="toggle-btn script-lib-sort-btn" data-sort="easiest">Easiest</button>
+							<button type="button" class="toggle-btn script-lib-sort-btn" data-sort="hardest">Hardest</button>
+						</span>
 					</div>
 				</div>
 				<div id="script-library-results"></div>
