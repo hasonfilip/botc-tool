@@ -3975,6 +3975,49 @@ function toggleScriptFavourite(s) {
   return scriptFavourites.has(key);
 }
 
+// ── Exact role filter ────────────────────────────────────────────────────────
+// Plain search matches substrings, so "Imp" also finds every script with an
+// "Impostor" or an "Imp"-something in its name. A picked role chip instead
+// matches the role itself. Keyed by the resolved canonical id, so a
+// translated script's "Pradlena" counts as the Washerwoman; roles that resolve
+// to nothing official are keyed by their own name.
+const scriptRoleKey = (r) => r.id ? r.id : `custom:${(r.name ?? '').toLowerCase()}`;
+const scriptRoleKeys = (s) => new Set(Object.values(s.rolesByTeam).flat().map(scriptRoleKey));
+
+// key → { key, name, id, terms, count } over the whole library.
+function buildScriptRoleIndex(scripts) {
+  const index = new Map();
+  for (const s of scripts) {
+    const seen = new Set();
+    for (const r of Object.values(s.rolesByTeam).flat()) {
+      const key = scriptRoleKey(r);
+      let entry = index.get(key);
+      if (!entry) {
+        const canonical = r.id ? _roles().find(x => x.id === r.id) : null;
+        entry = { key, id: r.id, name: canonical?.name ?? r.name ?? '?', terms: new Set(), count: 0 };
+        if (canonical) entry.terms.add(canonical.name.toLowerCase());
+        index.set(key, entry);
+      }
+      if (r.name) entry.terms.add(r.name.toLowerCase());
+      if (!seen.has(key)) { seen.add(key); entry.count++; }
+    }
+  }
+  return index;
+}
+
+// Exact name first, then name prefix, then a word starting with the query,
+// then any substring; ties go to the role on more scripts.
+function suggestScriptRoles(index, q, exclude) {
+  const rank = (term) => term === q ? 0 : term.startsWith(q) ? 1 : term.split(/[\s\-']+/).some(w => w.startsWith(q)) ? 2 : term.includes(q) ? 3 : 9;
+  return [...index.values()]
+    .filter(e => !exclude.has(e.key))
+    .map(e => ({ e, r: Math.min(...[...e.terms].map(rank)) }))
+    .filter(x => x.r < 9)
+    .sort((a, b) => a.r - b.r || b.e.count - a.e.count || a.e.name.localeCompare(b.e.name))
+    .slice(0, 8)
+    .map(x => x.e);
+}
+
 // ── UI ────────────────────────────────────────────────────────────────────────
 const SCRIPT_LIB_CACHE_KEY = 'scriptLibrary';
 let scriptLibrary = [];
@@ -3989,6 +4032,7 @@ function initScriptLibrary() {
   const filtersEl = document.getElementById('script-library-filters');
   const searchInput = document.getElementById('script-lib-search');
   const resultsEl = document.getElementById('script-library-results');
+  const jumpEl = document.getElementById('script-lib-jump');
 
   let currentDirHandle = null;
 
@@ -4086,6 +4130,10 @@ function initScriptLibrary() {
       if (base3Only && !s.base3) return false;
       if (oneDemonOnly && s.rolesByTeam.demon?.length !== 1) return false;
       if (favouritesOnly && !isScriptFavourite(s)) return false;
+      if (roleFilter.size) {
+        const keys = scriptRoleKeys(s);
+        for (const key of roleFilter.keys()) if (!keys.has(key)) return false;
+      }
       // Multiple selected labels narrow: the script must carry all of them.
       for (const label of labelFilter) if (!scriptHasLabel(s, label)) return false;
       // Unrated scripts can't be placed in a bucket, so any difficulty filter hides them.
@@ -4145,11 +4193,11 @@ function initScriptLibrary() {
     resultsEl.querySelectorAll('.script-lib-cat-header').forEach(header => {
       header.addEventListener('click', () => {
         const catEl = header.closest('.script-lib-category');
-        const collapsing = !catEl.classList.contains('collapsed');
-        catEl.classList.toggle('collapsed', collapsing);
-        if (collapsing) collapsedScriptCategories.add(header.dataset.cat); else collapsedScriptCategories.delete(header.dataset.cat);
+        setCategoryCollapsed(catEl, !catEl.classList.contains('collapsed'));
       });
     });
+
+    renderJumpBar(Object.keys(byCategory).sort(), byCategory);
 
     resultsEl.querySelectorAll('.script-lib-row').forEach(row => {
       row.addEventListener('click', () => {
@@ -4192,7 +4240,143 @@ function initScriptLibrary() {
     });
   }
 
-  searchInput?.addEventListener('input', renderResults);
+  function setCategoryCollapsed(catEl, collapsed) {
+    catEl.classList.toggle('collapsed', collapsed);
+    const cat = catEl.querySelector('.script-lib-cat-header').dataset.cat;
+    if (collapsed) collapsedScriptCategories.add(cat); else collapsedScriptCategories.delete(cat);
+  }
+
+  // Bookmark tabs down the panel's right edge, one per folder, so a big
+  // library is a click away from any folder instead of a long scroll.
+  // Jumping opens the folder if it was collapsed.
+  function renderJumpBar(cats, byCategory) {
+    if (!jumpEl) return;
+    if (cats.length < 2) { jumpEl.innerHTML = ''; return; }
+    const allCollapsed = cats.every(c => collapsedScriptCategories.has(c));
+    jumpEl.innerHTML = `<button type="button" class="script-lib-jump-btn script-lib-jump-all" title="${allCollapsed ? 'Expand' : 'Collapse'} all folders">${allCollapsed ? 'Expand all' : 'Collapse all'}</button>`
+      + cats.map(cat =>
+        `<button type="button" class="script-lib-jump-btn" data-cat="${esc(cat)}" title="${esc(cat)}"><span class="script-lib-jump-name">${esc(cat)}</span><span class="script-lib-jump-count">${byCategory[cat].length}</span></button>`
+      ).join('');
+
+    jumpEl.querySelectorAll('.script-lib-jump-btn[data-cat]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const header = [...resultsEl.querySelectorAll('.script-lib-cat-header')].find(h => h.dataset.cat === btn.dataset.cat);
+        if (!header) return;
+        const catEl = header.closest('.script-lib-category');
+        setCategoryCollapsed(catEl, false);
+        resultsEl.scrollTop += catEl.getBoundingClientRect().top - resultsEl.getBoundingClientRect().top;
+      });
+    });
+    jumpEl.querySelector('.script-lib-jump-all')?.addEventListener('click', () => {
+      resultsEl.querySelectorAll('.script-lib-category').forEach(catEl => setCategoryCollapsed(catEl, !allCollapsed));
+      resultsEl.scrollTop = 0;
+      renderJumpBar(cats, byCategory);
+    });
+    markCurrentJump();
+  }
+
+  // Highlights the bookmark of the folder at the top of the list.
+  function markCurrentJump() {
+    if (!jumpEl) return;
+    const top = resultsEl.getBoundingClientRect().top + 1;
+    let current = null;
+    for (const h of resultsEl.querySelectorAll('.script-lib-cat-header')) {
+      if (h.closest('.script-lib-category').getBoundingClientRect().top <= top) current = h.dataset.cat;
+      else break;
+    }
+    current ??= resultsEl.querySelector('.script-lib-cat-header')?.dataset.cat;
+    jumpEl.querySelectorAll('.script-lib-jump-btn[data-cat]').forEach(b => b.classList.toggle('current', b.dataset.cat === current));
+  }
+  resultsEl?.addEventListener('scroll', markCurrentJump, { passive: true });
+
+  // The tabs start level with the list rather than at a fixed offset, so they
+  // follow the toolbar and filters as those wrap or the panel opens.
+  function alignJumpBar() {
+    const frame = jumpEl?.parentElement;
+    if (!frame || !resultsEl.offsetParent) return;
+    jumpEl.style.top = `${Math.round(resultsEl.getBoundingClientRect().top - frame.getBoundingClientRect().top)}px`;
+  }
+  if (jumpEl && window.ResizeObserver) {
+    const ro = new ResizeObserver(alignJumpBar);
+    ro.observe(document.getElementById('script-library-panel'));
+    ro.observe(resultsEl);
+  }
+
+  // Picked roles, key → index entry; a script must have every one of them.
+  const roleFilter = new Map();
+  const suggestEl = document.getElementById('script-lib-role-suggest');
+  const roleChipsEl = document.getElementById('script-lib-role-chips');
+  let roleIndex = null, roleIndexFor = null;
+  let suggestions = [], suggestActive = 0;
+  const getRoleIndex = () => {
+    if (roleIndexFor !== scriptLibrary) { roleIndex = buildScriptRoleIndex(scriptLibrary); roleIndexFor = scriptLibrary; }
+    return roleIndex;
+  };
+  const roleIconHtml = (e) => {
+    const url = e.id ? _iconUrl({ id: e.id }) : null;
+    return url ? `<img class="tp-role-icon" src="${esc(url)}" />` : '';
+  };
+
+  function renderRoleChips() {
+    searchInput.placeholder = roleFilter.size ? 'add a role, or search…' : 'search name, author, or role…';
+    roleChipsEl.innerHTML = [...roleFilter.values()].map(e =>
+      `<span class="script-lib-role-filter">${roleIconHtml(e)}${esc(e.name)}<button type="button" data-key="${esc(e.key)}" aria-label="Remove ${esc(e.name)}" title="Remove">✕</button></span>`).join('');
+    roleChipsEl.querySelectorAll('button').forEach(btn => btn.addEventListener('click', () => {
+      roleFilter.delete(btn.dataset.key);
+      renderRoleChips();
+      renderResults();
+      searchInput.focus();
+    }));
+  }
+  // The chips live inside the search box, so a click anywhere on it types.
+  searchInput?.parentElement.addEventListener('mousedown', (ev) => {
+    if (ev.target === ev.currentTarget || ev.target === roleChipsEl) { ev.preventDefault(); searchInput.focus(); }
+  });
+
+  function renderSuggestions() {
+    const q = (searchInput.value ?? '').trim().toLowerCase();
+    suggestions = q ? suggestScriptRoles(getRoleIndex(), q, roleFilter) : [];
+    suggestActive = 0;
+    suggestEl.hidden = !suggestions.length;
+    suggestEl.innerHTML = suggestions.map((e, i) =>
+      `<div class="script-lib-role-option${i === 0 ? ' active' : ''}" role="option" data-i="${i}">${roleIconHtml(e)}<span class="script-lib-role-option-name">${esc(e.name)}</span><span class="script-lib-role-option-count">${e.count} script${e.count === 1 ? '' : 's'}</span></div>`).join('')
+      + (suggestions.length ? '<div class="script-lib-role-hint">Enter: only scripts with this exact role</div>' : '');
+    suggestEl.querySelectorAll('.script-lib-role-option').forEach(opt => {
+      // mousedown, not click: the input's blur would hide the list first.
+      opt.addEventListener('mousedown', (ev) => { ev.preventDefault(); pickSuggestion(Number(opt.dataset.i)); });
+    });
+  }
+
+  function setSuggestActive(i) {
+    suggestActive = (i + suggestions.length) % suggestions.length;
+    suggestEl.querySelectorAll('.script-lib-role-option').forEach((o, j) => o.classList.toggle('active', j === suggestActive));
+  }
+
+  function pickSuggestion(i) {
+    const e = suggestions[i];
+    if (!e) return;
+    roleFilter.set(e.key, e);
+    searchInput.value = '';
+    suggestEl.hidden = true;
+    renderRoleChips();
+    renderResults();
+  }
+
+  searchInput?.addEventListener('input', () => { renderSuggestions(); renderResults(); });
+  searchInput?.addEventListener('focus', renderSuggestions);
+  searchInput?.addEventListener('blur', () => { suggestEl.hidden = true; });
+  searchInput?.addEventListener('keydown', (ev) => {
+    const open = !suggestEl.hidden && suggestions.length;
+    if (ev.key === 'ArrowDown' && open) { ev.preventDefault(); setSuggestActive(suggestActive + 1); }
+    else if (ev.key === 'ArrowUp' && open) { ev.preventDefault(); setSuggestActive(suggestActive - 1); }
+    else if (ev.key === 'Enter' && open) { ev.preventDefault(); pickSuggestion(suggestActive); }
+    else if (ev.key === 'Escape' && open) { ev.preventDefault(); ev.stopPropagation(); suggestEl.hidden = true; }
+    else if (ev.key === 'Backspace' && !searchInput.value && roleFilter.size) {
+      roleFilter.delete([...roleFilter.keys()].pop());
+      renderRoleChips();
+      renderResults();
+    }
+  });
 
   // Base 3 is a plain on/off; difficulty buttons are multi-select and none
   // selected means no difficulty filtering.

@@ -2324,8 +2324,10 @@ tr:hover .pin-hl-btn, .pin-hl-btn:focus-visible { opacity: 0.55; }
   inset: 0;
   background: rgba(0,0,0,0.55);
 }
+#script-library-frame { position: relative; display: flex; }
 #script-library-panel {
   position: relative;
+  z-index: 1;
   width: 560px;
   max-width: calc(100vw - 32px);
   max-height: calc(100vh - 60px);
@@ -2337,6 +2339,57 @@ tr:hover .pin-hl-btn, .pin-hl-btn:focus-visible { opacity: 0.55; }
   flex-direction: column;
   overflow: hidden;
 }
+/* Folder bookmarks: tabs tucked behind the panel's right edge, peeking out
+   like index tabs in a book. The current folder sticks out further. */
+#script-library-frame:has(.script-lib-jump:not(:empty)) #script-library-panel { max-width: calc(100vw - 32px - 150px); }
+.script-lib-jump {
+  position: absolute;
+  left: 100%;
+  top: 64px;
+  bottom: 16px;
+  width: 160px;
+  margin-left: -10px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  overflow-y: auto;
+  scrollbar-width: none;
+  padding: 2px 0;
+}
+.script-lib-jump::-webkit-scrollbar { display: none; }
+.script-lib-jump:empty { display: none; }
+.script-lib-jump-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 150px;
+  padding: 5px 10px 5px 18px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-left: none;
+  border-radius: 0 8px 8px 0;
+  box-shadow: 2px 3px 8px rgba(0,0,0,0.35);
+  color: var(--text2);
+  font-family: var(--font);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.12s, background 0.12s, color 0.12s;
+}
+.script-lib-jump-btn:hover { transform: translateX(4px); background: var(--surface-3); color: var(--text); }
+.script-lib-jump-btn.current {
+  transform: translateX(6px);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+.script-lib-jump-btn.current .script-lib-jump-count { color: inherit; opacity: 0.7; }
+.script-lib-jump-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.script-lib-jump-count { color: var(--muted); font-size: 10px; flex-shrink: 0; }
+.script-lib-jump-all { background: transparent; color: var(--muted); box-shadow: none; border-style: dashed; margin-bottom: 4px; }
 #script-library-header {
   display: flex;
   align-items: center;
@@ -2379,6 +2432,10 @@ tr:hover .pin-hl-btn, .pin-hl-btn:focus-visible { opacity: 0.55; }
 #script-library-results { max-height: 480px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
 .script-lib-category { display: flex; flex-direction: column; gap: 4px; }
 .script-lib-cat-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -3577,12 +3634,82 @@ tr:hover .pin-hl-btn, .pin-hl-btn:focus-visible { opacity: 0.55; }
 /* Script library search: full width and a proper height. It shares
    .sig-custom-input, whose flex: 1 (meant for rows) collapsed its height in
    this column layout. */
-#script-lib-search {
-  flex: none;
-  width: 100%;
-  height: 40px;
-  padding: 0 12px 0 36px;
-  font-size: 14px;
+/* Looks like one input: picked role chips sit inline before the text. */
+.script-lib-search-wrap {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  min-height: 40px;
+  padding: 4px 12px 4px 36px;
+  border: 1px solid var(--border);
   border-radius: 10px;
-  background: var(--sunken) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238e8e98' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E") no-repeat 12px center;
+  cursor: text;
+  background: var(--sunken) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238e8e98' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E") no-repeat 12px 11px;
 }
+.script-lib-search-wrap:focus-within { border-color: var(--accent); }
+.script-lib-role-suggest {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 5;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  padding: 4px;
+}
+.script-lib-role-suggest[hidden] { display: none; }
+.script-lib-role-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+.script-lib-role-option .tp-role-icon, .script-lib-role-filter .tp-role-icon { width: 18px; height: 18px; object-fit: contain; }
+.script-lib-role-option.active { background: var(--surface-3); }
+.script-lib-role-option-count { margin-left: auto; color: var(--muted); font-size: 11px; }
+.script-lib-role-hint { color: var(--muted); font-size: 10px; padding: 4px 8px 2px; }
+.script-lib-role-chips { display: contents; }
+.script-lib-role-filter {
+  cursor: default;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 4px 2px 8px;
+  border-radius: 12px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+.script-lib-role-filter button {
+  background: none;
+  border: none;
+  color: inherit;
+  opacity: 0.7;
+  cursor: pointer;
+  font-size: 10px;
+  padding: 2px 4px;
+  border-radius: 8px;
+}
+.script-lib-role-filter button:hover { opacity: 1; background: rgba(0,0,0,0.15); }
+#script-lib-search {
+  flex: 1;
+  min-width: 140px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+}
+#script-lib-search::placeholder { color: var(--muted); }
