@@ -6571,9 +6571,17 @@ chrome.runtime.onMessage.addListener((message) => {
     refreshPlayerTimeline();
   }
   if (message.type === 'NOMINATIONS_UPDATE') {
+    const prev = pendingNomination;
     allNominations = message.nominations ?? [];
     pendingNomination = message.pendingNomination ?? null;
     if (pendingNomination) nominationSent = null; // confirmed — the hold is over
+    // A nomination made in botc.app itself switches Nominate on, so the next
+    // one can be picked here. Not over another pick mode, and not for Shut up
+    // and listen (an empty seat nominating itself).
+    const nom = pendingNomination;
+    const isNew = nom && !(prev && prev.nominatorSeat === nom.nominatorSeat && prev.nomineeSeat === nom.nomineeSeat);
+    const isShutUp = nom && nom.nominatorSeat === nom.nomineeSeat && nom.seatNames?.[nom.nomineeSeat] == null;
+    if (isNew && !isShutUp && playerActionMode === null) setPlayerActionMode('nominate');
     renderNominations();
     refreshPlayerTimeline();
     // Limit flags are baked into the seat markup, so they only pick up a new
