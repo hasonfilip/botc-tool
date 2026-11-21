@@ -278,6 +278,8 @@ function renderState(state) {
   phaseBadge.className = 'badge ' + (state.phase % 2 === 1 ? 'night' : 'day');
 
   document.getElementById('session-id').textContent = state.session ? `· ${state.session}` : '';
+  const gameEnded = (state.history ?? []).some(h => h.type === 'end');
+  document.getElementById('screenshot-btn')?.style.setProperty('display', gameEnded ? '' : 'none');
 
   const stNames = state.storytellerNames ?? [];
   const stEl = document.getElementById('header-storytellers');
@@ -3645,6 +3647,26 @@ function initSignalPanel() {
     if (!marked) return;
     const value = marked.status.filter(s => s !== 'marked');
     sendBg({ type: 'SET_PLAYER_PROPERTY', seat: marked.seat, property: 'status', value });
+  });
+  document.getElementById('screenshot-btn')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    // captureVisibleTab needs <all_urls> (botc.app host access isn't enough);
+    // it's optional so the extension only holds it once the user agrees. The
+    // request must run inside the click; when already granted it resolves at once.
+    let granted = false;
+    try { granted = await chrome.permissions.request({ origins: ['<all_urls>'] }); } catch { /* dummy mode */ }
+    if (!granted) { alert('Screenshot needs permission to capture the botc.app tab.'); return; }
+    btn.disabled = true;
+    sendBg({ type: 'TAKE_SCREENSHOT' }, (res) => {
+      btn.disabled = false;
+      if (!res?.dataUrl) { alert(`Screenshot failed: ${res?.error ?? 'no response from the extension (reload it?)'}`); return; }
+      const stamp = new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-');
+      const session = currentState?.session ? `${currentState.session}-` : '';
+      const a = document.createElement('a');
+      a.href = res.dataUrl;
+      a.download = `botc-${session}${stamp}.png`;
+      a.click();
+    });
   });
   document.getElementById('clear-grimoire-btn')?.addEventListener('click', () => {
     if (!confirm('Clear the grimoire? This removes all roles, reminders, and status from every player.')) return;

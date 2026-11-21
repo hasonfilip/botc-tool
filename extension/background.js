@@ -132,6 +132,70 @@ async function checkConnection() {
   }
 }
 
+// ── End-of-game screenshot ────────────────────────────────────────────────
+
+// Only hides things, never moves or resizes them: token size, camera size and
+// grimoire offset are user settings applied through Vue-generated CSS
+// variables, so the circle must render exactly as the user has it. opacity
+// rather than visibility because several children set visibility: visible
+// themselves; transition: none so fade-outs are finished before the capture.
+// Seat avatars stay — camera feeds are switched off through the app's own
+// settings instead (setCameraFeeds), so seats fall back to their avatar art.
+const SCREENSHOT_CSS = `
+#reveal .info.overlay { display: none !important; }
+#grimoire > #left,
+#grimoire > aside,
+#app > #controls,
+#app > #version { opacity: 0 !important; transition: none !important; }
+`;
+
+const nextFrames = (ms) => new Promise(r => setTimeout(r, ms));
+
+// Runs in the page's MAIN world. Mirrors App Settings → Chat: "Show Camera
+// Feeds" is !chat.video.isDeafened and "Hide Your Own Camera" is isHidden; the
+// mutations only toggle, so each is committed only when the value differs.
+// Returns the previous values so they can be restored afterwards.
+function setCameraFeeds(show, restore) {
+  const store = document.querySelector('#main')?.__vue_app__?.config?.globalProperties?.$store;
+  const video = store?.state?.chat?.video;
+  if (!video) return null;
+  const prev = { isDeafened: video.isDeafened, isHidden: video.isHidden };
+  const want = restore ?? { isDeafened: !show, isHidden: !show };
+  if (video.isDeafened !== want.isDeafened) store.commit('chat/toggleVideoDeafened');
+  if (video.isHidden !== want.isHidden) store.commit('chat/toggleVideoHidden');
+  return prev;
+}
+
+// Captures the botc.app tab with the reveal dialog, cameras and side panels
+// hidden, so only the circle and the "<team> has won!" banner remain.
+// captureVisibleTab only sees a window's active tab, so the botc.app tab is
+// brought forward for the capture and the previously active tab restored.
+async function takeEndScreenshot() {
+  const tabs = await chrome.tabs.query({ url: 'https://botc.app/play*' });
+  const tab = tabs.find(t => t.id === activeBridgeTabId) ?? tabs[0];
+  if (!tab) throw new Error('No botc.app game tab is open.');
+
+  const [previous] = await chrome.tabs.query({ windowId: tab.windowId, active: true });
+  const target = { tabId: tab.id };
+  const [{ result: prevVideo } = {}] = await chrome.scripting.executeScript({
+    target, world: 'MAIN', func: setCameraFeeds, args: [false, null],
+  });
+  await chrome.scripting.insertCSS({ target, css: SCREENSHOT_CSS });
+  try {
+    if (!tab.active) await chrome.tabs.update(tab.id, { active: true });
+    await nextFrames(400);   // let the feeds drop and the freshly shown tab paint
+    return await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+  } finally {
+    await chrome.scripting.removeCSS({ target, css: SCREENSHOT_CSS }).catch(() => {});
+    if (prevVideo) {
+      await chrome.scripting.executeScript({
+        target, world: 'MAIN', func: setCameraFeeds, args: [true, prevVideo],
+      }).catch(() => {});
+    }
+    if (previous && previous.id !== tab.id) await chrome.tabs.update(previous.id, { active: true }).catch(() => {});
+  }
+}
+
 // ── WS frame parsing & dedup ──────────────────────────────────────────────
 
 function parseSocketIO(raw) {
@@ -748,6 +812,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
       sendResponse({ ok: true });
     })();
+    return true;
+  }
+
+  if (message.type === 'TAKE_SCREENSHOT') {
+    takeEndScreenshot()
+      .then(dataUrl => sendResponse({ dataUrl }))
+      .catch(e => sendResponse({ error: String(e?.message ?? e) }));
     return true;
   }
 
