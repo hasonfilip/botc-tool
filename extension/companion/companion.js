@@ -4335,7 +4335,22 @@ function initScriptLibrary() {
     return url ? `<img class="tp-role-icon" src="${esc(url)}" />` : '';
   };
 
+  const searchClearBtn = document.getElementById('script-lib-search-clear');
+  const syncSearchClear = () => { if (searchClearBtn) searchClearBtn.hidden = !searchInput.value && !roleFilter.size; };
+  // Clears the typed text and every picked role in one go.
+  function clearSearch() {
+    searchInput.value = '';
+    roleFilter.clear();
+    suggestEl.hidden = true;
+    renderRoleChips();
+    renderResults();
+    searchInput.focus();
+  }
+  searchClearBtn?.addEventListener('mousedown', (ev) => ev.preventDefault());
+  searchClearBtn?.addEventListener('click', clearSearch);
+
   function renderRoleChips() {
+    syncSearchClear();
     searchInput.placeholder = roleFilter.size ? 'add a role, or search…' : 'search name, author, or role…';
     roleChipsEl.innerHTML = [...roleFilter.values()].map(e =>
       `<span class="script-lib-role-filter">${roleIconHtml(e)}${esc(e.name)}<button type="button" data-key="${esc(e.key)}" aria-label="Remove ${esc(e.name)}" title="Remove">✕</button></span>`).join('');
@@ -4383,7 +4398,7 @@ function initScriptLibrary() {
     renderResults();
   }
 
-  searchInput?.addEventListener('input', () => { renderSuggestions(); renderResults(); });
+  searchInput?.addEventListener('input', () => { syncSearchClear(); renderSuggestions(); renderResults(); });
   searchInput?.addEventListener('focus', renderSuggestions);
   searchInput?.addEventListener('keydown', (ev) => {
     const open = !suggestEl.hidden && suggestions.length;
@@ -4391,6 +4406,7 @@ function initScriptLibrary() {
     else if (ev.key === 'ArrowUp' && open) { ev.preventDefault(); setSuggestActive(suggestActive - 1); }
     else if (ev.key === 'Enter' && open) { ev.preventDefault(); pickSuggestion(suggestActive); }
     else if (ev.key === 'Escape' && open) { ev.preventDefault(); ev.stopPropagation(); suggestEl.hidden = true; }
+    else if (ev.key === 'Escape' && (searchInput.value || roleFilter.size)) { ev.preventDefault(); ev.stopPropagation(); clearSearch(); }
     else if (ev.key === 'Backspace' && !searchInput.value && roleFilter.size) {
       roleFilter.delete([...roleFilter.keys()].pop());
       renderRoleChips();
