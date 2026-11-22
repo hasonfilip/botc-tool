@@ -63,7 +63,7 @@
 
 	<main>
 		<section id="notes-section">
-			<h2><span class="chevron">▾</span> Notes <button id="add-note-row" class="toggle-btn" title="Add a row for a role whose player you don't know yet, or under a label of your own">+ role notes</button> <button id="clear-notes" class="toggle-btn">clear</button></h2>
+			<h2><span class="chevron">▾</span> Notes <button id="add-note-row" class="toggle-btn" title="Add a row for a role whose player you don't know yet, or under a label of your own">+ role notes</button> <button id="toggle-status-hl" class="toggle-btn" title="Highlight cells where someone died, was executed or was revived">highlight deaths</button> <button id="clear-notes" class="toggle-btn">clear</button></h2>
 			<div class="notes-scroll">
 				<table id="role-notes-table" style="display:none"></table>
 				<table id="notes-table"></table>
@@ -206,16 +206,27 @@
 					</div>
 				</section>
 				<div id="st-tab-timer" class="st-tab-panel">
-					<div class="st-tab-panel-title">Phase</div>
+					<div class="st-tab-panel-head">
+						<div class="st-tab-panel-title">Phase</div>
+						<button id="night-view-switch" class="link-btn link-btn-muted" hidden></button>
+					</div>
 					<button id="next-phase-btn" class="btn btn-primary btn-block"><svg class="btn-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4l10 8-10 8z"></path><path d="M19 5v14"></path></svg> Next Phase</button>
 					<div class="st-btn-pair">
 						<button id="gong-btn" class="btn"><svg class="btn-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg> Gong</button>
 						<button id="voice-btn" class="btn"><svg class="btn-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3"></path></svg> <span id="voice-btn-label">Join Voice</span></button>
 					</div>
 					<div class="st-tab-divider"></div>
+					<div id="night-order-section" hidden>
+						<div class="st-tab-panel-head">
+							<div class="st-tab-panel-title"><span id="night-order-title">Night order</span><span id="night-order-count" class="nstep-count"></span></div>
+						</div>
+						<div id="night-order-columns"></div>
+					</div>
+					<div id="st-timer-block" class="st-timer-block">
 					<div class="st-tab-panel-head">
 						<div class="st-tab-panel-title">Timer</div>
 						<label class="tp-check"><input type="checkbox" id="timer-pause-votes" checked /> Pause during votes</label>
+					</div>
 					</div>
 					<div id="timer-status" hidden>
 						<div class="timer-status-head">
@@ -231,6 +242,7 @@
 						</div>
 						<div class="timer-status-bar"><span></span></div>
 					</div>
+					<div id="st-timer-block-2" class="st-timer-block">
 					<div id="timer-duration-row">
 						<div id="timer-duration-inputs">
 							<input id="timer-minutes" type="number" min="0" max="99" value="1" class="tp-num" title="minutes" aria-label="Minutes" />
@@ -245,6 +257,7 @@
 					</div>
 					<div id="timer-presets-label">Presets</div>
 					<div id="timer-presets" class="sig-special"></div>
+					</div>
 					<div class="st-spacer"></div>
 					<div id="endgame-actions">
 						<button id="endgame-good-btn" class="btn btn-sm endgame-btn endgame-good"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="9"></circle></svg> Good wins</button>
@@ -254,17 +267,7 @@
 			</div>
 		</section>
 
-		<section id="night-order-section" style="display:none">
-			<h2><span class="chevron">▾</span> Night Order</h2>
-			<div id="night-order-columns"></div>
-		</section>
-
 		<div class="main-grid">
-
-			<section id="timeline-section">
-				<h2><span class="chevron">▾</span> Timeline</h2>
-				<ul id="timeline-log"></ul>
-			</section>
 
 			<section id="nominations-section">
 				<h2><span class="chevron">▾</span> Nominations</h2>
@@ -378,7 +381,9 @@
 	<script src="../data/complexity.js"></script>
 	<script src="../data/chipSpecs.js"></script>
 	<script src="../data/nightOrder.js"></script>
-	<script src="../data/nightSignalScripts.js"></script>
+	<script src="../data/nightReminders.js"></script>
+	<script src="../data/nightActions.js"></script>
+	<script src="../data/nightStepHints.js"></script>
 	<script src="../data/nominationAlerts.js"></script>
 	<script src="companion.js"></script>
 </body>

@@ -339,7 +339,6 @@ main { padding: 20px 24px 24px; display: flex; flex-direction: column; gap: 28px
   border-left: 1px solid var(--line);
 }
 
-#timeline-section,
 #nominations-section,
 #chats-section,
 #messages-section {
@@ -355,7 +354,6 @@ main { padding: 20px 24px 24px; display: flex; flex-direction: column; gap: 28px
   background: radial-gradient(circle at 50% 50%, #1c1c21 0%, var(--bg) 60%);
 }
 
-#timeline-section #timeline-log,
 #nominations-section #nominations-log,
 #chats-section #chats-log,
 #messages-section #messages-log {
@@ -828,61 +826,6 @@ section.collapsed h2 { margin-bottom: 0; }
   background: var(--border);
   color: var(--muted);
 }
-
-/* ── Timeline ── */
-
-#timeline-log {
-  list-style: none;
-  font-size: 13px;
-  display: flex;
-  flex-direction: column;
-}
-
-/* One row per phase: a dot for night / day, then what happened in it. */
-.tl-block {
-  position: relative;
-  padding: 9px 2px 9px 18px;
-  border-bottom: 1px solid var(--line);
-  flex-shrink: 0;
-}
-.tl-block:last-child { border-bottom: none; }
-.tl-block::before {
-  content: '';
-  position: absolute;
-  left: 2px;
-  top: 15px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--dead);
-}
-.tl-block.tl-night::before { background: var(--night-dot); }
-.tl-block.tl-day::before   { background: var(--accent); }
-
-.tl-block-header { display: flex; align-items: baseline; gap: 8px; cursor: pointer; user-select: none; }
-.tl-block-label  { font-weight: 600; color: var(--text); white-space: nowrap; }
-.tl-block-header:hover .tl-block-label { color: var(--accent-text); }
-.tl-block-time   { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tl-block-chevron { font-size: 10px; color: var(--dead); display: inline-block; transition: transform 0.15s; margin-left: auto; }
-.tl-block-header:hover .tl-block-chevron { color: var(--text2); }
-.tl-block.collapsed .tl-block-chevron { transform: rotate(-90deg); }
-.tl-block.collapsed .tl-death,
-.tl-block.collapsed .tl-game-end { display: none; }
-
-.tl-death { font-size: 12px; color: var(--text2); margin-top: 5px; }
-.tl-death .btn-icon { color: var(--evil); margin-right: 4px; }
-.tl-death.revive .btn-icon    { color: var(--yes); }
-.tl-death.ghostvote { color: var(--muted); }
-.tl-death.ghostvote .btn-icon { color: var(--muted); }
-.tl-death-time { color: var(--muted); font-size: 11px; margin-left: 2px; }
-
-.tl-game-end { font-size: 12px; font-weight: 600; margin-top: 7px; padding: 3px 10px; border-radius: 999px; display: inline-block; cursor: pointer; user-select: none; }
-.tl-game-end.tl-good { background: rgba(130,173,255,0.14); color: var(--townsfolk); }
-.tl-game-end.tl-evil { background: rgba(255,107,97,0.14); color: var(--minion); }
-.tl-game-end.spoiler:not(.revealed) { background: var(--surface-2); color: var(--text2); font-weight: 500; }
-.tl-game-end.spoiler:not(.revealed):hover { background: var(--surface-3); color: var(--text); }
-.tl-game-end.spoiler:not(.revealed) .spoiler-show { display: none; }
-.tl-game-end.spoiler.revealed .spoiler-hide { display: none; }
 
 /* ── Nominations ── */
 
@@ -1563,6 +1506,12 @@ tr:hover .pin-hl-btn, .pin-hl-btn:focus-visible { opacity: 0.55; }
 :is(#notes-table, #role-notes-table) td.notes-cell.cc-cell-good      { background: rgba(95,143,234,0.10); }
 :is(#notes-table, #role-notes-table) td.notes-cell.cc-cell-evil      { background: rgba(255,107,97,0.09); }
 :is(#notes-table, #role-notes-table) td.notes-cell.cc-cell-droisoned { background: rgba(154,205,50,0.09); }
+
+/* "highlight deaths": the cell where someone died / was executed / revived gets
+   a coloured left bar and a wash layered over any ping tint. */
+#notes-section.hl-status #notes-table td.notes-cell.st-cell-dead     { box-shadow: inset 3px 0 0 #8a8a94;  background-image: linear-gradient(rgba(160,160,175,0.10), rgba(160,160,175,0.10)); }
+#notes-section.hl-status #notes-table td.notes-cell.st-cell-executed { box-shadow: inset 3px 0 0 #d9534f;  background-image: linear-gradient(rgba(217,83,79,0.14), rgba(217,83,79,0.14)); }
+#notes-section.hl-status #notes-table td.notes-cell.st-cell-revived  { box-shadow: inset 3px 0 0 #6fbf73;  background-image: linear-gradient(rgba(111,191,115,0.12), rgba(111,191,115,0.12)); }
 
 /* ── Ability chip value badges ── */
 .ab-val {
@@ -2891,6 +2840,7 @@ tr:hover .pin-hl-btn, .pin-hl-btn:focus-visible { opacity: 0.55; }
 .sig-suggest-role   { color: var(--accent-text); }
 .sig-suggest-player { color: var(--traveller); }
 .sig-suggest-own    { color: var(--text); font-style: italic; }
+.sig-suggest-night  { color: var(--text); }
 .sig-suggest-dead   { opacity: 0.45; }
 /* Per-recipient placeholders: filled in at send time, so they read as slots. */
 .sig-chip-own { font-style: italic; border: 1px dashed currentColor; }
@@ -2964,190 +2914,233 @@ tr:hover .pin-hl-btn, .pin-hl-btn:focus-visible { opacity: 0.55; }
 }
 .ptl-empty { color: var(--muted); font-style: italic; padding: 12px 6px; }
 
-/* ── Night order sheet ── */
+/* ── Night order steps ── */
 
-/* One open column per night, split by hairlines like the panels above. The
-   newest night is the live one; earlier nights step back. */
-#night-order-columns {
-  display: flex;
-  overflow-x: auto;
-  padding-bottom: 10px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
-}
+/* Lives in the right ST column during night phases, in the Timer's place. */
+.st-timer-block { display: contents; }
+.st-timer-block[hidden], #night-order-section[hidden] { display: none; }
+#night-order-section { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+#night-order-columns { min-width: 0; }
+.nowrap-btn { white-space: nowrap; }
+.nstep-count { margin-left: 10px; font-family: var(--font); font-size: 12px; font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* Things to check (not wakes): a quiet line under the order. */
+.nstep-confirm-line { margin-top: 8px; font-size: 11px; color: var(--muted); display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; }
+.nstep-confirm-line .nstep-input { width: auto; flex: 1; min-width: 110px; font-size: 11px; padding: 2px 4px; }
+.nstep-confirm-change { font-size: 11px; padding: 0; }
 
-.norder-column {
-  flex: 0 0 372px;
-  min-width: 0;
-  padding: 0 20px;
-  border-left: 1px solid var(--line);
-}
-.norder-column:first-child { flex-basis: 352px; padding-left: 0; border-left: none; }
-
-.norder-column-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 30px;
-  margin-bottom: 4px;
-  font-family: var(--font-display);
-  font-variant-numeric: lining-nums;
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--text2);
-}
-.norder-column.is-current .norder-column-header { color: var(--accent-text); }
-
-.norder-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
+.norder-list { list-style: none; margin: 0; padding: 0; }
 
 /* Dusk, Minion Info, Dawn: section labels inside the night. */
 .norder-marker {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.16em;
   color: var(--muted);
-  padding: 12px 0 4px;
+  padding: 10px 0 3px;
 }
-.norder-marker:first-child { padding-top: 4px; }
+.norder-marker:first-child { padding-top: 0; }
 
-/* Role on the left, who holds it on the right; any queued signal for a holder
-   sits on its own line underneath, inside the column. */
-.norder-row {
+/* One step: a one-line head (mark · role · holder · summary when done), and
+   the inputs + actions underneath while it's open. */
+.nstep { margin: 0 -8px; border-radius: 8px; }
+.nstep-open { background: var(--surface); padding-bottom: 8px; }
+.nstep-head {
   display: grid;
-  grid-template-columns: 136px minmax(0, 1fr);
-  column-gap: 10px;
+  grid-template-columns: 14px minmax(0, auto) minmax(0, 1fr);
   align-items: center;
-  margin: 0 -6px;
-  padding: 3px 6px;
+  column-gap: 6px;
+  padding: 3px 8px;
   border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 22px;
 }
-.norder-row:hover { background: rgba(255,255,255,0.03); }
+.nstep-head:hover { background: rgba(255,255,255,0.03); }
+.nstep-mark { color: var(--muted); font-size: 11px; text-align: center; }
+.nstep-active .nstep-mark { color: var(--accent-text); }
+.nstep-done .nstep-mark { color: var(--yes); }
+.nstep-done .nstep-head { opacity: 0.6; }
+.nstep-done.nstep-open .nstep-head { opacity: 1; }
+.nstep-active .norder-role { font-weight: 600; }
+.nstep-summary {
+  grid-column: 2 / -1;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .norder-role {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
-  line-height: 22px;
-  font-size: 13px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.norder-role .tp-role-icon { width: 22px; height: 22px; object-fit: contain; flex-shrink: 0; }
-
-.norder-players { font-size: 13px; line-height: 22px; min-width: 0; overflow-wrap: break-word; }
-.norder-outofplay { opacity: 0.32; }
-.norder-outofplay .norder-role { font-size: 12px; line-height: 18px; }
-.norder-outofplay .norder-role .tp-role-icon { width: 18px; height: 18px; margin: 0 2px; }
+.norder-role .tp-role-icon { width: 20px; height: 20px; object-fit: contain; flex-shrink: 0; }
+.nstep-who { display: inline-flex; align-items: center; gap: 4px; justify-content: flex-end; min-width: 0; overflow: hidden; white-space: nowrap; }
+.nstep-droisoned { display: inline-flex; }
+.nstep-droisoned .btn-icon { margin: 0; }
 .norder-dead { text-decoration: line-through; opacity: 0.6; }
 .norder-dead .btn-icon { margin-right: 4px; color: var(--muted); }
-.norder-sep { color: var(--muted); }
-.norder-holder { display: inline-flex; align-items: center; gap: 4px; }
-.sig-hist-holder {
-  cursor: pointer;
-  border-radius: 5px;
-  padding: 0 4px;
-  margin: 0 -4px;
-}
+.norder-holder { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.sig-hist-holder { cursor: pointer; border-radius: 5px; padding: 0 4px; margin: 0 -4px; }
 .sig-hist-holder:hover { background: var(--surface-2); }
-.sig-hist-icon { display: inline-flex; color: var(--muted); opacity: 0.45; }
-.sig-hist-icon .btn-icon { margin: 0; vertical-align: 0; }
-.sig-hist-holder:hover .sig-hist-icon { opacity: 1; }
 
-/* A queued signal: who it's for, what it says, and the one thing to do. */
-.norder-draft {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 5px 6px;
-  min-height: 34px;
-  margin: 4px 0 5px 28px;
-  padding: 5px 6px 5px 10px;
+.nstep-body { display: flex; flex-direction: column; gap: 8px; padding: 4px 8px 0 28px; }
+#nstep-tip {
+  position: fixed;
+  z-index: 1000;
+  max-width: 300px;
+  padding: 8px 10px;
   border-radius: 8px;
-  background: var(--surface);
+  background: var(--surface-2);
+  box-shadow: 0 6px 24px rgba(0,0,0,0.5), inset 0 0 0 1px var(--border);
+  color: var(--text2);
   font-size: 12px;
+  line-height: 1.45;
+  pointer-events: none;
 }
-.norder-draft-name { color: var(--text2); flex-shrink: 0; margin-right: 2px; }
-.norder-draft .sig-chip { font-size: 12px; padding: 2px 8px; }
-.norder-draft-sent { opacity: 0.5; }
-.norder-draft-locked { color: var(--muted); }
-.norder-lock-label, .norder-sent-label, .norder-waiting-label {
+#nstep-tip[hidden] { display: none; }
+#nstep-tip .nstep-tok { background: var(--surface-3); }
+.norder-role[data-tip] { cursor: help; }
+.nstep-info {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 12px;
-  color: var(--muted);
-}
-.norder-lock-label .btn-icon, .norder-waiting-label .btn-icon { margin: 0; vertical-align: 0; }
-.norder-warning { cursor: help; display: inline-flex; color: var(--accent-text); }
-
-.norder-send, .norder-send-all, .norder-compose, .norder-override, .norder-unlock {
-  height: 24px;
-  padding: 0 10px;
-  border: none;
-  border-radius: 6px;
-  background: var(--surface-3);
-  color: var(--text);
-  font-family: var(--font);
-  font-size: 12px;
-  font-weight: 500;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background 0.12s, color 0.12s;
-}
-.norder-send:hover, .norder-compose:hover, .norder-override:hover { background: #303036; }
-/* Send is the row's action: pushed to the right edge, amber on hover. */
-.norder-send, .norder-compose { margin-left: auto; font-weight: 600; }
-.norder-send:hover { background: var(--accent); color: var(--on-accent); }
-
-.norder-send-all {
-  margin-left: auto;
-  height: 26px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent-text);
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  margin-left: 1px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px currentColor;
+  font-size: 9px;
+  font-style: italic;
   font-weight: 600;
-  box-shadow: inset 0 0 0 1px rgba(233,180,76,0.35);
+  line-height: 1;
+  opacity: 0.4;
+  flex-shrink: 0;
 }
-.norder-send-all:hover { background: var(--accent); color: var(--on-accent); box-shadow: none; }
-
-/* Overriding the suggested answer: pick one. */
-.norder-override { background: transparent; color: var(--text2); box-shadow: inset 0 0 0 1px var(--border); }
-.norder-override.active {
-  background: var(--accent-soft);
-  color: var(--accent-text);
-  box-shadow: inset 0 0 0 1px rgba(233,180,76,0.45);
+.norder-role[data-tip]:hover .nstep-info { opacity: 0.9; }
+.nstep-tok {
+  display: inline-block;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 16px;
 }
-
-/* Unlocking skips a wait: a quiet text action, not a button. */
-.norder-unlock {
-  margin-left: auto;
-  padding: 0 4px;
-  background: none;
-  color: var(--text2);
-}
-.norder-unlock:hover { color: var(--accent-text); text-decoration: underline; text-underline-offset: 3px; }
-
-.norder-input {
-  height: 24px;
-  max-width: 150px;
-  padding: 0 6px;
+.nstep-tok-rem { color: var(--accent-text); font-weight: 500; letter-spacing: 0; }
+.norder-marker[title] { cursor: help; }
+.nstep-inputs { display: flex; flex-direction: column; gap: 6px; }
+.nstep-field { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; min-width: 0; }
+.nstep-label { font-size: 11px; color: var(--muted); }
+.nstep-input {
+  min-width: 0;
+  width: 100%;
+  background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--sunken);
   color: var(--text);
-  font-family: var(--font);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 6px;
+}
+.nstep-input:focus { border-color: var(--accent); outline: none; }
+.nstep-num { width: 80px; }
+.nstep-pills { display: inline-flex; flex-wrap: wrap; gap: 4px; border-radius: 6px; }
+.nstep-pill {
+  min-width: 26px;
+  padding: 2px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text2);
+  font: inherit;
   font-size: 12px;
   cursor: pointer;
 }
-.norder-input:focus { border-color: var(--accent); outline: none; }
+.nstep-pill:hover { color: var(--text); background: var(--surface-2); }
+.nstep-pill.active { background: var(--accent); color: var(--on-accent); box-shadow: none; font-weight: 600; }
+/* Where a value came from: the player's reply (blue) or a suggestion (dashed). */
+.nstep-input.nstep-from-reply, .nstep-pills.nstep-from-reply { box-shadow: 0 0 0 1px var(--townsfolk); }
+.nstep-input.nstep-from-hint { border-style: dashed; }
+.nstep-input.nstep-from-grimoire { box-shadow: 0 0 0 1px var(--accent); }
+.nstep-pills.nstep-from-hint .nstep-pill.active { background: transparent; color: var(--accent-text); box-shadow: inset 0 0 0 1px var(--accent); border: 1px dashed transparent; }
+
+.nstep-reply { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.nstep-reply .sig-chip { font-size: 12px; padding: 1px 7px; }
+.nstep-waiting { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
+.nstep-waiting .btn-icon { margin: 0; }
+.nstep-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.nstep-btn {
+  padding: 3px 10px;
+  border: none;
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.nstep-btn:hover { background: var(--surface-3); color: var(--text); }
+.nstep-btn.nstep-primary { background: var(--accent); color: var(--on-accent); font-weight: 600; margin-left: auto; }
+.nstep-btn.nstep-primary:hover { filter: brightness(1.08); }
+.nstep-btn.nstep-primary ~ .nstep-btn.nstep-primary { margin-left: 0; }
+
+.nstep-head-static { cursor: default; }
+.nstep-head-static:hover { background: none; }
+.nstep-reminder .nstep-mark { color: var(--accent-text); }
+.nstep-reminder-used { opacity: 0.45; }
+
+.nstep-warn { display: flex; align-items: flex-start; gap: 4px; font-size: 11px; line-height: 1.35; color: #e0a33a; }
+.nstep-warn .btn-icon { flex-shrink: 0; margin-top: 1px; }
+.nstep-warn-must { color: #ff6b61; font-weight: 600; }
+.nstep-warn-note { color: var(--muted); }
+.nstep-droisoned { color: #e0a33a; }
+.nstep-droisoned.nstep-must { color: #ff6b61; }
+.nstep-when { font-size: 11px; color: var(--muted); font-style: italic; }
+.nstep-summary.nstep-when-sub { color: var(--muted); font-style: italic; }
+.nstep-nowake .nstep-head { opacity: 0.75; }
+.nstep-used .nstep-head { opacity: 0.4; }
+/* Notes-only inputs read quieter than what's picked or told. */
+.nstep-use-note .nstep-input, .nstep-use-note .nstep-pills { opacity: 0.7; border-style: dashed; }
+.nstep-notify { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.nstep-notify .sig-chip { font-size: 12px; padding: 1px 7px; }
+.nstep-notify .nstep-btn { margin-left: auto; padding: 2px 8px; }
+.nstep-sent { margin-left: auto; font-size: 11px; color: var(--yes); }
+.nstep-btn-alt { background: transparent; box-shadow: inset 0 0 0 1px var(--border); color: var(--muted); }
+.nstep-btn:disabled { opacity: 0.4; cursor: default; }
+.nstep-btn:disabled:hover { background: var(--surface-2); color: var(--text2); }
+
+.nstep-new { font-size: 11px; color: var(--accent-text); }
+.nstep-has-new .nstep-head { opacity: 1; }
+.nstep-ack { font-size: 11px; opacity: 0.55; }
+.nstep-new-text {
+  grid-column: 2 / -1;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--accent-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nstep-via { font-size: 10px; color: var(--muted); font-weight: 400; margin-left: 2px; }
+.nstep-st { font-size: 12px; color: var(--muted); font-style: italic; }
+
+.nstep-places { font-size: 11px; color: var(--muted); }
+.nstep-notify .nstep-btn + .nstep-btn { margin-left: 0; }
+
+.nstep-empty { margin-top: 10px; font-size: 12px; color: var(--muted); }
 
 .align-cycle-btn {
   background: none;

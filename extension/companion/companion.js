@@ -23,6 +23,7 @@ let allChatSessions = [];
 let allTextMessages = [];
 let nameMap = {};
 let showNightChats = false;
+let highlightStatus = true; // notes grid: tint cells where someone died / was executed / revived
 let mergePhases = true; // notes grid: one column per round (Night N + Day N) instead of per phase
 let openPlayerTimelineName = null;
 let cellTokens = {};
@@ -37,8 +38,6 @@ let notesFixedKey = null;       // what the widths above were measured for
 let pinnedPlayers = new Set();
 let stMessage = [];
 let stRecipientIds = new Set();
-let nightSignalQueue = {}; // `${night}|${roleId}|${holderUid}` -> {status, tokens, filled, sentAt}
-let nightSignalUnlocks = new Set(); // `${night}|${blockingRoleId}|${blockingHolderUid}` manually unlocked despite no observed reply
 let viewRole = 'player'; // 'storyteller' | 'player' — snaps to amIStoryteller() whenever it changes; manual toggle overrides until then
 let detectedRole = null; // last amIStoryteller() result seen, null until the first state with a known user id
 
@@ -364,94 +363,6 @@ function duration(ms) {
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
-function renderTimeline() {
-  const list = document.getElementById('timeline-log');
-  const savedTop = list.scrollTop;
-  const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
-
-  // Save collapse/reveal state keyed by block label
-  const collapsedBlocks = new Set();
-  const revealedBlocks = new Set();
-  list.querySelectorAll('.tl-block').forEach(el => {
-    const label = el.querySelector('.tl-block-label')?.textContent;
-    if (label && el.classList.contains('collapsed')) collapsedBlocks.add(label);
-    if (el.querySelector('.tl-game-end.revealed')) revealedBlocks.add(label);
-  });
-
-  list.innerHTML = '';
-
-  // Group events into phase blocks
-  // Each block: { label, start, end (null if ongoing), deaths[] }
-  const blocks = [];
-  let current = null;
-
-  for (const ev of fullTimeline) {
-    if (ev.type === 'start') {
-      current = { label: 'Game started', start: ev.ts, end: null, deaths: [] };
-      blocks.push(current);
-    } else if (ev.type === 'phase') {
-      if (current) current.end = ev.ts;
-      current = { label: ev.label, start: ev.ts, end: null, deaths: [] };
-      blocks.push(current);
-    } else if ((ev.type === 'death' || ev.type === 'ghostvote' || ev.type === 'revive') && current) {
-      const isEarlyDay = current.label.startsWith('Day') && (ev.ts - current.start) < 120000;
-      const target = isEarlyDay && blocks.length >= 2 ? blocks[blocks.length - 2] : current;
-      target.deaths.push(isEarlyDay ? { ...ev, refStart: current.start } : ev);
-    } else if (ev.type === 'end' && current) {
-      current.end = ev.ts;
-      current.end_event = ev;
-    }
-  }
-
-  for (const block of blocks) {
-    const isOngoing = block.end === null;
-    const dur = block.end ? duration(block.end - block.start) : null;
-
-    const li = document.createElement('li');
-    li.className = `tl-block tl-${block.label === 'Game started' ? 'start' : block.label.startsWith('Night') ? 'night' : 'day'}`;
-
-    const timeRange = isOngoing
-      ? `${fmt(block.start)} – now`
-      : `${fmt(block.start)} – ${fmt(block.end)}`;
-
-    li.innerHTML = `
-      <div class="tl-block-header">
-        <span class="tl-block-label">${block.label}</span>
-        <span class="tl-block-time">${timeRange}${dur ? ` · ${dur}` : ''}</span>
-        <span class="tl-block-chevron">▾</span>
-      </div>
-      ${block.deaths.map(d => {
-        const name = d.name ?? playerName(d.playerId);
-        const team = playerTeamByName(name);
-        const blockIsDay = block.label.startsWith('Day');
-        const isExile = team === 'traveller' && blockIsDay && d.type === 'death';
-        const icon = d.type === 'ghostvote' ? ICON_SVG.logGhost : d.type === 'revive' ? ICON_SVG.logRevive : isExile ? ICON_SVG.logExile : ICON_SVG.logSkull;
-        const ghostTarget = d.type === 'ghostvote' ? (() => { const n = nominationAt(d.ts); return n ? ` on ${esc(seatName(n.nomineeSeat))}` : ''; })() : '';
-        const action = d.type === 'ghostvote' ? `ghost vote${ghostTarget}` : d.type === 'revive' ? 'revived' : isExile ? 'exiled' : 'died';
-        const cls = d.type === 'revive' ? 'revive' : d.type === 'ghostvote' ? 'ghostvote' : '';
-        const offsetStr = d.refStart ? '' : ` <span class="tl-death-time">+${duration(d.ts - block.start)}</span>`;
-        return `<div class="tl-death ${cls}">${icon} <span class="${team ? `role-name ${team}` : ''}" data-player="${esc(name)}">${esc(dn(name))}</span> ${action}${offsetStr}</div>`;
-      }).join('')}
-      ${block.end_event ? `<div class="tl-game-end tl-${block.end_event.isEvilWin ? 'evil' : 'good'} spoiler"><span class="spoiler-hide">reveal result</span><span class="spoiler-show">${block.end_event.label}</span></div>` : ''}
-    `;
-
-    if (collapsedBlocks.has(block.label)) li.classList.add('collapsed');
-    if (revealedBlocks.has(block.label)) li.querySelector('.tl-game-end')?.classList.add('revealed');
-
-    li.querySelector('.tl-block-header').addEventListener('click', (e) => {
-      e.stopPropagation();
-      li.classList.toggle('collapsed');
-    });
-    list.appendChild(li);
-  }
-
-  list.querySelectorAll('.tl-game-end.spoiler').forEach(el => {
-    el.addEventListener('click', () => el.classList.toggle('revealed'));
-  });
-  list.scrollTop = atBottom ? list.scrollHeight : savedTop;
-  applyHighlights(); applyPinnedHighlights();
-}
-
 function patchTimelineNames() {
   if (!currentState?.players) return;
   const map = {};
@@ -485,7 +396,8 @@ function addTimelineEvents(events) {
   fullTimeline.sort((a, b) => a.ts - b.ts);
   patchTimelineNames();
   materializeStatusChips();
-  renderTimeline();
+  renderNotesGrid();
+  renderNightOrder(); // executions (Cannibal, Undertaker) come from the history
 }
 
 function bindPhaseSeparators(list, collapsedPhases = new Set()) {
@@ -1429,6 +1341,23 @@ function applyCellColorClass(cell, player, phases) {
   Object.keys(CELL_COLORS).forEach(id => cell.classList.remove(`cc-cell-${id}`));
   const id = cellColorId(player, phases);
   if (id) cell.classList.add(`cc-cell-${id}`);
+  STATUS_TAG_IDS.forEach(s => cell.classList.remove(`st-cell-${s}`));
+  const st = statusTagId(player, phases);
+  if (st) cell.classList.add(`st-cell-${st}`);
+}
+
+// Death / execution / revival status of a cell (the last such tag chip among
+// the column's phases) — what the old Timeline panel used to list. Shown as a
+// cell highlight when the "highlight deaths" toggle is on.
+const STATUS_TAG_IDS = ['dead', 'executed', 'revived'];
+function statusTagId(player, phases) {
+  let id = null;
+  for (const ph of phases) {
+    for (const c of (cellTokens[`${player}|${ph}`] ?? [])) {
+      if (c.type === 'tag' && STATUS_TAG_IDS.includes(c.id)) id = c.id;
+    }
+  }
+  return id;
 }
 
 function refreshCellChips(player, phase) {
@@ -2508,7 +2437,6 @@ function toggleAlignment(name) {
 }
 
 function refreshPageColors() {
-  renderTimeline();
   renderNominations();
   renderChats();
   renderMessages();
@@ -2703,7 +2631,8 @@ function renderNotesGrid() {
       const epoch = i % 2 === 0 ? ' epoch-start' : '';
       const chips = cellChipsHtml(name, col.phases);
       const ccId = cellColorId(name, col.phases);
-      const ccClass = ccId ? ` cc-cell-${ccId}` : '';
+      const stId = statusTagId(name, col.phases);
+      const ccClass = (ccId ? ` cc-cell-${ccId}` : '') + (stId ? ` st-cell-${stId}` : '');
       html += `<td class="notes-cell${epoch}${ccClass}" data-player="${esc(name)}" data-col="${esc(col.key)}" data-phase="${esc(col.addPhase)}">
         <div class="cell-chips">${chips}</div>
       </td>`;
@@ -2907,6 +2836,9 @@ const SIGNAL_TOKEN_DEFS = [
   { id: 'four',       label: '4',                             cls: 'sig-chip-num' },
   { id: 'five',       label: '5',                             cls: 'sig-chip-num' },
   { id: 'grimoire',   label: 'Grimoire Snapshot',             cls: '' },
+  { id: 'neutral',    label: 'neutral',                       cls: '' },
+  { id: 'clockwise',  label: 'clockwise',                     cls: '' },
+  { id: 'anticlockwise', label: 'anticlockwise',              cls: '' },
   // Placeholders, filled in per recipient at send time (see expandOwnTokens) —
   // so one "You are …" can go to several players, each getting their own.
   { id: 'own-align',  label: 'their alignment',               cls: 'sig-chip-own' },
@@ -3010,6 +2942,29 @@ function scriptRoleId(id) {
   return (roles.find(r => r.id === id) ?? roles.find(r => _normalizeId(r.id) === norm))?.id ?? null;
 }
 
+// Tonight's night-order steps for one player, as Signal suggestions.
+function nightStepSuggestions(player) {
+  const phase = currentState?.phase ?? 0;
+  if (phase % 2 !== 1 || typeof nightSteps === 'undefined') return [];
+  const prefix = `${currentState?.session ?? ''}|${Math.ceil(phase / 2)}|`;
+  const out = [];
+  for (const key of Object.keys(nightSteps)) {
+    if (!key.startsWith(prefix)) continue;
+    const c = nightStepCtx(key);
+    if (!c || c.player.seat !== player.seat || c.step.stOnly) continue;
+    const hint = NIGHT_INFO_NAMES[c.bundledId] ?? scriptRoleFor(c.bundledId).name;
+    if (c.action.wake === 'choice' || c.action.wake === 'ability') {
+      const ask = c.action.ask ? resolveTemplate(c.action.ask, c).tokens : [{ id: c.action.wake }];
+      out.push({ label: ask.map(signalTokenLabel).join(' + '), hint, cls: 'night', tokens: ask });
+    }
+    const answer = stepAnswer(c, true);
+    if (answer.tokens.length && !answer.missing) {
+      out.push({ label: answer.tokens.map(signalTokenLabel).join(' · '), hint, cls: 'night', tokens: answer.tokens });
+    }
+  }
+  return out;
+}
+
 function signalSuggestions() {
   const players = (currentState?.players ?? []).slice().sort((a, b) => a.seat - b.seat);
   const roleOf = (p) => scriptRoleId(p?.roleId);
@@ -3030,6 +2985,11 @@ function signalSuggestions() {
   const tailSeats = tail.filter(t => t.id === 'player').map(t => t.data);
   const tailRoles = tail.filter(t => t.id === 'role').map(t => t.data);
   const out = [];
+
+  // Nothing written yet for one player: tonight's night-order step(s) for
+  // them — the prompt, and the answer as the step has it (grimoire reminders,
+  // their reply and suggestions already worked in).
+  if (!stMessage.length && recipient) out.push(...nightStepSuggestions(recipient));
 
   if (kw === 'you' && !tail.length && stRecipientIds.size > 1) {
     out.push({ label: 'their alignment & role', cls: 'own', tokens: [{ id: 'own-align' }, { id: 'own-role' }] });
@@ -3067,9 +3027,14 @@ function signalSuggestions() {
       });
     }
     if (tailSeats.length < 2 && !tailRoles.length) {
+      // Players carrying the recipient's role reminders (e.g. the
+      // Washerwoman's Townsfolk / Wrong) first, labelled with the reminder.
+      const recipRole = recipient && bundledRoleOf(recipient);
+      const reminderOf = (p) => recipRole && (p.reminders ?? []).find(r => _normalizeId(r.role ?? '') === recipRole && !(r.flags ?? []).includes('flipped'))?.name;
       players
         .filter(p => !tailSeats.includes(p.seat) && p !== recipient)
-        .forEach(p => out.push({ label: playerName(p), cls: 'player', dead: p.isDead, tokens: [playerTok(p)] }));
+        .sort((a, b) => (reminderOf(a) ? 0 : 1) - (reminderOf(b) ? 0 : 1))
+        .forEach(p => out.push({ label: playerName(p), hint: reminderOf(p) || undefined, cls: 'player', dead: p.isDead, tokens: [playerTok(p)] }));
     }
   }
   return out;
@@ -5682,337 +5647,1341 @@ function handlePlayerActionPick(seat) {
   }
 }
 
-// ── Night order sheet ─────────────────────────────────────────────────────
-// Storyteller reference: script roles in wake order with the players holding
-// them. Order data lives in data/nightOrder.js (canonical bundled role ids).
+// ── Night order steps ─────────────────────────────────────────────────────
+// Tonight's wake order as a list of steps, one per role holder. How a step
+// works comes from data/nightActions.js (how the role wakes, which chip
+// inputs are the player's pick / what they're told / your note, follow-up
+// messages to other players), on top of the role's chip spec (chipSpecs.js):
+//   Ask    → "Make a choice!" / "Use your ability?" (both always on offer —
+//            players answer however they like)
+//   reply  → their picks fill the pick inputs; "no" to their ability = pass
+//   Send   → sends what they learn, Done → finishes without sending
+//   notify → one-click messages to other players (target, Demon, Minions)
+// Finishing a step writes the ability chip into the holder's cell for this
+// night (and a Droisoned chip on the target for poison/drunk roles). A step
+// fully answered by the reply finishes by itself.
+// Order data: data/nightOrder.js; instructions: data/nightReminders.js;
+// suggested answers: data/nightStepHints.js.
 
 const _nightOrder = () => (typeof BOTC_NIGHT_ORDER !== 'undefined' ? BOTC_NIGHT_ORDER : { firstNight: [], otherNight: [] });
-const _nightSignalScripts = () => (typeof BOTC_NIGHT_SIGNAL_SCRIPTS !== 'undefined' ? BOTC_NIGHT_SIGNAL_SCRIPTS : {});
+const _nightReminders = () => (typeof BOTC_NIGHT_REMINDERS !== 'undefined' ? BOTC_NIGHT_REMINDERS : {});
+const _nightStepHints = () => (typeof BOTC_NIGHT_STEP_HINTS !== 'undefined' ? BOTC_NIGHT_STEP_HINTS : {});
 
-// normalized role id → [{name, isDead, id, seat}]: grimoire tokens first
-// (storyteller always sees them), notes-grid role assignments as the fallback.
+// Player inputs whose target becomes drunk/poisoned by the ability.
+// (Not the Sailor's target: you decide whether the Sailor or the target is drunk.)
+const DROISON_TARGET_LABEL = /^(poisoned|drunk player|host)$/i;
+const NUMBER_TOKEN_IDS = ['zero', 'one', 'two', 'three', 'four', 'five'];
+// Instructions for the fixed night-sheet markers (roles' own come from
+// data/nightReminders.js).
+const NIGHT_MARKER_REMINDERS = {
+  'Dusk': 'Check that all eyes are closed. Some Travellers & Fabled act.',
+  'Minion Info': 'If there are 7 or more players, wake all Minions. Show the *THIS IS THE DEMON* token and point to the Demon. Show the *THESE ARE YOUR MINIONS* token and point to the other Minions.',
+  'Demon Info & Bluffs': 'If there are 7 or more players, wake the Demon. Show the *THESE ARE YOUR MINIONS* token and point to all Minions. Show the *THESE CHARACTERS ARE NOT IN PLAY* token and 3 good characters not in play.',
+  'Dawn': 'Wait a few seconds, then call for eyes open.',
+};
+
+// The night sheet instruction for a role (or marker) tonight, as raw text.
+function nightReminderText(bundledId, night) {
+  const r = _nightReminders()[bundledId];
+  return (night === 1 ? r?.first : r?.other) ?? '';
+}
+
+// *TOKEN* → a token badge, :reminder: → a "place reminder" badge.
+function nightReminderHtml(text) {
+  return esc(text)
+    .replace(/\*([^*]+)\*/g, '<span class="nstep-tok">$1</span>')
+    .replace(/:reminder:/g, '<span class="nstep-tok nstep-tok-rem" title="Place the reminder token">◉ reminder</span>');
+}
+
+// Hovering a role name (or a marker) in the night order shows its night-sheet
+// instruction in a floating tip — kept out of the list itself, since the
+// storyteller usually knows it by heart.
+const nightTipEl = document.createElement('div');
+nightTipEl.id = 'nstep-tip';
+nightTipEl.hidden = true;
+document.body.appendChild(nightTipEl);
+function showNightTip(anchor) {
+  nightTipEl.innerHTML = nightReminderHtml(anchor.dataset.tip);
+  nightTipEl.hidden = false;
+  const a = anchor.getBoundingClientRect();
+  const w = nightTipEl.offsetWidth, h = nightTipEl.offsetHeight;
+  // Prefer the left of the anchor (the list sits at the right edge), else below.
+  let left = a.left - w - 10, top = a.top - 4;
+  if (left < 8) { left = Math.max(8, Math.min(a.left, innerWidth - w - 8)); top = a.bottom + 6; }
+  top = Math.max(8, Math.min(top, innerHeight - h - 8));
+  nightTipEl.style.left = `${left}px`;
+  nightTipEl.style.top = `${top}px`;
+}
+
+// Day abilities whose holder comes to the storyteller for information — listed
+// under the night as a reminder to have it ready.
+const DAY_INFO_REMINDERS = {
+  savant: 'visits for 2 facts each day',
+  fisherman: 'may visit once for advice',
+};
+
+// stepKey (`${session}|${night}|${roleId}|${holder notes name}`) →
+// { inputs: {i0: …}, src: {i0: 'reply'|'manual'|'hint'}, done, askedAt,
+//   passed, used, notified: {idx: true} }
+let nightSteps = {};
+let nightStepExpanded = null; // stepKey the storyteller opened by hand (null → the active step)
+const NIGHT_STEPS_KEY = 'botc-companion-night-steps';
+
+function loadNightSteps() {
+  try {
+    const s = JSON.parse(localStorage.getItem(NIGHT_STEPS_KEY) || '{}');
+    if (s && typeof s.steps === 'object') nightSteps = s.steps;
+  } catch { /* ignore */ }
+}
+
+// Only the current session's steps are kept.
+function saveNightSteps() {
+  const prefix = `${currentState?.session ?? ''}|`;
+  for (const k of Object.keys(nightSteps)) if (!k.startsWith(prefix)) delete nightSteps[k];
+  try { localStorage.setItem(NIGHT_STEPS_KEY, JSON.stringify({ steps: nightSteps })); } catch { /* ignore */ }
+}
+
+const notesNameOf = (p) => p.name ?? `Seat ${p.seat + 1}`;
+
+// A player's character as a bundled id: grimoire token first (storyteller
+// always sees it), notes-grid role assignment as the fallback.
+// A player's character (their grimoire token) as a bundled id. The night order
+// reads only botc.app's own state — never the notes table.
+function bundledRoleOf(p) {
+  return p?.roleId ? _normalizeId(p.roleId) : null;
+}
+
+// Who a player really is. A Philosopher, Alchemist, Cannibal, … is often
+// shown with the token of the character whose ability they have plus an
+// "Is the Philosopher" style reminder (likewise "Is the Drunk"); the
+// reminder's character is who they are. Team, info about them and the like
+// go by this; waking goes by their token (bundledRoleOf).
+function trueRoleOf(p) {
+  const r = (p?.reminders ?? []).find(r => /^is the /i.test(r.name ?? '') && !(r.flags ?? []).includes('flipped'));
+  return r ? _normalizeId(r.role ?? '') : bundledRoleOf(p);
+}
+const VIA_IS = new Set(['drunk', 'marionette', 'lunatic']); // "is the Drunk", not "via"
+
+// normalized role id → [{ player, via }] — players who wake as that character:
+// by their token (via = who they really are, when that's someone else), and by
+// who they really are (their own character's steps, e.g. the Alchemist's).
 function playersByRoleId() {
   const map = {};
   for (const p of currentState?.players ?? []) {
-    const name = displayName(p, p.seat);
-    const metaRole = playerMeta[name]?.roleId || null;
-    const grimRole = p.roleId || null;
-    const roleId = grimRole ?? metaRole;
-    if (!roleId) continue;
-    (map[_normalizeId(roleId)] ??= []).push({ name, isDead: !!p.isDead, id: p.id, seat: p.seat });
+    const token = bundledRoleOf(p), truth = trueRoleOf(p);
+    if (token) (map[token] ??= []).push({ player: p, via: truth && truth !== token ? truth : null });
+    if (truth && truth !== token) (map[truth] ??= []).push({ player: p, via: null });
   }
   return map;
 }
 
-// Builds the auto-drafted signal (if any) for one role's holder this night.
-// M1 scope: only fully-automatic builders exist (no blocking/inputs yet), so
-// status is always 'none' (no script / can't build) or 'ready'.
-// A blocking role's downstream rows unlock once a reply from its holder is
-// observed this night (or the storyteller manually unlocks it — some replies
-// arrive out-of-band, e.g. picked in-app rather than sent back as a signal).
-function isBlockingResolved(night, nightLabel, roleId, uid, script) {
-  if (nightSignalUnlocks.has(`${night}|${roleId}|${uid}`)) return true;
-  const entries = currentState?.signals?.[uid] ?? [];
-  return entries.some(en => en.isInbound && signalNightGroup(en.timestamp) === nightLabel && (script.replyMatch ? script.replyMatch(en) : true));
+// The script's own role object for a bundled id (ids can differ in casing/format).
+function scriptRoleFor(bundledId) {
+  return (currentState?.roles ?? []).find(r => _normalizeId(r.id) === bundledId)
+    ?? _roles().find(r => r.id === bundledId) ?? { id: bundledId, name: bundledId };
 }
 
-// Tokens from all of the holder's inbound signals this night, flattened —
-// this is how a player's in-app selection (who they poisoned/killed/looked
-// at) reaches the queue engine, same as any other signal.
-function nightlyReplyTokens(uid, night) {
-  const nightLabel = `Night ${night}`;
-  return getPlayerSignalEntries(uid)
-    .filter(en => en.isInbound && signalNightGroup(en.timestamp) === nightLabel)
-    .flatMap(en => en.message ?? []);
+function teamOfPlayer(p) {
+  const id = trueRoleOf(p);
+  return (id && scriptRoleFor(id).team) || p.team || '';
+}
+const playersOfTeam = (team) => (currentState?.players ?? []).filter(p => teamOfPlayer(p) === team);
+
+// Did one of tonight's steps poison / make drunk this player (the Poisoner's,
+// Widow's, … pick)? Returns that character's name, or null.
+function droisonedBySteps(player, night) {
+  const prefix = `${currentState?.session ?? ''}|${night}|`;
+  for (const [k, st] of Object.entries(nightSteps)) {
+    if (!k.startsWith(prefix)) continue;
+    const id = k.split('|')[2];
+    const spec = _specs()[id];
+    const action = nightActionFor(id, night);
+    const hit = (spec?.inputs ?? []).some((s, i) => (s.type === 'player' || s.type === 'player?') && DROISON_TARGET_LABEL.test(s.label)
+      && fieldUse(action, i) === 'pick' && st.inputs?.[`i${i}`] === notesNameOf(player));
+    if (hit) return scriptRoleFor(id).name ?? id;
+  }
+  return null;
 }
 
-// Has the storyteller sent this holder anything at all yet tonight? Used to
-// decide whether a reply-dependent role still needs its opening prompt sent.
-function nightlyOutboundSent(uid, night) {
-  const nightLabel = `Night ${night}`;
-  return getPlayerSignalEntries(uid).some(en => !en.isInbound && signalNightGroup(en.timestamp) === nightLabel);
+// Who was executed during Day d, from botc.app's own history: a day death
+// shortly before the next Night begins (the same rule the notes use).
+function executedOnDay(d) {
+  if (d < 1) return null;
+  const start = fullTimeline.find(e => e.type === 'phase' && e.label === `Day ${d}`)?.ts;
+  if (start == null) return null;
+  const end = fullTimeline.find(e => e.type === 'phase' && e.ts > start)?.ts ?? Infinity;
+  const ev = fullTimeline.filter(e => e.type === 'death' && e.ts >= start && e.ts < end && isExecutionDeath(e)).pop();
+  const players = currentState?.players ?? [];
+  return ev ? (players.find(p => p.id && String(p.id) === String(ev.playerId)) ?? players.find(p => p.name && p.name === ev.name) ?? null) : null;
 }
 
-// Reuses the storyteller's own manually-maintained "droisoned" (drunk/
-// poisoned) notes-grid marker — cause-agnostic, so it doesn't matter which
-// character caused it, unlike registration which is per-character.
-function isHolderDroisoned(player, night) {
-  const name = displayName(player, player.seat);
+// ── Night actions (data/nightActions.js) ──
+
+const _nightActions = () => (typeof BOTC_NIGHT_ACTIONS !== 'undefined' ? BOTC_NIGHT_ACTIONS : {});
+
+// The first-night info steps, shown under their night-sheet markers.
+const NIGHT_INFO_STEPS = { 'Minion Info': 'minioninfo', 'Demon Info & Bluffs': 'demoninfo' };
+const NIGHT_INFO_NAMES = { minioninfo: 'Minion info', demoninfo: 'Demon info' };
+
+// A role's action for this night (first/other overrides merged in). Roles
+// without an entry get a plain step.
+function nightActionFor(bundledId, night) {
+  const base = _nightActions()[bundledId];
+  if (!base) return { wake: 'info', plain: true };
+  return { ...base, ...((night === 1 ? base.first : base.other) ?? {}) };
+}
+const fieldUse = (action, i) => action.fields?.[`i${i}`] ?? 'note';
+const ASK_LABELS = { choice: 'Make a choice!', ability: 'Use your ability?' };
+
+const isRequiredInput = (spec) => spec.type !== 'player?' && spec.type !== 'text';
+const playerByNotesName = (n) => (currentState?.players ?? []).find(p => notesNameOf(p) === n) ?? null;
+
+// Inbound signal tokens from the holder for this step: everything after our
+// Ask if we sent one (so an earlier exchange doesn't bleed in), else whatever
+// they sent tonight. botc.app stamps entries with this machine's clock on
+// arrival, so comparing against askedAt is safe.
+function stepReplyTokens(player, night, askedAt) {
+  if (!player.id) return [];
+  return getPlayerSignalEntries(player.id)
+    .filter(en => en.isInbound && (askedAt ? en.timestamp >= askedAt : signalNightGroup(en.timestamp) === `Night ${night}`))
+    .flatMap(en => en.message ?? [])
+    .filter(t => t.id !== 'seen');
+}
+
+// ── Steps run from botc.app ──
+// The storyteller may prompt, answer or wake other players straight from
+// botc.app instead of the step's buttons. botc.app keeps every signal (sent
+// from here or from the app) in the same store, so steps read their progress
+// from there: a prompt counts as Ask, a message shaped like the step's answer
+// finishes it, one shaped like a follow-up marks that follow-up sent.
+
+const PROMPT_IDS = new Set(['choice', 'ability']);
+
+// Signals sent to a player tonight, oldest first ('seen' receipts dropped).
+function outboundTonight(player, night) {
+  if (!player?.id) return [];
+  return getPlayerSignalEntries(player.id)
+    .filter(en => !en.isInbound && signalNightGroup(en.timestamp) === `Night ${night}`)
+    .map(en => ({ ts: en.timestamp, tokens: (en.message ?? []).filter(t => t.id !== 'seen') }));
+}
+// ("No + Make a choice!" after an invalid pick counts as asking again.)
+const isPromptMessage = (tokens) => tokens.some(t => PROMPT_IDS.has(t.id)) && tokens.every(t => PROMPT_IDS.has(t.id) || t.id === 'grimoire' || t.id === 'no' || t.id === 'custom');
+
+// When the step was last opened: our Ask, or a prompt sent from botc.app.
+function stepAskedAt(c) {
+  const fromApp = outboundTonight(c.player, c.night).filter(m => isPromptMessage(m.tokens)).pop()?.ts ?? 0;
+  return Math.max(c.step.askedAt ?? 0, fromApp) || null;
+}
+
+// Could this token fill this template slot?
+function slotAccepts(slot, t, c) {
+  if (LITERAL_TOKENS.has(slot)) return t.id === slot;
+  if (slot === 'self' || slot.startsWith('role:') || slot === 'bluffRoles' || slot.startsWith('inPlay:') || slot.endsWith('.role')) return t.id === 'role';
+  if (['holder', 'demonPlayers', 'minionPlayers', 'otherMinions'].includes(slot)) return t.id === 'player';
+  if (slot === 'recipientRole') return t.id === 'role';
+  if (slot.startsWith('custom:')) return t.id === 'custom';
+  const m = slot.match(/^i(\d+)$/);
+  const s = m && c.spec?.inputs?.[m[1]];
+  if (!s) return false;
+  if (s.type === 'player' || s.type === 'player?') return t.id === 'player';
+  if (s.type === 'role') return t.id === 'role';
+  if (s.type === 'number') return NUMBER_TOKEN_IDS.includes(t.id) || t.id === 'custom';
+  if (s.type === 'yn') return t.id === 'yes' || t.id === 'no' || t.id === 'custom';
+  if (s.type === 'alignment') return ['good', 'evil', 'neutral'].includes(t.id);
+  if (s.type === 'direction') return t.id === 'clockwise' || t.id === 'anticlockwise';
+  return t.id === 'custom';
+}
+
+// A message matches a template when it has the template's fixed phrases and
+// every token fits somewhere in it.
+function messageFits(tokens, tpl, c) {
+  if (!tokens.length || !tpl?.length) return false;
+  if (!tpl.filter(x => LITERAL_TOKENS.has(x)).every(l => tokens.some(t => t.id === l))) return false;
+  return tokens.every(t => tpl.some(x => slotAccepts(x, t, c)));
+}
+
+function answerTemplate(c) {
+  return c.action.tell ?? (c.spec?.inputs ?? []).map((_, i) => fieldUse(c.action, i) === 'tell' ? `i${i}` : null).filter(Boolean);
+}
+
+// A token as the input value it stands for.
+function tokenToInputValue(t) {
+  if (t.id === 'player') { const p = (currentState?.players ?? []).find(pl => pl.seat === t.data); return p ? notesNameOf(p) : undefined; }
+  if (t.id === 'role' || t.id === 'custom') return t.data;
+  if (NUMBER_TOKEN_IDS.includes(t.id)) return NUMBER_TOKEN_IDS.indexOf(t.id);
+  if (t.id === 'neutral') return 'neither';
+  if (t.id === 'anticlockwise') return 'anti-clockwise';
+  return t.id;
+}
+
+// Picks up an answer / follow-ups sent from botc.app. Returns true when the
+// step changed.
+function syncFromApp(c) {
+  const { step } = c;
+  let changed = false;
+  // After a Reopen, only messages sent since count.
+  const asked = Math.max(stepAskedAt(c) ?? 0, step.reopenedAt ?? 0);
+  const tpl = answerTemplate(c);
+  if (!step.done && tpl.length) {
+    const sent = outboundTonight(c.player, c.night).filter(m => m.ts >= asked && !isPromptMessage(m.tokens) && messageFits(m.tokens, tpl, c)).pop();
+    if (sent) {
+      const left = [...sent.tokens];
+      for (const slot of tpl) {
+        const m = slot.match(/^i(\d+)$/);
+        if (!m || step.src[slot] === 'manual') continue;
+        const at = left.findIndex(t => slotAccepts(slot, t, c));
+        if (at === -1) continue;
+        const v = tokenToInputValue(left.splice(at, 1)[0]);
+        if (v !== undefined) { step.inputs[slot] = v; step.src[slot] = 'sent'; }
+      }
+      step.done = true;
+      step.answered = true;
+      step.used = (c.spec?.inputs ?? []).some((_, i) => fieldUse(c.action, i) === 'pick' && (step.inputs[`i${i}`] ?? '') !== '');
+      changed = true;
+    }
+  }
+  (c.action.notify ?? []).forEach((n, idx) => {
+    if (step.notified[idx] || !notifyApplies(n, c)) return;
+    if (notifyRecipients(n, c).some(p => outboundTonight(p, c.night).some(m => messageFits(m.tokens, n.tokens, c)))) {
+      step.notified[idx] = true;
+      changed = true;
+    }
+  });
+  // A step that only wakes others is finished once they've all been woken.
+  const applicable = (c.action.notify ?? []).map((n, idx) => [n, idx]).filter(([n]) => notifyApplies(n, c));
+  if (!step.done && c.action.wake === 'none' && !tpl.length && applicable.length && applicable.every(([, idx]) => step.notified[idx])) {
+    step.done = true;
+    changed = true;
+  }
+  return changed;
+}
+
+// ── Grimoire reminders ──
+// An action's `reminders` map ties its inputs to this role's reminder tokens
+// in the botc.app grimoire, both ways: reminders placed there fill the inputs,
+// and finishing a step places them on the chosen players.
+
+const isLiveReminder = (r, bundledId, name) =>
+  _normalizeId(r.role ?? '') === bundledId && r.name === name && !(r.flags ?? []).includes('flipped');
+const reminderCarriers = (bundledId, name) =>
+  (currentState?.players ?? []).filter(p => (p.reminders ?? []).some(r => isLiveReminder(r, bundledId, name)));
+
+// reminder name → the inputs it marks, in order.
+function remindersByName(action) {
+  const by = {};
+  for (const [k, name] of Object.entries(action.reminders ?? {})) (by[name] ??= []).push(k);
+  return by;
+}
+
+// Who carries this step's pick reminders right now — taken when the step is
+// first seen, so last night's leftovers aren't read as tonight's picks.
+function reminderBaseline(c) {
+  const out = [];
+  for (const [name, fields] of Object.entries(remindersByName(c.action))) {
+    if (!fields.some(k => fieldUse(c.action, Number(k.slice(1))) === 'pick')) continue;
+    for (const p of reminderCarriers(c.bundledId, name)) out.push(`${name}|${notesNameOf(p)}`);
+  }
+  return out;
+}
+
+// Fills inputs from reminders placed in botc.app (never over a reply, an edit
+// or what was sent), and follows them if they move or go away.
+function fillFromReminders(c) {
+  const { step, action, bundledId } = c;
+  for (const [name, fields] of Object.entries(remindersByName(action))) {
+    const taken = new Set(fields.map(k => step.src[k] !== 'grimoire' && step.src[k] !== 'hint' ? step.inputs[k] : null).filter(Boolean));
+    let pool = reminderCarriers(bundledId, name).map(notesNameOf).filter(n => !taken.has(n));
+    for (const k of fields) {
+      if (['manual', 'reply', 'sent'].includes(step.src[k])) continue;
+      const fresh = fieldUse(action, Number(k.slice(1))) !== 'pick'
+        ? pool : pool.filter(n => !(step.baseline ?? []).includes(`${name}|${n}`));
+      const n = fresh[0];
+      if (n) { step.inputs[k] = n; step.src[k] = 'grimoire'; pool = pool.filter(x => x !== n); }
+      else if (step.src[k] === 'grimoire') { delete step.inputs[k]; delete step.src[k]; }
+    }
+  }
+}
+
+// Places the step's reminders in botc.app on the players in its inputs,
+// moving them off anyone else. A reminder none of whose inputs is filled is
+// left alone.
+function placeStepReminders(c) {
+  const role = scriptRoleFor(c.bundledId).id;
+  for (const [name, fields] of Object.entries(remindersByName(c.action))) {
+    const want = fields.map(k => c.step.inputs[k]).filter(Boolean).map(playerByNotesName).filter(Boolean);
+    if (!want.length) continue;
+    const have = reminderCarriers(c.bundledId, name);
+    const same = want.length === have.length && want.every(p => have.includes(p));
+    if (!same) sendBg({ type: 'SYNC_REMINDER', role, name, seats: want.map(p => p.seat) });
+  }
+}
+
+// Nominations made during Day N, with the players involved.
+function nominationsOfDay(day) {
+  if (day < 1) return [];
+  const label = `Day ${day}`;
+  const start = fullTimeline.find(e => e.type === 'phase' && e.label === label)?.ts;
+  if (start == null) return [];
+  const end = fullTimeline.find(e => e.type === 'phase' && e.ts > start)?.ts ?? Infinity;
+  const players = currentState?.players ?? [];
+  const at = (nom, seat) => players.find(p => displayName(p, p.seat) === nomSeatName(nom, seat)) ?? null;
+  return allNominations.filter(n => n.ts >= start && n.ts < end).map(n => ({
+    nominator: at(n, n.nominatorSeat),
+    nominee: at(n, n.nomineeSeat),
+    voters: (n.yesSeats ?? []).map(seat => at(n, seat)).filter(Boolean),
+  }));
+}
+
+// Fills untouched pick inputs from the reply, then suggestions into the rest.
+// Returns true when something changed.
+function syncStepInputs(c) {
+  const { step, spec, action, player, night, bundledId } = c;
+  const before = JSON.stringify([step.inputs, step.src, step.passed]);
+  const free = (i) => step.src[`i${i}`] !== 'manual';
+  const set = (i, v, src) => { step.inputs[`i${i}`] = v; step.src[`i${i}`] = src; };
+
+  // Replies since the step was opened (or reopened — the earlier reply was already used).
+  const tokens = stepReplyTokens(player, night, Math.max(stepAskedAt(c) ?? 0, step.reopenedAt ?? 0) || null);
+  // Latest picks win: a player may send one pick and then another, or send
+  // two picks in separate messages — take the most recent ones they sent, as
+  // many as the step has pick inputs of that kind.
+  const pickCount = (types) => (spec?.inputs ?? []).filter((s, i) => fieldUse(action, i) === 'pick' && types.includes(s.type)).length;
+  const lastN = (arr, n) => n > 0 ? arr.slice(-n) : [];
+  const seats = lastN(tokens.filter(t => t.id === 'player').map(t => t.data), pickCount(['player', 'player?']));
+  const roles = lastN(tokens.filter(t => t.id === 'role').map(t => t.data), pickCount(['role']));
+  const yn = tokens.filter(t => t.id === 'yes' || t.id === 'no').pop()?.id;
+  const num = tokens.map(t => NUMBER_TOKEN_IDS.indexOf(t.id)).filter(n => n !== -1).pop();
+  const fromReplyBefore = Object.fromEntries(Object.entries(step.inputs).filter(([k]) => step.src[k] === 'reply'));
+  (spec?.inputs ?? []).forEach((s, i) => {
+    if (!free(i) || fieldUse(action, i) !== 'pick') return;
+    if (s.type === 'player' || s.type === 'player?') {
+      const seat = seats.shift();
+      const p = seat != null ? (currentState?.players ?? []).find(pl => pl.seat === seat) : null;
+      if (p) set(i, notesNameOf(p), 'reply');
+    } else if (s.type === 'role' && roles.length) set(i, roles.shift(), 'reply');
+    else if (s.type === 'yn' && yn && !s.yesLabel) set(i, yn, 'reply');
+    else if (s.type === 'number' && num !== undefined) set(i, num, 'reply');
+    else if (s.type === 'text' && tokens.some(t => t.id === 'custom')) set(i, tokens.filter(t => t.id === 'custom').map(t => t.data).join(' '), 'reply');
+  });
+  // "Use your ability?" answered no (and nothing picked) → they pass.
+  step.passed = action.wake === 'ability' && yn === 'no' && !seats.length && !roles.length;
+  // A pick changed after the step was finished: keep the new one, flag it.
+  if (step.done) {
+    const was = Object.entries(fromReplyBefore).filter(([k, v]) => step.src[k] === 'reply' && step.inputs[k] !== v);
+    if (was.length) step.changed = { was: Object.fromEntries(was), answered: !!step.answered };
+  }
+
+  fillFromReminders(c);
+
+  const hint = _nightStepHints()[bundledId];
+  if (hint && spec) {
+    const players = currentState?.players ?? [];
+    const suggested = hint({
+      holder: player, players, night,
+      playerByName: playerByNotesName,
+      alignmentOf: (p) => impliedAlignmentGE(p),
+      roleOfName: (n) => { const p = playerByNotesName(n); const id = p && trueRoleOf(p); return id ? scriptRoleFor(id).id : null; },
+      teamOf: teamOfPlayer,
+      nameOf: notesNameOf,
+      hasReminder: (p, roleId, name) => (p?.reminders ?? []).some(r => isLiveReminder(r, roleId, name)),
+      nominationsYesterday: () => nominationsOfDay(night - 1),
+      executedYesterday: () => { const p = executedOnDay(night - 1); return p ? notesNameOf(p) : null; },
+      lastExecuted: () => { for (let d = night - 1; d >= 1; d--) { const p = executedOnDay(d); if (p) return notesNameOf(p); } return null; },
+      reminderCarrier: (roleId, name) => { const p = reminderCarriers(roleId, name)[0]; return p ? notesNameOf(p) : null; },
+    }, step.inputs) ?? {};
+    for (const [k, v] of Object.entries(suggested)) {
+      if (['manual', 'reply', 'sent', 'grimoire'].includes(step.src[k]) || v === null || v === undefined) continue;
+      step.inputs[k] = v; step.src[k] = 'hint';
+    }
+  }
+  return JSON.stringify([step.inputs, step.src, step.passed]) !== before;
+}
+
+// One input value as signal tokens.
+function inputToTokens(spec, v) {
+  if (v === undefined || v === null || v === '') return [];
+  if (spec.type === 'player' || spec.type === 'player?') {
+    const p = playerByNotesName(v);
+    return p ? [{ id: 'player', data: p.seat }] : [];
+  }
+  if (spec.type === 'role') return [{ id: 'role', data: v }];
+  if (spec.type === 'number' && NUMBER_TOKEN_IDS[v]) return [{ id: NUMBER_TOKEN_IDS[v] }];
+  if (spec.type === 'yn' && (v === 'yes' || v === 'no')) return [{ id: v }];
+  if (spec.type === 'alignment') return [{ id: v === 'neither' ? 'neutral' : v }];
+  if (spec.type === 'direction') return [{ id: v === 'anti-clockwise' ? 'anticlockwise' : 'clockwise' }];
+  return [{ id: 'custom', data: String(v) }];
+}
+
+const LITERAL_TOKENS = new Set(['you', 'selected', 'claim', 'demon', 'minions', 'bluffs', 'good', 'evil', 'neutral',
+  'yes', 'no', 'acknowledge', 'grimoire', 'choice', 'ability']);
+const playerToken = (p) => ({ id: 'player', data: p.seat });
+const magicians = () => (currentState?.players ?? []).filter(p => trueRoleOf(p) === 'magician');
+const roleInPlay = (bundledId) => (currentState?.players ?? []).some(p => trueRoleOf(p) === bundledId);
+const roleTokenOf = (p) => { const id = trueRoleOf(p); return id ? { id: 'role', data: scriptRoleFor(id).id } : null; };
+
+// A token template (see data/nightActions.js) as signal tokens. `missing` is
+// set when an input it needs hasn't been filled in yet.
+function resolveTemplate(tpl, c) {
+  const tokens = [];
+  let missing = false;
+  for (const item of tpl ?? []) {
+    let m;
+    if (LITERAL_TOKENS.has(item)) tokens.push({ id: item });
+    else if (item.startsWith('custom:')) tokens.push({ id: 'custom', data: item.slice(7) });
+    else if (item === 'recipientRole') {
+      // Each recipient's own character; a placeholder until there is one.
+      const t = c.recipient && roleTokenOf(c.recipient);
+      if (t) tokens.push(t); else if (c.recipient) missing = true; else tokens.push({ id: 'own-role' });
+    }
+    else if (item === 'self') tokens.push({ id: 'role', data: scriptRoleFor(c.bundledId).id });
+    else if (item === 'holder') tokens.push(playerToken(c.player));
+    else if ((m = item.match(/^i(\d+)(\.role)?$/))) {
+      const s = c.spec?.inputs?.[m[1]];
+      const v = c.step.inputs[`i${m[1]}`];
+      if (!s || v === undefined || v === '') { if (s && isRequiredInput(s)) missing = true; continue; }
+      if (m[2]) {
+        const t = playerByNotesName(v) && roleTokenOf(playerByNotesName(v));
+        if (t) tokens.push(t); else missing = true;
+      } else {
+        const opt = c.action.optionTokens?.[`i${m[1]}`]?.[v];
+        tokens.push(...(opt ? [{ id: opt }] : inputToTokens(s, v)));
+      }
+    }
+    else if (item.startsWith('role:')) tokens.push({ id: 'role', data: scriptRoleFor(item.slice(5)).id });
+    // Minion / Demon info: the Magician is shown as both; the Marionette
+    // isn't shown to the other Minions (only the Demon knows them).
+    else if (item === 'demonPlayers') tokens.push(...[...playersOfTeam('demon'), ...(c.bundledId === 'minioninfo' ? magicians() : [])].map(playerToken));
+    else if (item === 'minionPlayers') tokens.push(...[...playersOfTeam('minion'), ...(c.bundledId === 'demoninfo' ? magicians() : [])].map(playerToken));
+    else if (item === 'otherMinions') tokens.push(...playersOfTeam('minion').filter(p => trueRoleOf(p) !== 'marionette' && p.seat !== c.player.seat).map(playerToken));
+    else if (item === 'bluffRoles') tokens.push(...(currentState?.bluffs ?? []).map(scriptRoleId).filter(Boolean).map(id => ({ id: 'role', data: id })));
+    else if (item.startsWith('inPlay:')) {
+      const ids = [...new Set(playersOfTeam(item.slice(7)).map(p => roleTokenOf(p)?.data).filter(Boolean))];
+      tokens.push(...ids.map(id => ({ id: 'role', data: id })));
+    }
+  }
+  return { tokens, missing };
+}
+
+// What Send sends: the action's `tell` template, else its tell inputs in
+// order. With `shuffle`, the action's shuffled inputs swap places half the
+// time (only when actually sending — the preview stays put).
+function stepAnswer(c, shuffle = false) {
+  if (c.action.zeroIf && !playersOfTeam(c.action.zeroIf).length) return { tokens: [{ id: 'zero' }], missing: false };
+  let tpl = c.action.tell ?? (c.spec?.inputs ?? []).map((_, i) => fieldUse(c.action, i) === 'tell' ? `i${i}` : null).filter(Boolean);
+  const sh = c.action.shuffle;
+  if (shuffle && sh?.length === 2 && Math.random() < 0.5) tpl = tpl.map(x => x === sh[0] ? sh[1] : x === sh[1] ? sh[0] : x);
+  return resolveTemplate(tpl, c);
+}
+
+// Does a notify's `if` hold? (one condition or a list — see nightActions.js)
+function notifyApplies(n, c) {
+  const conds = n.if ? [].concat(n.if) : [];
+  return conds.every(cond => {
+    const [a, want] = cond.split(':');
+    if (a === 'noReminder') return !(currentState?.players ?? []).some(p => (p.reminders ?? []).some(r => isLiveReminder(r, c.bundledId, want)));
+    const v = c.step.inputs[a];
+    if (want === 'yes') return v === 'yes';
+    if (want === 'notInPlay') return !!v && !roleInPlay(_normalizeId(v));
+    const p = playerByNotesName(v);
+    return !!p && (teamOfPlayer(p) === want || trueRoleOf(p) === want);
+  });
+}
+
+function notifyRecipients(n, c) {
+  if (n.to === 'holder') return [c.player];
+  if (n.to === 'demon') return playersOfTeam('demon');
+  if (n.to === 'minions') return playersOfTeam('minion');
+  if (n.to === 'evil') return [...playersOfTeam('minion'), ...playersOfTeam('demon')];
+  if (n.to === 'neighbours') {
+    const seated = [...(currentState?.players ?? [])].sort((a, b) => a.seat - b.seat);
+    const i = seated.findIndex(p => p.seat === c.player.seat);
+    return i === -1 || seated.length < 2 ? [] : [...new Set([seated[(i - 1 + seated.length) % seated.length], seated[(i + 1) % seated.length]])];
+  }
+  if (n.to.startsWith('reminder:')) return reminderCarriers(c.bundledId, n.to.slice(9));
+  const p = playerByNotesName(c.step.inputs[n.to]);
+  return p ? [p] : [];
+}
+
+// ── New replies ──
+// Messages from the holder that arrived after the step was finished, or
+// after the storyteller last had it open — shown on the step's row so
+// nothing gets overlooked: a small 👍 for an acknowledgement, the message
+// itself for anything else (questions, remarks, another pick).
+
+const ACK_TEXT = /^\s*(ok(ay)?|k|got it|gotcha|thanks?( you)?|thx|ty|yes|yep|yeah|sure|understood|noted|👍|✅|✔️?)\s*[.!]*\s*$/i;
+const isAckMessage = (tokens) => tokens.length > 0 && tokens.every(t =>
+  t.id === 'acknowledge' || t.id === 'yes' || (t.id === 'custom' && ACK_TEXT.test(String(t.data ?? ''))));
+
+function newReplies(c) {
+  if (!c.player.id || c.step.stOnly) return [];
+  const since = Math.max(c.step.seenAt ?? 0, c.step.done ? (c.step.doneAt ?? 0) : (stepAskedAt(c) ?? 0));
+  if (!since) return [];
+  return getPlayerSignalEntries(c.player.id)
+    .filter(en => en.isInbound && en.timestamp > since && signalNightGroup(en.timestamp) === `Night ${c.night}`)
+    .map(en => (en.message ?? []).filter(t => t.id !== 'seen'))
+    .filter(tokens => tokens.length);
+}
+
+// Picks that break the role's rules (`pick` in nightActions.js) — players do
+// pick a player who died tonight, or themselves, or the same one twice.
+function pickProblems(c) {
+  const rules = c.action.pick ?? [];
+  if (!rules.length) return [];
+  const pickFields = (c.spec?.inputs ?? []).map((s, i) => [s, i])
+    .filter(([s, i]) => fieldUse(c.action, i) === 'pick' && (s.type === 'player' || s.type === 'player?'));
+  const picks = pickFields.map(([, i]) => playerByNotesName(c.step.inputs[`i${i}`])).filter(Boolean);
+  const out = [];
+  const named = (p) => dn(displayName(p, p.seat));
+  for (const p of new Set(picks)) {
+    if (rules.includes('alive') && p.isDead) out.push(`${named(p)} is dead — they must choose a living player`);
+    if (rules.includes('dead') && !p.isDead) out.push(`${named(p)} is alive — they must choose a dead player`);
+    if (rules.includes('notSelf') && p.seat === c.player.seat) out.push(`They chose themselves — not allowed`);
+    if (rules.includes('notTraveller') && teamOfPlayer(p) === 'traveller') out.push(`${named(p)} is a Traveller — not allowed`);
+  }
+  if (rules.includes('distinct') && new Set(picks).size < picks.length) out.push('Same player chosen twice — they must choose different players');
+  if (rules.includes('notLastNight')) {
+    const prev = nightSteps[`${currentState?.session ?? ''}|${c.night - 1}|${c.bundledId}|${notesNameOf(c.player)}`];
+    const last = new Set(pickFields.map(([, i]) => prev?.inputs?.[`i${i}`]).filter(Boolean));
+    for (const p of new Set(picks)) if (last.has(notesNameOf(p))) out.push(`${named(p)} was chosen last night — they must choose someone else`);
+  }
+  return out;
+}
+
+// Was this once-per-game ability used on an earlier night?
+function usedEarlier(c) {
+  const prefix = `${currentState?.session ?? ''}|`;
+  return Object.entries(nightSteps).some(([k, s]) => {
+    if (!s.used || !k.startsWith(prefix)) return false;
+    const [, n, id, ...name] = k.split('|');
+    return Number(n) < c.night && id === c.bundledId && name.join('|') === notesNameOf(c.player);
+  });
+}
+
+// Removes every chip a step wrote (it may have moved targets since).
+function removeStepChips(key, phase) {
+  for (const cellKey of Object.keys(cellTokens)) {
+    if (!cellKey.endsWith(`|${phase}`)) continue;
+    const chips = cellTokens[cellKey];
+    if (!chips.some(ch => ch.nightStep === key)) continue;
+    cellTokens[cellKey] = chips.filter(ch => ch.nightStep !== key);
+    const player = cellKey.slice(0, -(phase.length + 1));
+    saveTokens(player, phase);
+    refreshCellChips(player, phase);
+  }
+}
+
+// Writes (or rewrites) the step's chips into the notes grid.
+function logNightStep(c) {
+  const { key, step, spec, bundledId, player, night } = c;
   const phase = `Night ${night}`;
-  return (cellTokens[`${name}|${phase}`] ?? []).some(c => c.type === 'cellcolor' && c.id === 'droisoned');
+  removeStepChips(key, phase);
+  if (!spec || !Object.values(step.inputs).some(v => v !== undefined && v !== '')) return; // nothing to record
+  const role = scriptRoleFor(bundledId);
+  setChip(notesNameOf(player), phase, {
+    type: 'ability', roleId: role.id, roleName: role.name, roleTeam: role.team ?? '',
+    iconUrl: _iconUrl(role), inputs: { ...step.inputs }, nightStep: key,
+  });
+  spec.inputs.forEach((s, i) => {
+    const target = step.inputs[`i${i}`];
+    if ((s.type === 'player' || s.type === 'player?') && target && DROISON_TARGET_LABEL.test(s.label)) {
+      setChip(target, phase, { type: 'cellcolor', id: 'droisoned', label: CELL_COLORS.droisoned.label, source: role.id, nightStep: key });
+    }
+  });
 }
 
-function recomputeNightSignalQueue() {
-  const scripts = _nightSignalScripts();
+function stepCtx(key, step, bundledId, player, night) {
+  let action = nightActionFor(bundledId, night);
+  // An ability the Storyteller holds (Plague Doctor): nobody wakes for it.
+  if (step.stOnly) action = { ...action, wake: 'none', notify: [], dead: true };
+  return { key, step, bundledId, player, night, spec: _specs()[bundledId] ?? null, action };
+}
+
+// Abilities players have on top of their own character, from what earlier
+// steps recorded (an action's `grants`) — the Philosopher's, Apprentice's and
+// Alchemist's character, the Boffin's ability for the Demon, the Plague
+// Doctor's Minion ability for the Storyteller, the Cannibal's (its step,
+// pre-filled from the last execution). All editable on those steps.
+// [{ player, bundledId, via, stOnly }]
+function gainedAbilities(night) {
+  const prefix = `${currentState?.session ?? ''}|`;
+  const latest = {};
+  for (const [k, st] of Object.entries(nightSteps)) {
+    if (!k.startsWith(prefix)) continue;
+    const [, n, id, ...name] = k.split('|');
+    const g = _nightActions()[id]?.grants;
+    const v = g && st.inputs?.[g.from];
+    if (!v || Number(n) > night) continue;
+    const slot = `${id}|${name.join('|')}`;
+    if (!latest[slot] || Number(n) >= latest[slot].n) latest[slot] = { n: Number(n), via: id, name: name.join('|'), role: _normalizeId(v), to: g.to ?? 'holder' };
+  }
+  const out = [];
+  for (const g of Object.values(latest)) {
+    const src = playerByNotesName(g.name);
+    if (g.to === 'demon') playersOfTeam('demon').forEach(p => out.push({ player: p, bundledId: g.role, via: g.via }));
+    else if (src) out.push({ player: src, bundledId: g.role, via: g.via, stOnly: g.to === 'storyteller' });
+  }
+  // Not when their token was already swapped to that character.
+  return out.filter(x => bundledRoleOf(x.player) !== x.bundledId);
+}
+
+// Tonight's steps in wake order, with labels (Dusk, Minion info, …) between.
+// Roles nobody holds are left out, counted for the footer.
+function buildNightSteps(night) {
+  const session = currentState?.session ?? '';
+  const entries = night === 1 ? _nightOrder().firstNight : _nightOrder().otherNight;
   const scriptIds = new Set((currentState?.roles ?? []).map(r => _normalizeId(r.id)));
   const byRole = playersByRoleId();
-  const totalNights = currentState?.phase ? Math.ceil(currentState.phase / 2) : 1;
-  const next = {};
+  const seated = (currentState?.players ?? []).filter(p => teamOfPlayer(p) !== 'traveller').length;
+  const items = [];
+  const notInPlay = [];
+  let changed = false;
 
-  for (let night = 1; night <= totalNights; night++) {
-    const nightLabel = `Night ${night}`;
-    const entries = night === 1 ? _nightOrder().firstNight : _nightOrder().otherNight;
-    const blockers = []; // unresolved blocking holders seen so far this night, in wake order
-
-    for (const e of entries) {
-      if (e.label || !scriptIds.has(e.id)) continue;
-      const script = scripts[e.id];
-      if (!script) continue;
-      for (const holder of byRole[e.id] ?? []) {
-        if (!holder.id) continue;
-        const key = `${night}|${e.id}|${holder.id}`;
-        const prev = nightSignalQueue[key];
-
-        if (script.manualOnly) {
-          next[key] = { status: 'manual', tokens: script.template ?? [{ id: 'choice' }] };
-        } else if (prev?.status === 'sent' && prev.stage === 'answer') {
-          // Only the final answer freezes once sent — a sent PROMPT still
-          // needs to progress to "waiting for reply" on the next recompute.
-          next[key] = prev;
-        } else {
-          const player = (currentState?.players ?? []).find(p => p.id === holder.id);
-          if (!player) continue;
-          const replyTokens = nightlyReplyTokens(holder.id, night);
-          const holderDroisoned = isHolderDroisoned(player, night);
-          const built = script.build({ holder: player, players: currentState?.players ?? [], roles: currentState?.roles ?? [], night, replyTokens, holderDroisoned }, prev?.filled);
-          if (!built) continue;
-          let status = built.complete ? 'ready' : (built.needsInput ? 'needs-input' : 'waiting');
-          let tokens = built.tokens;
-          let stage = 'answer';
-          if (status === 'waiting' && script.prompt && !nightlyOutboundSent(holder.id, night)) {
-            status = 'ready';
-            tokens = script.prompt;
-            stage = 'prompt';
-          }
-          next[key] = { status, tokens, filled: prev?.filled, inputHints: built.inputHints, warning: built.warning, stage };
-        }
-
-        if (blockers.length && next[key].status !== 'sent') {
-          next[key] = { ...next[key], status: 'locked', blockedBy: blockers[0] };
-        }
-
-        if (script.blocking && !isBlockingResolved(night, nightLabel, e.id, holder.id, script)) {
-          const roleName = _roles().find(r => r.id === e.id)?.name ?? e.id;
-          blockers.push({ roleId: e.id, uid: holder.id, roleName });
-        }
+  // Things to confirm rather than wake (an action's `confirm`, e.g. whose
+  // ability the Cannibal has): kept like steps — suggested, editable — but
+  // shown above the order, not in it. Filled before the gained abilities
+  // are worked out, since they feed them.
+  const confirms = [];
+  if (night > 1) {
+    for (const [id, a] of Object.entries(_nightActions())) {
+      if (!a.confirm) continue;
+      for (const p of (currentState?.players ?? []).filter(p => trueRoleOf(p) === id && !p.isDead)) {
+        const key = `${session}|${night}|${id}|${notesNameOf(p)}`;
+        const step = (nightSteps[key] ??= { inputs: {}, src: {}, done: false });
+        step.notified ??= {};
+        const c = stepCtx(key, step, id, p, night);
+        if (syncStepInputs(c)) changed = true;
+        confirms.push(c);
       }
     }
   }
-  nightSignalQueue = next;
+  const gained = gainedAbilities(night);
+
+  const addStep = (bundledId, player, gained = null) => {
+    const key = `${session}|${night}|${bundledId}|${notesNameOf(player)}`;
+    const isNew = !nightSteps[key];
+    const step = (nightSteps[key] ??= { inputs: {}, src: {}, done: false });
+    step.notified ??= {};
+    if (gained) { step.via = gained.via; step.stOnly = !!gained.stOnly; }
+    const c = stepCtx(key, step, bundledId, player, night);
+    if (isNew) step.baseline = reminderBaseline(c);
+    const wasDone = step.done;
+    if (syncStepInputs(c) | syncFromApp(c)) {
+      changed = true;
+      if (step.done) logNightStep(c); // keep the logged chip current
+    }
+    if (!wasDone && step.done && nightStepExpanded === key) nightStepExpanded = null;
+    if (step.done && !step.doneAt) { step.doneAt = Date.now(); changed = true; }
+    // Finished by the reply alone: every pick filled, nothing to tell them and
+    // nobody else to wake — or they declined their ability.
+    const picks = (c.spec?.inputs ?? []).map((s, i) => [s, i]).filter(([, i]) => fieldUse(c.action, i) === 'pick');
+    // Only a reply finishes a step by itself — reminders in the grimoire may be
+    // misplaced or stale, so a pick read from them is a suggestion to confirm.
+    const picked = picks.length && picks.every(([s, i]) => !isRequiredInput(s) || step.src[`i${i}`] === 'reply');
+    const nothingElse = !stepAnswer(c).tokens.length && !(c.action.notify ?? []).some(n => notifyApplies(n, c));
+    if (!step.done && ((picked && nothingElse && !pickProblems(c).length) || step.passed)) {
+      step.done = true;
+      step.doneAt = Date.now();
+      step.used = !step.passed;
+      changed = true;
+      // Notes only: the botc.app grimoire is only changed by the storyteller's
+      // own clicks (Send / Done / editing a finished step), never on its own.
+      logNightStep(c);
+    }
+    items.push(c);
+  };
+
+  // Abilities held "via" someone else: gained ones, and ones shown by token
+  // with an "Is the …" reminder. One per player and character.
+  const viaHolders = [];
+  const seenVia = new Set();
+  for (const g of [...gained, ...Object.entries(byRole).flatMap(([id, list]) => list.filter(h => h.via).map(h => ({ player: h.player, bundledId: id, via: h.via })))]) {
+    const k = `${g.player.seat}|${g.bundledId}`;
+    if (!seenVia.has(k)) { seenVia.add(k); viaHolders.push(g); }
+  }
+  // A first-night-only ability (Washerwoman, Chef, …) gained later wakes once,
+  // the first night they have it, next to the other info roles (just before
+  // the Empath) — it isn't in the other-nights order.
+  const otherIds = new Set(_nightOrder().otherNight.filter(x => x.id).map(x => x.id));
+  const firstIds = new Set(_nightOrder().firstNight.filter(x => x.id).map(x => x.id));
+  const doneEarlier = (id, p) => Object.entries(nightSteps).some(([k, st]) => {
+    const [sess, n, rid, ...nm] = k.split('|');
+    return sess === session && Number(n) < night && rid === id && nm.join('|') === notesNameOf(p) && st.done;
+  });
+  let lateInfo = night > 1 ? viaHolders.filter(g => !otherIds.has(g.bundledId) && firstIds.has(g.bundledId) && !doneEarlier(g.bundledId, g.player)) : [];
+  const addLateInfo = () => { for (const g of lateInfo) addStep(g.bundledId, g.player, g); lateInfo = []; };
+
+  for (const e of entries) {
+    if (e.label) {
+      if (e.label === 'Dawn') addLateInfo(); // (if the order had no Empath)
+      items.push({ label: e.label });
+      // Minion / Demon info: 7+ players (Travellers don't count) unless the
+      // Toymaker is in play; skipped altogether with a Poppy Grower or Tor.
+      // The Marionette doesn't learn they're a Minion.
+      const infoId = night === 1 && NIGHT_INFO_STEPS[e.label];
+      const info = infoId && _nightActions()[infoId];
+      const enough = seated >= (info?.minPlayers ?? 0) || roleInPlay('toymaker');
+      if (info && enough && !roleInPlay('poppygrower') && !roleInPlay('tor')) {
+        const holders = info.holders === 'demon' ? playersOfTeam('demon') : playersOfTeam('minion').filter(p => trueRoleOf(p) !== 'marionette');
+        for (const p of holders) addStep(infoId, p);
+      }
+      continue;
+    }
+    if (e.id === 'empath') addLateInfo();
+    const holders = scriptIds.has(e.id) ? (byRole[e.id] ?? []).filter(h => !h.via).map(h => h.player) : [];
+    const extra = viaHolders.filter(g => g.bundledId === e.id);
+    if (!holders.length && !extra.length) { if (scriptIds.has(e.id)) notInPlay.push(e.id); continue; }
+    for (const player of holders) addStep(e.id, player);
+    for (const g of extra) addStep(e.id, g.player, g);
+  }
+  addLateInfo();
+  if (changed) saveNightSteps();
+  return { items, notInPlay, confirms };
 }
 
-function sendNightSignalDraft(key) {
-  const entry = nightSignalQueue[key];
-  if (!entry || entry.status !== 'ready') return;
-  const [, , uid] = key.split('|');
-  sendBg({ type: 'SEND_SIGNAL', userIds: [uid], message: entry.tokens });
-  entry.status = 'sent';
-  entry.sentAt = Date.now();
+function nightStepCtx(key) {
+  const [, nightStr, bundledId, ...nameParts] = key.split('|');
+  const player = playerByNotesName(nameParts.join('|'));
+  const step = nightSteps[key];
+  return player && step ? stepCtx(key, step, bundledId, player, Number(nightStr)) : null;
 }
 
-function fillNightSignalInput(key, field, value) {
-  const entry = nightSignalQueue[key];
-  if (!entry) return;
-  entry.filled = { ...entry.filled, [field]: value };
+// Opens the step: "Make a choice!" / "Use your ability?" (or the action's own
+// opening message for the primary ask).
+function nightStepAsk(key, which) {
+  const c = nightStepCtx(key);
+  if (!c?.player.id) return;
+  const message = which === 'reject' ? [{ id: 'no' }, { id: 'choice' }]
+    : which === 'primary' && c.action.ask ? resolveTemplate(c.action.ask, c).tokens
+    : [{ id: which === 'primary' ? (c.action.wake === 'ability' ? 'ability' : 'choice') : which }];
+  sendBg({ type: 'SEND_SIGNAL', userIds: [c.player.id], message });
+  // Inputs the earlier reply filled are cleared: a new answer is coming.
+  for (const [k, src] of Object.entries(c.step.src)) if (src === 'reply') { delete c.step.inputs[k]; delete c.step.src[k]; }
+  c.step.askedAt = Date.now();
+  delete c.step.changed;
+  saveNightSteps();
   renderNightOrder();
 }
 
-// Unlocks against the BLOCKING role/holder (entry.blockedBy), not the locked
-// row's own role/holder — a row can be locked by a different role entirely.
-function unlockNightSignalRow(night, blockerRoleId, blockerUid) {
-  nightSignalUnlocks.add(`${night}|${blockerRoleId}|${blockerUid}`);
-  saveSettings();
+function nightStepNotify(key, idx) {
+  const c = nightStepCtx(key);
+  const n = c?.action.notify?.[idx];
+  if (!n) return;
+  const to = notifyRecipients(n, c).filter(p => p.id);
+  if (!to.length) return;
+  // A message with each recipient's own character goes out one by one.
+  const perRecipient = n.tokens.includes('recipientRole');
+  const batches = perRecipient ? to.map(p => [p]) : [to];
+  const resolved = batches.map(group => ({ group, ...resolveTemplate(n.tokens, perRecipient ? { ...c, recipient: group[0] } : c) }));
+  if (resolved.some(r => r.missing || !r.tokens.length)) return;
+  for (const r of resolved) sendBg({ type: 'SEND_SIGNAL', userIds: r.group.map(p => p.id), message: r.tokens });
+  c.step.notified[idx] = true;
+  saveNightSteps();
   renderNightOrder();
 }
 
-// Seeds the normal Signal-tab composer with a manualOnly role's template and
-// recipient, for the storyteller to fill in judgment-dependent content.
-function composeNightSignalDraft(key) {
-  const entry = nightSignalQueue[key];
-  if (!entry) return;
-  const [, , uid] = key.split('|');
-  stMessage = entry.tokens.map(t => ({ ...t }));
-  stRecipientIds = new Set([uid]);
+function nightStepFinish(key, send) {
+  const c = nightStepCtx(key);
+  if (!c) return;
+  if (send && c.player.id) {
+    const { tokens, missing } = stepAnswer(c, true);
+    if (!missing && tokens.length) { sendBg({ type: 'SEND_SIGNAL', userIds: [c.player.id], message: tokens }); c.step.answered = true; }
+  }
+  delete c.step.changed;
+  placeStepReminders(c);
+  c.step.done = true;
+  c.step.doneAt = Date.now();
+  c.step.used = (c.spec?.inputs ?? []).some((_, i) => fieldUse(c.action, i) === 'pick' && (c.step.inputs[`i${i}`] ?? '') !== '');
+  logNightStep(c);
+  if (nightStepExpanded === key) nightStepExpanded = null;
+  saveNightSteps();
+  renderNightOrder();
+}
+
+function nightStepReopen(key) {
+  const c = nightStepCtx(key);
+  if (!c) return;
+  c.step.done = false;
+  delete c.step.doneAt;
+  c.step.passed = false;
+  c.step.reopenedAt = Date.now();
+  delete c.step.changed;
+  nightStepExpanded = key;
+  saveNightSteps();
+  renderNightOrder();
+}
+
+function nightStepSetInput(key, idx, value) {
+  const c = nightStepCtx(key);
+  if (!c) return;
+  const k = `i${idx}`;
+  if (value === '' || value === null || value === undefined) delete c.step.inputs[k];
+  else c.step.inputs[k] = value;
+  c.step.src[k] = 'manual';
+  if (c.step.done) { logNightStep(c); placeStepReminders(c); }
+  saveNightSteps();
+  renderNightOrder();
+}
+
+// Seeds the Signal panel with a follow-up message and its recipients.
+function nightStepNotifyCompose(key, idx) {
+  const c = nightStepCtx(key);
+  const n = c?.action.notify?.[idx];
+  if (!n) return;
+  const to = notifyRecipients(n, c).filter(p => p.id);
+  stMessage = resolveTemplate(n.tokens, to.length === 1 ? { ...c, recipient: to[0] } : c).tokens;
+  stRecipientIds = new Set(to.map(p => String(p.id)));
+  renderSignalPreview();
+  renderSignalPlayers();
+  updateSignalSendBtn();
+  renderNightOrder();
+  document.getElementById('signal-preview')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+// Seeds the Signal panel with this holder and whatever answer the step has.
+function nightStepCompose(key) {
+  const c = nightStepCtx(key);
+  if (!c?.player.id) return;
+  stMessage = stepAnswer(c).tokens;
+  stRecipientIds = new Set([String(c.player.id)]);
   renderSignalPreview();
   renderSignalPlayers();
   updateSignalSendBtn();
   document.getElementById('signal-preview')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
-function renderNightOrderColumn(night) {
-  const nightLabel = `Night ${night}`;
-  const entries = night === 1 ? _nightOrder().firstNight : _nightOrder().otherNight;
-  const scriptIds = new Set((currentState?.roles ?? []).map(r => _normalizeId(r.id)));
-  const byRole = playersByRoleId();
-  const nightSignalScripts = _nightSignalScripts();
+// One compact control per chip input.
+function nightStepInputHtml(key, s, i, step, use) {
+  const v = step.inputs[`i${i}`];
+  const src = step.src[`i${i}`];
+  const srcCls = { reply: ' nstep-from-reply', hint: ' nstep-from-hint', grimoire: ' nstep-from-grimoire' }[src] ?? '';
+  const title = [{ pick: 'Their choice', tell: 'Sent to them', note: 'Your note — not sent' }[use],
+    { reply: 'from their reply', hint: 'suggested', sent: 'as sent from botc.app', grimoire: 'from the grimoire reminder' }[src] ?? ''].filter(Boolean).join(' · ');
+  const attrs = `data-key="${esc(key)}" data-idx="${i}"`;
+  const pills = (opts) => `<span class="nstep-pills${srcCls}" title="${title}">${opts.map(o =>
+    `<button class="nstep-pill${String(o) === String(v) ? ' active' : ''}" ${attrs} data-value="${esc(String(o))}">${esc(String(o))}</button>`).join('')}</span>`;
+  const select = (opts) => `<select class="nstep-input${srcCls}" title="${title}" ${attrs}>
+      <option value="">${esc(s.label)}…</option>${opts.map(o => `<option value="${esc(o.value)}"${String(o.value) === String(v) ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}
+    </select>`;
+  const label = `<span class="nstep-label">${esc(s.label)}</span>`;
+
+  if (s.type === 'player' || s.type === 'player?') {
+    return select((currentState?.players ?? []).map(p => ({ value: notesNameOf(p), label: dn(displayName(p, p.seat)) })));
+  }
+  if (s.type === 'role') {
+    const teams = { good: ['townsfolk', 'outsider'], evil: ['minion', 'demon'] }[s.filter] ?? (s.filter ? [s.filter] : null);
+    return select((currentState?.roles ?? []).filter(r => !teams || teams.includes(r.team)).map(r => ({ value: r.id, label: r.name ?? r.id })));
+  }
+  if (s.type === 'number') {
+    const lo = s.min ?? 0, hi = s.max ?? 99;
+    if (hi - lo <= 6) return `${label}${pills(Array.from({ length: hi - lo + 1 }, (_, n) => lo + n))}`;
+    return `<input type="number" class="nstep-input nstep-num${srcCls}" placeholder="${esc(s.label)}" title="${title}" min="${lo}" max="${hi}" value="${v ?? ''}" ${attrs} />`;
+  }
+  if (s.type === 'yn') return `${label}${pills([s.yesLabel ?? 'yes', s.noLabel ?? 'no'])}`;
+  if (s.type === 'alignment') return `${label}${pills(['good', 'evil', 'neither'])}`;
+  if (s.type === 'direction') return pills(['clockwise', 'anti-clockwise']);
+  if (s.type === 'options') return `${label}${pills(s.options ?? [])}`;
+  return `<input type="text" class="nstep-input nstep-text${srcCls}" placeholder="${esc(s.label)}" title="${title}" value="${esc(v ?? '')}" ${attrs} />`;
+}
+
+// "Seat 3 · Imp · yes" — a finished step on one line.
+function nightStepSummary(c) {
+  if (c.step.passed) return 'passed';
+  return (c.spec?.inputs ?? []).map((s, i) => {
+    const v = c.step.inputs[`i${i}`];
+    if (v === undefined || v === '') return null;
+    if (s.type === 'player' || s.type === 'player?') return dn(v);
+    if (s.type === 'role') return (currentState?.roles ?? []).find(r => r.id === v)?.name ?? v;
+    return String(v);
+  }).filter(Boolean).join(' · ');
+}
+
+const tokensHtml = (tokens) => tokens.map(t => `<span class="${signalTokenCls(t)}">${esc(signalTokenLabel(t))}</span>`).join('');
+
+// ── Step warnings ──
+// Why the holder's ability may not work / their info may or must be false,
+// and players involved who may register as something else.
+
+// Who may register as something else, and as what. Recluse/Spy by
+// character; the Lycanthrope's Faux Paw player and Legion by reminder/role.
+function misregistration(p) {
+  const id = trueRoleOf(p);
+  if (id === 'recluse') return { text: '(Recluse) may register as evil & as a Minion or Demon', demon: true };
+  if (id === 'spy') return { text: '(Spy) may register as good & as a Townsfolk or Outsider', demon: false };
+  if (id === 'legion') return { text: '(Legion) registers as a Minion too', demon: false };
+  if ((p.reminders ?? []).some(r => isLiveReminder(r, 'lycanthrope', 'Faux Paw'))) return { text: 'registers as evil (Faux Paw)', demon: false };
+  return null;
+}
+
+// Which players a role's info follows from, for misregistration warnings —
+// only what the storyteller doesn't choose. demon: only registering as the
+// Demon matters. Roles not listed: the player's own picks (if any).
+const MISREG_SCOPE = {
+  empath: { who: 'neighbours' },
+  chef: { who: 'all' }, clockmaker: { who: 'all' }, shugenja: { who: 'all' },
+  oracle: { who: 'dead' },
+  towncrier: { who: 'nominators' },
+  flowergirl: { who: 'voters', demon: true },
+  fortuneteller: { who: 'picks', demon: true },
+  undertaker: { who: 'fields', fields: ['i0'] },
+  chambermaid: null,     // counts who woke — registration doesn't matter
+};
+
+const liveRemindersOn = (p) => (p?.reminders ?? []).filter(r => !(r.flags ?? []).includes('flipped'));
+const reminderSourceName = (r) => scriptRoleFor(_normalizeId(r.role ?? '')).name ?? r.role;
+
+// Nearest living player each way round the circle (the Empath's neighbours).
+function livingNeighbours(player) {
+  const seated = [...(currentState?.players ?? [])].sort((a, b) => a.seat - b.seat);
+  const n = seated.length;
+  const idx = seated.findIndex(p => p.seat === player.seat);
+  if (idx === -1 || n < 2) return [];
+  const step = (dir) => {
+    for (let i = 1; i < n; i++) {
+      const p = seated[((idx + dir * i) % n + n) % n];
+      if (p.seat !== player.seat && !p.isDead) return p;
+    }
+    return null;
+  };
+  return [...new Set([step(-1), step(1)].filter(Boolean))];
+}
+
+// [{ level: 'must' | 'may' | 'note', text }]
+function stepWarnings(c) {
+  const { player, night, action, spec, step, bundledId } = c;
+  if (step.stOnly) return [];
+  const out = pickProblems(c).map(text => ({ level: 'must', text }));
+  if (step.changed) {
+    const show = (k, v) => { const s = spec?.inputs?.[k.slice(1)]; return s?.type === 'role' ? (scriptRoleFor(_normalizeId(v)).name ?? v) : dn(String(v)); };
+    const was = Object.entries(step.changed.was).map(([k, v]) => show(k, v)).join(' & ');
+    const now = Object.keys(step.changed.was).map(k => step.inputs[k] !== undefined ? show(k, step.inputs[k]) : '—').join(' & ');
+    out.push({ level: step.changed.answered ? 'must' : 'may',
+      text: `They changed their pick: was ${was}, now ${now}${step.changed.answered ? ' — what you sent was for the old pick' : ''}` });
+  }
+  const tellsInfo = stepAnswer(c).tokens.length > 0;
+  // "You are …" steps (Alchemist, Apprentice) are setup, not ability info.
+  const abilityInfo = tellsInfo && (action.tell ?? [])[0] !== 'you';
+  const effect = tellsInfo ? 'info may be false' : 'ability may not work';
+  const everyone = currentState?.players ?? [];
+  const isTraveller = teamOfPlayer(player) === 'traveller';
+
+  const rems = liveRemindersOn(player);
+  const sober = rems.find(r => /sober/i.test(r.name));
+  if (sober) {
+    out.push({ level: 'note', text: `${sober.name} (${reminderSourceName(sober)}) — sober & healthy, gets true info` });
+  } else {
+    if (abilityInfo && teamOfPlayer(player) === 'townsfolk' && playersOfTeam('demon').some(p => trueRoleOf(p) === 'vortox')) {
+      out.push({ level: 'must', text: 'Vortox in play — their info must be false' });
+    }
+    // Drunk / poisoned reminders on them in the grimoire, whatever caused them.
+    const sources = rems.filter(r => /drunk|poison/i.test(r.name) && !/everyone/i.test(r.name));
+    for (const r of sources) out.push({ level: 'may', text: `${r.name} (${reminderSourceName(r)}) — ${effect}` });
+    // Abilities taken away by someone else (the Preacher's "No Ability" on a Minion).
+    for (const r of rems.filter(r => /no ability/i.test(r.name) && ![bundledRoleOf(player), trueRoleOf(player)].includes(_normalizeId(r.role ?? '')))) {
+      out.push({ level: 'may', text: `No ability (${reminderSourceName(r)}) — ${effect}` });
+    }
+    // The Minstrel's "everyone is drunk" (Travellers excepted).
+    const minstrel = everyone.flatMap(liveRemindersOn).find(r => /everyone is drunk/i.test(r.name));
+    if (minstrel && !isTraveller && trueRoleOf(player) !== 'minstrel') out.push({ level: 'may', text: `${reminderSourceName(minstrel)}: everyone is drunk — ${effect}` });
+    // The Xaan's night: all Townsfolk are poisoned.
+    if (teamOfPlayer(player) === 'townsfolk' && everyone.some(p => (p.reminders ?? []).some(r => isLiveReminder(r, 'xaan', 'X')))) {
+      out.push({ level: 'may', text: `Xaan's night — Townsfolk are poisoned, ${effect}` });
+    }
+    // Might not be who they think they are.
+    for (const r of rems.filter(r => ['drunk', 'marionette', 'lunatic'].includes(_normalizeId(r.role ?? '')) && !/drunk|poison/i.test(r.name))) {
+      out.push({ level: 'may', text: `${reminderSourceName(r)} reminder (${r.name}) — ${effect}` });
+    }
+    // Poisoned / made drunk by one of tonight's steps (not yet in the grimoire).
+    const bySteps = !sources.length && droisonedBySteps(player, night);
+    if (bySteps) out.push({ level: 'may', text: `Chosen by the ${bySteps} tonight — ${effect}` });
+  }
+
+  // Players the info follows from who may register as something else — not
+  // players you choose to show (showing a Spy as a Townsfolk is your choice).
+  const scope = bundledId in MISREG_SCOPE ? MISREG_SCOPE[bundledId] : { who: 'picks' };
+  if (tellsInfo && scope) {
+    const fieldPlayers = (pred) => (spec?.inputs ?? []).map((s, i) =>
+      (s.type === 'player' || s.type === 'player?') && pred(i) ? playerByNotesName(step.inputs[`i${i}`]) : null).filter(Boolean);
+    const involved = scope.who === 'picks' ? fieldPlayers(i => fieldUse(action, i) === 'pick')
+      : scope.who === 'fields' ? fieldPlayers(i => scope.fields.includes(`i${i}`))
+      : scope.who === 'neighbours' ? livingNeighbours(player)
+      : scope.who === 'all' ? everyone
+      : scope.who === 'dead' ? everyone.filter(p => p.isDead)
+      : scope.who === 'nominators' ? nominationsOfDay(night - 1).map(n => n.nominator).filter(Boolean)
+      : scope.who === 'voters' ? nominationsOfDay(night - 1).flatMap(n => n.voters)
+      : [];
+    for (const p of new Set(involved)) {
+      const m = p !== player && misregistration(p);
+      if (m && (!scope.demon || m.demon)) out.push({ level: 'may', text: `${dn(displayName(p, p.seat))} ${m.text}` });
+    }
+  }
+  // The Fortune Teller's Red Herring among their picks.
+  if (bundledId === 'fortuneteller') {
+    for (const k of ['i0', 'i1']) {
+      const p = playerByNotesName(step.inputs[k]);
+      if (p && (p.reminders ?? []).some(r => isLiveReminder(r, 'fortuneteller', 'Red Herring'))) out.push({ level: 'note', text: `${dn(displayName(p, p.seat))} is the Red Herring — registers as the Demon to them` });
+    }
+  }
+  return out;
+}
+
+function nightStepBodyHtml(c) {
+  const { key, step, spec, action, player, night } = c;
+  const canSignal = !!player.id && !step.stOnly; // a Storyteller-held ability messages nobody
+  const btn = (act, label, opts = {}) => `<button class="nstep-btn${opts.primary ? ' nstep-primary' : ''}" data-act="${act}" data-key="${esc(key)}"${opts.idx !== undefined ? ` data-idx="${opts.idx}"` : ''}${opts.title ? ` title="${esc(opts.title)}"` : ''}${opts.disabled ? ' disabled' : ''}>${label}</button>`;
+
+  const when = action.when ? `<div class="nstep-when">Only if: ${esc(action.when)}</div>` : '';
+  const warn = stepWarnings(c).map(w =>
+    `<div class="nstep-warn nstep-warn-${w.level}">${w.level === 'note' ? '' : ICON_SVG.logWarn} ${esc(w.text)}</div>`).join('');
+  const inputs = spec?.inputs?.length
+    ? `<div class="nstep-inputs">${spec.inputs.map((s, i) => `<div class="nstep-field nstep-use-${fieldUse(action, i)}">${nightStepInputHtml(key, s, i, step, fieldUse(action, i))}</div>`).join('')}</div>` : '';
+
+  // What they replied, as sent — even when it doesn't fit the inputs.
+  const askedAt = stepAskedAt(c);
+  const reply = stepReplyTokens(player, night, askedAt);
+  const replyHtml = reply.length
+    ? `<div class="nstep-reply"><span class="nstep-label">Reply</span>${tokensHtml(reply)}</div>`
+    : askedAt && !step.done ? `<span class="nstep-waiting">${ICON_SVG.logClock} waiting for reply…</span>` : '';
+
+  // Messages to other players this step causes.
+  const notifies = (action.notify ?? []).map((n, idx) => {
+    if (!notifyApplies(n, c)) return '';
+    const { tokens, missing } = resolveTemplate(n.tokens, c);
+    const to = notifyRecipients(n, c);
+    const toLabel = to.length ? to.map(p => dn(displayName(p, p.seat))).join(', ') : { demon: 'the Demon', minions: 'the Minions', evil: 'evil players' }[n.to] ?? 'chosen player';
+    const ready = !missing && tokens.length && to.some(p => p.id)
+      && (!n.tokens.includes('recipientRole') || to.every(p => roleTokenOf(p)));
+    const action2 = (canSignal || to.some(p => p.id) ? btn('notify-compose', 'Compose…', { idx, title: 'Open in the Signal panel to change it' }) : '')
+      + (step.notified[idx] ? `<span class="nstep-sent">Sent</span>` : btn('notify', 'Send', { idx, disabled: !ready }));
+    return `<div class="nstep-notify"><span class="nstep-label">→ ${esc(toLabel)}</span>${tokensHtml(tokens)}${missing ? '<span class="nstep-label">…</span>' : ''}${action2}</div>`;
+  }).join('');
+
+  const answer = stepAnswer(c);
+  const asks = canSignal && (action.wake === 'choice' || action.wake === 'ability')
+    ? [btn('ask', esc(action.ask ? resolveTemplate(action.ask, c).tokens.map(signalTokenLabel).join(' + ') : ASK_LABELS[action.wake]), { idx: 'primary', title: askedAt ? 'Send again' : 'Send to them' }),
+       // Players answer however they like — the other prompt is a click away.
+       `<button class="nstep-btn nstep-btn-alt" data-act="ask" data-idx="${action.wake === 'ability' ? 'choice' : 'ability'}" data-key="${esc(key)}" title="Send this prompt instead">${ASK_LABELS[action.wake === 'ability' ? 'choice' : 'ability']}</button>`]
+    : [];
+  // A pick that breaks the rules: tell them no and ask again.
+  const reject = canSignal && !step.done && pickProblems(c).length
+    ? btn('ask', 'No + Make a choice!', { primary: true, idx: 'reject', title: 'Reply “no”, then “Make a choice!” — and wait for their new pick' }) : '';
+  const send = canSignal && answer.tokens.length && !step.done
+    ? btn('send', 'Send', { primary: true, disabled: answer.missing, title: `Send ${answer.tokens.map(signalTokenLabel).join(' ')} and finish` }) : '';
+  const buttons = [
+    reject,
+    ...asks,
+    canSignal ? btn('compose', 'Compose…', { title: 'Open in the Signal panel' }) : '',
+    send,
+    step.done ? btn('reopen', 'Reopen') : btn('done', action.wake === 'none' || action.when ? 'Done / skip' : 'Done', { primary: !send && !reject, title: 'Finish without sending' }),
+  ].join('');
+  const preview = answer.tokens.length && !step.done ? `<div class="nstep-reply"><span class="nstep-label">Sends</span>${tokensHtml(answer.tokens)}${action.shuffle ? '<span class="nstep-label" title="The players go out in random order">⇄</span>' : ''}</div>` : '';
+  // Which grimoire reminders finishing this step will place, so it's never a surprise.
+  const places = step.done ? [] : Object.entries(remindersByName(action)).flatMap(([name, fields]) =>
+    fields.map(k => step.inputs[k]).filter(Boolean).map(v => `${name} → ${dn(v)}`));
+  const placesHtml = places.length ? `<div class="nstep-places" title="Send / Done puts these reminders in the botc.app grimoire (moving them off anyone else)">Places: ${esc(places.join(', '))}</div>` : '';
+  return `<div class="nstep-body">${when}${warn}${inputs}${placesHtml}${replyHtml}${preview}${notifies}<div class="nstep-actions">${buttons}</div></div>`;
+}
+
+function renderNightStepsHtml(night) {
+  buildNightSteps(night); // first pass fills the steps (a grant filled now, e.g. the Cannibal's, shows below)
+  const { items, notInPlay, confirms } = buildNightSteps(night);
+  // Once-per-game abilities already used don't wake.
+  for (const it of items) if (it.key && it.action.once && !it.step.done && usedEarlier(it)) it.usedUp = true;
+  // The active step: the first unfinished one whose holder is alive.
+  const active = items.find(it => it.key && !it.step.done && !it.usedUp && (!it.player.isDead || it.action.dead))?.key ?? null;
+  const open = nightStepExpanded && items.some(it => it.key === nightStepExpanded) ? nightStepExpanded : active;
+  // Count only steps that will happen: not dead holders whose role doesn't act
+  // when dead, nor once-per-game abilities already used.
+  const steps = items.filter(it => it.key && (it.step.done || ((!it.player.isDead || it.action.dead) && !it.usedUp)));
+  const doneCount = steps.filter(it => it.step.done).length;
 
   const rows = [];
-  for (const e of entries) {
-    if (e.label) {
-      rows.push(`<li class="norder-marker">${esc(e.label)}</li>`);
-      continue;
+  items.forEach((it, idx) => {
+    if (!it.key) {
+      // Skip a label with no steps under it.
+      const next = items[idx + 1];
+      if (!next || !next.key) return;
+      const tip = NIGHT_MARKER_REMINDERS[it.label];
+      rows.push(`<li class="norder-marker"${tip ? ` data-tip="${esc(tip)}"` : ''}>${esc(it.label)}</li>`);
+      return;
     }
-    if (!scriptIds.has(e.id)) continue;
-    const script = nightSignalScripts[e.id];
-    const role = _roles().find(r => r.id === e.id);
-    const url = _iconUrl(role ?? { id: e.id });
+    const { key, step, bundledId, player, action } = it;
+    const infoName = NIGHT_INFO_NAMES[bundledId];
+    const role = infoName ? (bundledRoleOf(player) ? scriptRoleFor(bundledRoleOf(player)) : {}) : scriptRoleFor(bundledId);
+    const url = role.id ? _iconUrl(role) : null;
     const icon = url ? `<img class="tp-role-icon" src="${esc(url)}" />` : '';
-    const holders = byRole[e.id] ?? [];
-    const names = holders.map(h => {
-      const icon = h.id ? `<span class="sig-hist-icon">${ICON_SVG.logChat}</span>` : '';
-      const clickAttrs = h.id ? ` data-uid="${esc(String(h.id))}" data-night="${esc(nightLabel)}"` : '';
-      return `<span class="norder-holder${h.id ? ' sig-hist-holder' : ''}"${clickAttrs} title="${h.id ? 'Signals sent this night' : ''}">
-        <span class="role-name ${playerTeamByName(h.name)}${h.isDead ? ' norder-dead' : ''}" data-player="${esc(h.name)}">${h.isDead ? ICON_SVG.logSkull : ''}${esc(dn(h.name))}</span>${icon}
-      </span>`;
-    }).join('<span class="norder-sep">, </span>');
-    const drafts = holders.map(h => {
-      const key = `${night}|${e.id}|${h.id}`;
-      const entry = nightSignalQueue[key];
-      if (!entry) return '';
-
-      if (entry.status === 'locked') {
-        const label = esc(entry.blockedBy?.roleName ?? '?');
-        return `<div class="norder-draft norder-draft-locked">
-          <span class="norder-draft-name">${esc(dn(h.name))}:</span>
-          <span class="norder-lock-label">${ICON_SVG.logLock} waiting on ${label}</span>
-          <button class="norder-unlock" data-night="${night}" data-blocker-role="${esc(entry.blockedBy?.roleId ?? '')}" data-blocker-uid="${esc(String(entry.blockedBy?.uid ?? ''))}">Unlock anyway</button>
-        </div>`;
-      }
-
-      // 'waiting' has no real draft yet (tokens are just a placeholder for
-      // when the reply lands) — showing them here would look like a queued
-      // outbound message, when nothing is being sent at all.
-      const chips = entry.status === 'waiting' ? '' : entry.tokens.map(t => `<span class="${signalTokenCls(t)}">${esc(signalTokenLabel(t))}</span>`).join('');
-      let controls = '';
-      if (entry.status === 'ready') {
-        let toggle = '';
-        // Only the final answer is a suggestion worth overriding — the
-        // opening prompt (stage 'prompt') is always the same fixed tokens.
-        if (entry.stage === 'answer' && script.override) {
-          const ov = script.override;
-          const current = entry.tokens.find(t => ov.values.includes(t.id))?.id;
-          toggle = ov.values.map(v =>
-            `<button class="norder-override${v === current ? ' active' : ''}" data-key="${esc(key)}" data-field="${esc(ov.field)}" data-value="${esc(v)}">${esc(signalTokenDef(v)?.label ?? v)}</button>`
-          ).join('');
-        }
-        const warning = entry.warning ? `<span class="norder-warning" title="${esc(entry.warning)}">${ICON_SVG.logWarn}</span>` : '';
-        controls = `${toggle}${warning}<button class="norder-send" data-key="${esc(key)}">Send</button>`;
-      }
-      else if (entry.status === 'sent') controls = `<span class="norder-sent-label">Sent</span>`;
-      else if (entry.status === 'manual') controls = `<button class="norder-compose" data-key="${esc(key)}">Compose…</button>`;
-      else if (entry.status === 'waiting') controls = `<span class="norder-waiting-label">${ICON_SVG.logClock} waiting for their in-app selection</span>`;
-      else if (entry.status === 'needs-input') {
-        const inputs = script.inputs ?? [];
-        controls = inputs.map((inputSpec) => {
-          const field = inputSpec.type; // 'player' | 'role' -> filled.player / filled.role
-          let options;
-          if (inputSpec.type === 'role') {
-            const hints = entry.inputHints ?? {};
-            options = (currentState?.roles ?? [])
-              .filter(r => (!hints.filterTeams || hints.filterTeams.includes(r.team)) && r.id !== hints.excludeRoleId)
-              .map(r => `<option value="${esc(r.id)}">${esc(r.name ?? r.id)}</option>`).join('');
-          } else {
-            options = (currentState?.players ?? []).map(p =>
-              `<option value="${p.seat}">${esc(dn(displayName(p, p.seat)))}</option>`).join('');
-          }
-          return `<select class="norder-input" data-key="${esc(key)}" data-field="${field}">
-            <option value="">${esc(inputSpec.label)}…</option>${options}
-          </select>`;
-        }).join('');
-      }
-      const sentCls = entry.status === 'sent' ? ' norder-draft-sent' : '';
-      return `<div class="norder-draft${sentCls}"><span class="norder-draft-name">${esc(dn(h.name))}:</span>${chips}${controls}</div>`;
-    }).join('');
-    rows.push(`
-      <li class="norder-row${holders.length ? '' : ' norder-outofplay'}">
-        <span class="norder-role role-name ${role?.team ?? ''}">${icon}${esc(role?.name ?? e.id)}</span>
-        <span class="norder-players">${names}</span>
-        ${drafts}
+    const name = displayName(player, player.seat);
+    const warnings = stepWarnings(it).filter(w => w.level !== 'note');
+    const droisoned = warnings.length
+      ? `<span class="nstep-droisoned${warnings.some(w => w.level === 'must') ? ' nstep-must' : ''}" title="${esc(warnings.map(w => w.text).join('\n'))}">${ICON_SVG.logWarn}</span>` : '';
+    const holderAttrs = player.id ? ` data-uid="${esc(String(player.id))}" data-night="Night ${night}" title="Signals this night"` : '';
+    const holder = step.stOnly ? `<span class="norder-holder nstep-st">Storyteller</span>` : `<span class="norder-holder${player.id ? ' sig-hist-holder' : ''}"${holderAttrs}><span class="role-name ${playerTeamByName(name)}${player.isDead ? ' norder-dead' : ''}" data-player="${esc(name)}">${player.isDead ? ICON_SVG.logSkull : ''}${esc(dn(name))}</span></span>`;
+    const isOpen = key === open;
+    const state = step.done ? 'done' : it.usedUp ? 'used' : key === active ? 'active' : 'pending';
+    const mark = step.done ? '✓' : key === active ? '▶' : action.wake === 'none' ? '·' : '';
+    const sub = step.done ? nightStepSummary(it) : it.usedUp ? 'ability already used' : '';
+    const summary = sub ? `<span class="nstep-summary">${esc(sub)}</span>` : '';
+    // New replies: seen once the step is open; otherwise flagged on the row.
+    const fresh = newReplies(it);
+    if (isOpen && fresh.length) { step.seenAt = Date.now(); saveNightSteps(); }
+    const remarks = isOpen ? [] : fresh.filter(m => !isAckMessage(m));
+    const acks = isOpen ? [] : fresh.filter(isAckMessage);
+    const msgText = (m) => m.map(signalTokenLabel).join(' ');
+    const replyBadge = remarks.length
+      ? `<span class="nstep-new" title="${esc(remarks.map(msgText).join('\n'))}">💬${remarks.length > 1 ? remarks.length : ''}</span>`
+      : acks.length ? `<span class="nstep-ack" title="Acknowledged: ${esc(acks.map(msgText).join(', '))}">👍</span>` : '';
+    const replyLine = remarks.length ? `<span class="nstep-new-text">“${esc(msgText(remarks[remarks.length - 1]).slice(0, 80))}”</span>` : '';
+    const reminder = infoName ? (NIGHT_MARKER_REMINDERS[Object.keys(NIGHT_INFO_STEPS).find(l => NIGHT_INFO_STEPS[l] === bundledId)] ?? '') : nightReminderText(bundledId, night);
+    const title = infoName ?? role.name ?? bundledId;
+    rows.push(`<li class="nstep nstep-${state}${action.wake === 'none' ? ' nstep-nowake' : ''}${isOpen ? ' nstep-open' : ''}${remarks.length ? ' nstep-has-new' : ''}">
+        <div class="nstep-head" data-key="${esc(key)}">
+          <span class="nstep-mark">${mark}</span>
+          <span class="norder-role role-name ${infoName ? '' : role.team ?? ''}"${reminder ? ` data-tip="${esc(reminder)}"` : ''}>${icon}${esc(title)}${reminder ? '<span class="nstep-info" aria-hidden="true">i</span>' : ''}${step.via ? `<span class="nstep-via">${VIA_IS.has(step.via) ? 'is the' : 'via'} ${esc(scriptRoleFor(step.via).name ?? step.via)}</span>` : ''}</span>
+          <span class="nstep-who">${replyBadge}${holder}${droisoned}</span>
+          ${summary}${replyLine}
+        </div>
+        ${isOpen ? nightStepBodyHtml(it) : ''}
       </li>`);
-  }
+  });
 
-  const readyKeys = Object.entries(nightSignalQueue)
-    .filter(([k, v]) => k.startsWith(`${night}|`) && v.status === 'ready')
-    .map(([k]) => k);
-  const sendAllBtn = readyKeys.length
-    ? `<button class="norder-send-all" data-night="${night}">Send All Ready (${readyKeys.length})</button>`
-    : '';
+  // Day-info reminders (Savant, Fisherman) for whoever holds them.
+  const scriptIds = new Set((currentState?.roles ?? []).map(r => _normalizeId(r.id)));
+  const byRole = playersByRoleId();
+  const reminders = Object.entries(DAY_INFO_REMINDERS).filter(([id]) => scriptIds.has(id)).flatMap(([id, note]) =>
+    (byRole[id] ?? []).map(h => h.player).filter(p => !p.isDead).map(player => {
+      const role = scriptRoleFor(id);
+      const url = _iconUrl(role);
+      const icon = url ? `<img class="tp-role-icon" src="${esc(url)}" />` : '';
+      const name = displayName(player, player.seat);
+      return `<li class="nstep nstep-reminder">
+          <div class="nstep-head nstep-head-static">
+            <span class="nstep-mark">☀</span>
+            <span class="norder-role role-name ${role.team ?? ''}">${icon}${esc(role.name ?? id)}</span>
+            <span class="nstep-who"><span class="role-name ${playerTeamByName(name)}" data-player="${esc(name)}">${esc(dn(name))}</span></span>
+            <span class="nstep-summary">${esc(note)}</span>
+          </div>
+        </li>`;
+    }));
+  if (reminders.length) rows.push(`<li class="norder-marker">Coming day</li>`, ...reminders);
 
-  return `<div class="norder-column">
-    <div class="norder-column-header">${esc(nightLabel)}${sendAllBtn}</div>
-    <ol class="norder-list">${rows.join('')}</ol>
-  </div>`;
+  // Things to check (rarely needed — a safety net): one quiet line each under
+  // the order; "change" opens the field.
+  const confirmHtml = confirms.map(c => {
+    const role = scriptRoleFor(c.bundledId);
+    const grantIdx = Number((c.action.grants?.from ?? 'i0').slice(1));
+    const s = c.spec?.inputs?.[grantIdx];
+    const v = c.step.inputs[`i${grantIdx}`];
+    const gainedName = v ? (scriptRoleFor(_normalizeId(v)).name ?? v) : 'no ability';
+    const open = nightConfirmOpen === c.key;
+    const title = c.step.inputs.i0 && grantIdx !== 0 ? `Suggested from ${dn(c.step.inputs.i0)} (last execution / Lunch reminder)` : '';
+    return `<div class="nstep-confirm-line" title="${esc(title)}">${esc(role.name ?? c.bundledId)} · ${esc(dn(displayName(c.player, c.player.seat)))} has ${esc(gainedName)}${v ? '’s ability' : ''}
+      ${open && s ? nightStepInputHtml(c.key, s, grantIdx, c.step, 'note') : `<button class="link-btn link-btn-muted nstep-confirm-change" data-key="${esc(c.key)}">change</button>`}</div>`;
+  }).join('');
+
+  const footer = '';
+  const titleEl = document.getElementById('night-order-title');
+  if (titleEl) titleEl.textContent = `Night ${night}`;
+  const countEl = document.getElementById('night-order-count');
+  if (countEl) countEl.textContent = steps.length ? `${doneCount} / ${steps.length}` : '';
+  return (rows.length
+    ? `<ol class="norder-list">${rows.join('')}</ol>`
+    : `<div class="nstep-empty">Nobody wakes tonight — assign roles in the circle to fill the order.</div>`) + confirmHtml + footer;
 }
 
+let nightOrderRenderPending = false;
+let nightConfirmOpen = null; // the "Check" line opened for changing
+let nightShowTimer = false; // the storyteller flipped back to the Timer during a night…
+let nightShowTimerPhase = 0; // …this one (the next night opens on the order again)
 function renderNightOrder() {
-  const columnsEl = document.getElementById('night-order-columns');
-  if (!columnsEl) return;
+  const listEl = document.getElementById('night-order-columns');
+  if (!listEl) return;
 
-  // Day N counts as round N's night, same convention as the signal log — a
-  // new column appears as soon as that round's night phase starts.
-  const totalNights = currentState?.phase ? Math.ceil(currentState.phase / 2) : 1;
+  // Only shown while a night is running: it takes the Timer's place in the
+  // right column (the timer is rarely used at night).
+  const phase = currentState?.phase ?? 0;
+  const isNight = phase % 2 === 1;
+  // At night the order takes the Timer's place, but the Timer stays a click away.
+  if (nightShowTimer && nightShowTimerPhase !== phase) nightShowTimer = false;
+  const showOrder = isNight && !nightShowTimer;
+  document.getElementById('night-order-section').hidden = !showOrder;
+  document.querySelectorAll('.st-timer-block').forEach(el => { el.hidden = showOrder; });
+  // One switch in the Phase header, only at night.
+  const sw = document.getElementById('night-view-switch');
+  if (sw) { sw.hidden = !isNight; sw.textContent = nightShowTimer ? 'Night order' : 'Timer'; }
+  if (!showOrder) { listEl.innerHTML = ''; return; }
 
-  recomputeNightSignalQueue();
-  columnsEl.innerHTML = Array.from({ length: totalNights }, (_, i) => renderNightOrderColumn(i + 1)).join('');
-  // The newest night is the one being run: mark it, and bring it into view
-  // when it first appears (earlier nights stay a scroll away).
-  columnsEl.lastElementChild?.classList.add('is-current');
-  if (columnsEl.offsetParent && columnsEl.dataset.nights !== String(totalNights)) {
-    columnsEl.dataset.nights = String(totalNights);
-    columnsEl.scrollLeft = columnsEl.scrollWidth;
+  // Don't rebuild under a focused dropdown or input: state updates arrive
+  // every few seconds and would close an open dropdown / drop typing. The
+  // skipped render runs once focus leaves (see the focusout listener).
+  if (listEl.contains(document.activeElement) && document.activeElement.matches('input, select')) {
+    nightOrderRenderPending = true;
+    return;
   }
-  columnsEl.querySelectorAll('.sig-hist-holder').forEach(holder => {
-    holder.addEventListener('click', (e) => {
-      e.stopPropagation();
-      openSignalPopover(holder.dataset.uid, holder, holder.dataset.night);
-    });
-  });
-  columnsEl.querySelectorAll('.norder-send').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      sendNightSignalDraft(btn.dataset.key);
-      renderNightOrder();
-    });
-  });
-  columnsEl.querySelectorAll('.norder-send-all').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const night = Number(btn.dataset.night);
-      Object.entries(nightSignalQueue)
-        .filter(([k, v]) => k.startsWith(`${night}|`) && v.status === 'ready')
-        .forEach(([k]) => sendNightSignalDraft(k));
-      renderNightOrder();
-    });
-  });
-  columnsEl.querySelectorAll('.norder-input').forEach(sel => {
-    sel.addEventListener('click', (e) => e.stopPropagation());
-    sel.addEventListener('change', (e) => {
-      e.stopPropagation();
-      if (sel.value === '') return;
-      const value = sel.dataset.field === 'role' ? sel.value : Number(sel.value);
-      fillNightSignalInput(sel.dataset.key, sel.dataset.field, value);
-    });
-  });
-  columnsEl.querySelectorAll('.norder-override').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      fillNightSignalInput(btn.dataset.key, btn.dataset.field, btn.dataset.value);
-    });
-  });
-  columnsEl.querySelectorAll('.norder-unlock').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      unlockNightSignalRow(Number(btn.dataset.night), btn.dataset.blockerRole, btn.dataset.blockerUid);
-    });
-  });
-  columnsEl.querySelectorAll('.norder-compose').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      composeNightSignalDraft(btn.dataset.key);
-    });
-  });
+  nightOrderRenderPending = false;
+  listEl.innerHTML = renderNightStepsHtml(Math.ceil(phase / 2));
   applyHighlights(); applyPinnedHighlights();
 }
+
+document.getElementById('night-order-columns').addEventListener('click', (e) => {
+  const holder = e.target.closest('.sig-hist-holder');
+  if (holder) {
+    e.stopPropagation();
+    openSignalPopover(holder.dataset.uid, holder, holder.dataset.night);
+    return;
+  }
+  const change = e.target.closest('.nstep-confirm-change');
+  if (change) { nightConfirmOpen = change.dataset.key; renderNightOrder(); return; }
+  const pill = e.target.closest('.nstep-pill');
+  if (pill) {
+    const active = pill.classList.contains('active');
+    const raw = pill.dataset.value;
+    nightStepSetInput(pill.dataset.key, Number(pill.dataset.idx), active ? '' : (/^\d+$/.test(raw) ? Number(raw) : raw));
+    return;
+  }
+  const btn = e.target.closest('.nstep-btn');
+  if (btn) {
+    const key = btn.dataset.key;
+    if (btn.dataset.act === 'ask') nightStepAsk(key, btn.dataset.idx);
+    else if (btn.dataset.act === 'notify') nightStepNotify(key, Number(btn.dataset.idx));
+    else if (btn.dataset.act === 'notify-compose') nightStepNotifyCompose(key, Number(btn.dataset.idx));
+    else if (btn.dataset.act === 'send') nightStepFinish(key, true);
+    else if (btn.dataset.act === 'done') nightStepFinish(key, false);
+    else if (btn.dataset.act === 'reopen') nightStepReopen(key);
+    else if (btn.dataset.act === 'compose') nightStepCompose(key);
+    return;
+  }
+  const head = e.target.closest('.nstep-head');
+  if (head && head.dataset.key) {
+    nightStepExpanded = nightStepExpanded === head.dataset.key ? null : head.dataset.key;
+    renderNightOrder();
+  }
+});
+
+document.getElementById('night-order-columns').addEventListener('mouseover', (e) => {
+  const t = e.target.closest('[data-tip]');
+  if (t) showNightTip(t); else nightTipEl.hidden = true;
+});
+document.getElementById('night-order-columns').addEventListener('mouseleave', () => { nightTipEl.hidden = true; });
+
+document.getElementById('night-view-switch').addEventListener('click', () => {
+  nightShowTimer = !nightShowTimer;
+  nightShowTimerPhase = currentState?.phase ?? 0;
+  renderNightOrder();
+});
+
+document.getElementById('night-order-columns').addEventListener('focusout', () => {
+  // Let focus settle (it may just move to another control in the list).
+  setTimeout(() => { if (nightOrderRenderPending) renderNightOrder(); }, 0);
+});
+
+document.getElementById('night-order-columns').addEventListener('change', (e) => {
+  const el = e.target.closest('.nstep-input');
+  if (!el) return;
+  const raw = el.value;
+  const value = el.type === 'number' ? (raw === '' ? '' : Number(raw)) : raw;
+  el.blur();
+  if (nightConfirmOpen === el.dataset.key) nightConfirmOpen = null;
+  nightStepSetInput(el.dataset.key, Number(el.dataset.idx), value);
+});
 
 // ── Init ──────────────────────────────────────────────────────────────────
 
@@ -6035,6 +7004,17 @@ document.getElementById('toggle-night').addEventListener('click', (e) => {
   renderChats();
 });
 
+document.getElementById('toggle-status-hl').addEventListener('click', () => {
+  highlightStatus = !highlightStatus;
+  saveSettings();
+  syncStatusHighlight();
+});
+
+function syncStatusHighlight() {
+  document.getElementById('notes-section').classList.toggle('hl-status', highlightStatus);
+  document.getElementById('toggle-status-hl').classList.toggle('toggle-btn-active', highlightStatus);
+}
+
 document.getElementById('merge-switch').addEventListener('click', (e) => {
   mergePhases = !mergePhases;
   e.currentTarget.classList.toggle('on', mergePhases);
@@ -6051,15 +7031,15 @@ function loadSettings() {
   try {
     const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
     if (typeof s.mergePhases === 'boolean') mergePhases = s.mergePhases;
+    if (typeof s.highlightStatus === 'boolean') highlightStatus = s.highlightStatus;
     if (Array.isArray(s.customTimerPresets)) customTimerPresets = s.customTimerPresets;
     if (Array.isArray(s.customSignalPresets)) customSignalPresets = s.customSignalPresets;
-    if (Array.isArray(s.nightSignalUnlocks)) nightSignalUnlocks = new Set(s.nightSignalUnlocks);
   } catch { /* localStorage unavailable / corrupt — use defaults */ }
 }
 
 function saveSettings() {
   try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ mergePhases, customTimerPresets, customSignalPresets, nightSignalUnlocks: [...nightSignalUnlocks] }));
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ mergePhases, highlightStatus, customTimerPresets, customSignalPresets }));
   } catch { /* ignore */ }
 }
 
@@ -6067,6 +7047,7 @@ function applySettingsToUI() {
   const ms = document.getElementById('merge-switch');
   ms.classList.toggle('on', mergePhases);
   ms.setAttribute('aria-checked', String(mergePhases));
+  syncStatusHighlight();
   syncRoleSwitch();
   applyViewRole();
 }
@@ -6084,7 +7065,6 @@ function syncRoleSwitch() {
 function applyViewRole() {
   const isStoryteller = viewRole === 'storyteller';
   document.getElementById('st-tools-section')?.style.setProperty('display', isStoryteller ? '' : 'none');
-  document.getElementById('night-order-section')?.style.setProperty('display', isStoryteller ? '' : 'none');
   document.getElementById('players-section')?.style.setProperty('display', isStoryteller ? '' : 'none');
   document.getElementById('script-wrap')?.style.setProperty('display', isStoryteller ? '' : 'none');
   document.getElementById('clear-grimoire-btn')?.style.setProperty('display', isStoryteller ? '' : 'none');
@@ -6107,6 +7087,7 @@ document.querySelectorAll('#role-toggle [data-view]').forEach(btn => {
 });
 
 loadSettings();
+loadNightSteps();
 applySettingsToUI();
 initSignalPanel();
 updateStRoleBtn();
@@ -6537,7 +7518,6 @@ function applyFullRefresh(response) {
   fullTimeline = [];
   lastNotesKey = '';
   nameMap = response.nameMap ?? {};
-  document.getElementById('timeline-log').innerHTML = '';
   cellTokens = response.cellTokens ?? {};
   materializedStatus = new Set(response.materializedStatus ?? []);
   playerMeta = response.playerMeta ?? {};
@@ -6568,7 +7548,7 @@ chrome.runtime.onMessage.addListener((message) => {
           nameMap[id] = name;
         }
       }
-      renderState(payload.data); patchTimelineNames(); materializeStatusChips(); renderTimeline(); renderNotesGrid(); refreshPlayerTimeline();
+      renderState(payload.data); patchTimelineNames(); materializeStatusChips(); renderNotesGrid(); refreshPlayerTimeline();
       if (nameMapGrew) { renderNominations(); renderChats(); renderMessages(); refreshPlayerTimeline(); }
     }
     else if (payload.type === 'WS_RECV' || payload.type === 'WS_SEND') { appendWsEvent(payload); }
