@@ -2946,7 +2946,7 @@ function scriptRoleId(id) {
 function nightStepSuggestions(player) {
   const phase = currentState?.phase ?? 0;
   if (phase % 2 !== 1 || typeof nightSteps === 'undefined') return [];
-  const prefix = `${currentState?.session ?? ''}|${Math.ceil(phase / 2)}|`;
+  const prefix = `${stepGameKey()}|${Math.ceil(phase / 2)}|`;
   const out = [];
   for (const key of Object.keys(nightSteps)) {
     if (!key.startsWith(prefix)) continue;
@@ -4745,33 +4745,83 @@ const hasReminder = (p, roleId, name) =>
     r.role === roleId && r.name === name && !(r.flags ?? []).includes('flipped'));
 
 // Alerts for the nomination being assembled. nominee is null until it's picked,
-// so 'nominee'/'pair' rules simply don't fire yet.
+// so 'nominee'/'pair' rules simply don't fire yet. Every timing comes back
+// (a.when); callers pick what they show where.
 function nominationAlerts(nominatorSeat, nomineeSeat) {
+  const ctx = nomAlertCtx(nomAlertPlayer(nominatorSeat), nomAlertPlayer(nomineeSeat));
+  if (!ctx.nominator && !ctx.nominee) return [];
+  return runNomAlerts(ctx, r => r.side !== 'none');
+}
+
+// What happens if this player is executed (or dies): the 'execution' and
+// 'death' rules, with the nominator of their latest nomination today, if any.
+function executionAlerts(seat) {
+  const nominee = nomAlertPlayer(seat);
+  if (!nominee) return [];
+  const today = gamePhaseAt(Date.now());
+  const nom = allNominations.filter(n => gamePhaseAt(n.ts) === today && n.nomineeSeat === seat).pop();
+  const ctx = nomAlertCtx(nomAlertPlayer(nom?.nominatorSeat), nominee);
+  return runNomAlerts(ctx, r => r.when === 'execution' || r.when === 'death');
+}
+
+// What happens if nobody is executed today.
+const noExecutionAlerts = () => runNomAlerts(nomAlertCtx(null, null), r => r.when === 'no-execution');
+
+// Players who died today, by day, and what their death sets off — until the
+// storyteller dismisses it. A death in the first 2 minutes of a day is the
+// night's (same rule as the notes).
+const dismissedDeathAlerts = new Set();
+function deathAlertsToday() {
+  const today = gamePhaseAt(Date.now());
+  if (!/^Day \d+$/.test(today)) return [];
   const players = currentState?.players ?? [];
-  const bySeat = (seat) => {
-    if (seat === null || seat === undefined) return null;
-    const p = players.find(pl => pl.seat === seat);
-    return p ? { ...p, label: dn(displayName(p, p.seat)) } : null;
-  };
+  const seen = new Set(), out = [];
+  for (const ev of [...fullTimeline].reverse()) {
+    if (ev.type !== 'death' || phaseForStatusEvent(ev) !== today) continue;
+    const p = players.find(pl => pl.id && String(pl.id) === String(ev.playerId)) ?? players.find(pl => pl.name && pl.name === ev.name);
+    if (!p || !p.isDead || seen.has(p.seat)) continue;
+    seen.add(p.seat);
+    const ctx = nomAlertCtx(null, nomAlertPlayer(p.seat));
+    for (const a of runNomAlerts(ctx, r => r.when === 'death')) {
+      const key = `${today}|${p.id ?? p.name}|${a.id}`;
+      if (!dismissedDeathAlerts.has(key)) out.push({ ...a, key, who: dn(displayName(p, p.seat)) });
+    }
+  }
+  return out;
+}
+
+function nomAlertPlayer(seat) {
+  if (seat === null || seat === undefined) return null;
+  const p = (currentState?.players ?? []).find(pl => pl.seat === seat);
+  return p ? { ...p, label: dn(displayName(p, p.seat)) } : null;
+}
+
+function nomAlertCtx(nominator, nominee) {
+  const players = currentState?.players ?? [];
   const nameOf = (p) => displayName(p, p.seat);
   const dayMatch = /^Day (\d+)$/.exec(gamePhaseAt(Date.now()));
-  const ctx = {
-    nominator: bySeat(nominatorSeat),
-    nominee: bySeat(nomineeSeat),
+  const alive = players.filter(p => !p.isDead).length;
+  return {
+    nominator, nominee,
     rem: hasReminder,
     ability: abilityOf,
     team: teamOfPlayer,
     good: (p) => { const ge = p ? impliedAlignmentGE(p) : null; return ge === 'g' ? true : ge === 'e' ? false : null; },
     misreg: (p) => (p ? misregistration(p) : null),
     holder: (id) => abilityHolder(id),
-    alive: players.filter(p => !p.isDead).length,
+    alive,
+    aliveBefore: alive + (nominee?.isDead ? 1 : 0),
     day: dayMatch ? Number(dayMatch[1]) : null,
     timesNominated: (p) => allNominations.filter(n => nomSeatName(n, n.nomineeSeat) === nameOf(p)).length,
     timesNominating: (p) => allNominations.filter(n => nomSeatName(n, n.nominatorSeat) === nameOf(p)).length,
   };
-  if (!ctx.nominator && !ctx.nominee) return [];
+}
+
+function runNomAlerts(ctx, keep) {
+  const nameOf = (p) => displayName(p, p.seat);
   const out = [];
   for (const rule of _nomAlerts()) {
+    if (!keep(rule)) continue;
     if (rule.side === 'nominator' && !ctx.nominator) continue;
     if (rule.side === 'nominee' && !ctx.nominee) continue;
     if (rule.side === 'pair' && !(ctx.nominator && ctx.nominee)) continue;
@@ -4788,7 +4838,7 @@ function nominationAlerts(nominatorSeat, nomineeSeat) {
     const droison = droisonReasons(holder);
     if (droison.length) notes.push('drunk/poisoned?');
     out.push({
-      id: rule.id, level: rule.level, role: rule.role, label,
+      id: rule.id, when: rule.when ?? 'now', level: rule.level, role: rule.role, label,
       note: notes.join(' · '),
       noteTitle: droison.length ? `${dn(nameOf(holder))}: ${droison.join(', ')}` : '',
     });
@@ -4845,6 +4895,13 @@ function updateNomSetup() {
   if (exec) {
     const marked = (currentState?.players ?? []).find(pl => (pl.status ?? []).includes('marked'));
     exec.textContent = marked ? `Execute ${dn(marked.name)}` : 'No execution · go to night';
+    // Going to night without an execution can end the game (Mayor, Vortox).
+    const noExec = marked ? [] : noExecutionAlerts();
+    const warn = document.getElementById('ns-noexec');
+    if (warn) {
+      warn.hidden = !noExec.length;
+      warn.textContent = noExec.map(a => `${_roles().find(r => r.id === a.role)?.name ?? a.role}: ${a.label}`).join(' · ');
+    }
     exec.title = marked
       ? 'Remove the mark, kill them and move on to the night'
       : 'Nobody is marked: move on to the night without an execution';
@@ -4857,34 +4914,113 @@ function updateNomSetup() {
   if (val && slider) val.textContent = `${(Number(slider.value) / 1000).toFixed(2)}s`;
 }
 
-function renderNomAlerts() {
-  const box = document.getElementById('nom-alerts');
+// The alerts of the nomination on the floor, as they were when it was made:
+// they stay up through the vote, and the storyteller acting on them (placing
+// the Virgin's No Ability, the Witch's victim dying) mustn't make them vanish.
+let openNomAlerts = null; // { key, alerts }
+
+// The open nomination — or the one just sent, until botc.app confirms it —
+// with its frozen alerts, or null.
+function openNominationAlerts() {
+  const open = !isPickingNomination() && (pendingNomination ?? (awaitingNomination() ? nominationSent : null));
+  if (!open) { openNomAlerts = null; return null; }
+  const key = `${open.nominatorSeat}|${open.nomineeSeat}`;
+  if (openNomAlerts?.key !== key) openNomAlerts = { key, alerts: nominationAlerts(open.nominatorSeat, open.nomineeSeat) };
+  return openNomAlerts.alerts;
+}
+
+function nomAlertChipHtml(a, extraClass = '', dismissKey = null) {
+  // Icon comes from the bundled role art by id — the role whose ability is
+  // firing, which is not necessarily a role anyone at the table can see (the
+  // Witch's curse shows the Witch, on the cursed player's own nomination).
+  const icon = _iconUrl({ id: a.role });
+  const roleName = _roles().find(r => r.id === a.role)?.name ?? a.role;
+  return `<div class="nom-alert nom-alert-${a.level}${extraClass}" title="${esc(roleName)}">`
+    + (icon ? `<img class="nom-alert-icon" src="${esc(icon)}" alt="${esc(roleName)}" />` : '')
+    + `<span class="nom-alert-label">${esc(a.label)}</span>`
+    + (a.note ? `<span class="nom-alert-note"${a.noteTitle ? ` title="${esc(a.noteTitle)}"` : ''}>${esc(a.note)}</span>` : '')
+    + (dismissKey ? `<button class="nom-alert-dismiss" data-dismiss-alert="${esc(dismissKey)}" title="Dismiss" aria-label="Dismiss">×</button>` : '')
+    + `</div>`;
+}
+
+const isNowAlert = (a) => a.when === 'now';
+const isExecAlert = (a) => a.when === 'execution' || a.when === 'death';
+
+function dayAlertRowHtml(a, dismissKey = null) {
+  const icon = _iconUrl({ id: a.role });
+  const roleName = _roles().find(r => r.id === a.role)?.name ?? a.role;
+  return `<div class="da-row da-${a.level}">`
+    + (icon ? `<img class="da-icon" src="${esc(icon)}" alt="" title="${esc(roleName)}" />` : `<span class="da-icon"></span>`)
+    // The label carries its own subject; the icon says whose ability it is.
+    + `<span class="da-text" title="${esc(roleName)}">${a.who ? `<b>${esc(a.who)}</b>: ` : ''}${esc(a.label)}`
+    + (a.note ? ` <span class="da-note"${a.noteTitle ? ` title="${esc(a.noteTitle)}"` : ''}>${esc(a.note)}</span>` : '')
+    + `</span>`
+    + (dismissKey ? `<button class="nom-alert-dismiss" data-dismiss-alert="${esc(dismissKey)}" title="Dismiss" aria-label="Dismiss">×</button>` : '')
+    + `</div>`;
+}
+
+// The "Today" panel beside the circle: everything the storyteller has to
+// keep in mind by day, up all day rather than only while a nomination is open.
+// Rewritten only when it changes, so nothing flickers on unrelated updates.
+let _lastDayNom = null;
+function renderDayAlerts(nom = _lastDayNom) {
+  _lastDayNom = nom;
+  const box = document.getElementById('day-alerts');
   if (!box) return;
-  // The hovered seat stands in for the seat about to be picked, so the reminder
-  // shows before the click rather than after the nomination is already in.
-  const alerts = isPickingNomination()
-    ? (playerActionPickedSeat === null
-        ? nominationAlerts(hoveredSeat, null)
-        : nominationAlerts(playerActionPickedSeat, hoveredSeat))
-    : [];
-  box.innerHTML = alerts.map(a => {
-    // Icon comes from the bundled role art by id — the role whose ability is
-    // firing, which is not necessarily a role anyone at the table can see (the
-    // Witch's curse shows the Witch, on the cursed player's own nomination).
-    const icon = _iconUrl({ id: a.role });
-    const roleName = _roles().find(r => r.id === a.role)?.name ?? a.role;
-    return `<div class="nom-alert nom-alert-${a.level}" title="${esc(roleName)}">`
-      + (icon ? `<img class="nom-alert-icon" src="${esc(icon)}" alt="${esc(roleName)}" />` : '')
-      + `<span class="nom-alert-label">${esc(a.label)}</span>`
-      + (a.note ? `<span class="nom-alert-note"${a.noteTitle ? ` title="${esc(a.noteTitle)}"` : ''}>${esc(a.note)}</span>` : '')
-      + `</div>`;
-  }).join('');
-  box.style.display = alerts.length ? '' : 'none';
-  // The alerts take over the middle of the circle while they're up.
+  const phase = currentState?.phase ?? 0;
+  const show = amIStoryteller() && phase > 0 && phase % 2 === 0;
+  const sections = [];
+  if (show) {
+    if (nom) {
+      const who = (seat) => (seat === null || seat === undefined) ? '…' : esc(nomAlertPlayer(seat)?.label ?? '?');
+      const now = nom.alerts.filter(isNowAlert), exec = nom.alerts.filter(isExecAlert);
+      sections.push(`<div class="da-section da-nom${nom.preview ? ' is-preview' : ''}">`
+        + `<div class="da-title">${nom.preview ? 'Nominating' : 'Nomination'} <span class="da-pair">${who(nom.nominatorSeat)} → ${who(nom.nomineeSeat)}</span></div>`
+        + (now.length ? now.map(a => nomAlertChipHtml(a, ' is-static')).join('') : '')
+        + (exec.length ? `<div class="da-sub">If executed</div>` + exec.map(a => dayAlertRowHtml({ ...a, who: '' })).join('') : '')
+        + (!now.length && !exec.length ? `<div class="da-empty">Nothing to resolve</div>` : '')
+        + `</div>`);
+    }
+    const deaths = deathAlertsToday();
+    if (deaths.length) {
+      sections.push(`<div class="da-section"><div class="da-title">Died today</div>`
+        + deaths.map(a => dayAlertRowHtml(a, a.key)).join('') + `</div>`);
+    }
+    // Only once someone is marked: what executing them sets off.
+    const marked = (currentState?.players ?? []).find(pl => (pl.status ?? []).includes('marked'));
+    const end = marked ? executionAlerts(marked.seat) : [];
+    if (end.length) {
+      sections.push(`<div class="da-section"><div class="da-title">If ${esc(dn(displayName(marked, marked.seat)))} is executed</div>`
+        + end.map(a => dayAlertRowHtml({ ...a, who: '' })).join('') + `</div>`);
+    }
+  }
+  const html = sections.join('');
+  if (box.dataset.html !== html) { box.innerHTML = html; box.dataset.html = html; }
+  box.hidden = !sections.length;
+}
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-dismiss-alert]');
+  if (!btn) return;
+  dismissedDeathAlerts.add(btn.dataset.dismissAlert);
+  renderDayAlerts();
+});
+
+function renderNomAlerts() {
+  const picking = isPickingNomination();
+  let nom = null;
+  if (picking) {
+    // The hovered seat stands in for the seat about to be picked, so the reminder
+    // shows before the click rather than after the nomination is already in.
+    const [a, b] = playerActionPickedSeat === null ? [hoveredSeat, null] : [playerActionPickedSeat, hoveredSeat];
+    if (a !== null && a !== undefined) nom = { nominatorSeat: a, nomineeSeat: b, alerts: nominationAlerts(a, b), preview: true };
+  } else {
+    const open = pendingNomination ?? (awaitingNomination() ? nominationSent : null);
+    const alerts = openNominationAlerts();
+    if (open && alerts) nom = { nominatorSeat: open.nominatorSeat, nomineeSeat: open.nomineeSeat, alerts };
+  }
+  renderDayAlerts(nom);
   const phase = document.getElementById('circle-phase');
-  if (phase) phase.hidden = alerts.length > 0 || !!pendingNomination;
-  const nomCentre = document.getElementById('circle-nom');
-  if (nomCentre) nomCentre.hidden = alerts.length > 0;
+  if (phase) phase.hidden = !!pendingNomination;
   updateNomSetup();
 }
 
@@ -5079,8 +5215,15 @@ function updateVoteClock() {
 const VOTE_PATTERN_LABELS = { steady: 'Steady', accelerate: 'Speeding up', decelerate: 'Slowing down', stutter: 'Stutter', wobble: 'Wobble' };
 
 // Whether the extra clock tools panel is open; remembered between sessions.
-const VOTE_TOOLS_KEY = 'botc-companion-vote-tools-open';
-let voteToolsOpen = (() => { try { return localStorage.getItem(VOTE_TOOLS_KEY) === '1'; } catch { return false; } })();
+// They're just for fun, so they stay folded away unless asked for.
+const CLOCK_TOOLS_KEY = 'botc.clockToolsOpen';
+let clockToolsOpen = false;
+try { clockToolsOpen = localStorage.getItem(CLOCK_TOOLS_KEY) === '1'; } catch { /* ignore */ }
+document.getElementById('vd-tools-toggle')?.addEventListener('click', () => {
+  clockToolsOpen = !clockToolsOpen;
+  try { localStorage.setItem(CLOCK_TOOLS_KEY, clockToolsOpen ? '1' : '0'); } catch { /* ignore */ }
+  updateVoteDrive();
+});
 
 function sendVoteDrive(action, extra = {}) {
   sendBg({ type: 'VOTE_DRIVE', action, ...extra });
@@ -5096,13 +5239,12 @@ function updateVoteDrive() {
   // Everyday controls sit in the middle of the wheel; the extra clock tools
   // (stepping, pointing, speed, patterns) only when asked for.
   const core = document.getElementById('vd-core');
-  if (core) core.hidden = !show;
-  el.hidden = !show || !voteToolsOpen;
-  const moreBtn = document.getElementById('vd-more-btn');
-  if (moreBtn) {
-    moreBtn.setAttribute('aria-expanded', String(voteToolsOpen));
-    moreBtn.classList.toggle('is-open', voteToolsOpen);
-  }
+  if (core) { core.hidden = !show; placeVdCore(); }
+  // The extra clock tools take the place of the seat actions (swap, add
+  // seat…) under the circle while a nomination is open: nothing covered.
+  el.hidden = !show;
+  const seatActions = document.getElementById('players-seat-actions');
+  if (seatActions) seatActions.hidden = show;
   if (!show) {
     // Seat-picking modes that only make sense with a nomination open.
     if (playerActionMode === 'point' || playerActionMode === 'attorney') setPlayerActionMode(playerActionMode); // toggles off
@@ -5111,6 +5253,13 @@ function updateVoteDrive() {
   const n = currentState?.players?.length ?? 0;
   const inProgress = !!vc.isInProgress;
   const driving = !!vc.drive?.active;
+  // Open while they're driving the hand, so its status and Hand back stay in reach.
+  const toolsOpen = clockToolsOpen || driving;
+  document.getElementById('vd-tools-body').hidden = !toolsOpen;
+  const toolsToggle = document.getElementById('vd-tools-toggle');
+  toolsToggle.setAttribute('aria-expanded', String(toolsOpen));
+  toolsToggle.disabled = driving;
+  toolsToggle.querySelector('.vd-tools-caret').textContent = toolsOpen ? '▾' : '▸';
   const counted = !inProgress && vc.locked > n;
   const pattern = vc.drive?.pattern ?? 'steady';
 
@@ -5208,11 +5357,6 @@ function wireVoteDrive() {
   on('vd-point', () => setPlayerActionMode('point'));
   on('vd-finish', () => sendVoteDrive('finish'));
   on('vd-release', () => sendVoteDrive('release'));
-  on('vd-more-btn', () => {
-    voteToolsOpen = !voteToolsOpen;
-    try { localStorage.setItem(VOTE_TOOLS_KEY, voteToolsOpen ? '1' : '0'); } catch { /* ignore */ }
-    updateVoteDrive();
-  });
   const slider = document.getElementById('vd-speed');
   slider?.addEventListener('input', () => {
     document.getElementById('vd-speed-val').textContent = `${(Number(slider.value) / 1000).toFixed(2)}s`;
@@ -5432,11 +5576,20 @@ function renderPlayers() {
   // both; pointer-events:none in CSS keeps either out of the way of seat clicks.
   // Both live inside the circle, absolutely positioned, so showing them can't
   // shift the layout around them.
-  table.innerHTML = `<svg id="nom-hands" viewBox="0 0 100 100" aria-hidden="true"></svg>`
-    + circlePhaseHtml(players)
-    + circleNominationHtml(liveNom)
-    + seats
-    + `<div id="nom-alerts" style="display:none"></div>`;
+  // The hands and alert chips are created once and never leave the page: a
+  // rebuild only replaces what sits between them. Recreating them — or even
+  // detaching and re-adding them — replays their animations (hand sweep,
+  // fade-in) on every state update: flicker.
+  let hands = table.querySelector(':scope > #nom-hands');
+  let alertsBox = table.querySelector(':scope > #nom-alerts');
+  if (!hands || !alertsBox) {
+    table.innerHTML = `<svg id="nom-hands" viewBox="0 0 100 100" aria-hidden="true"></svg>`
+      + `<div id="nom-alerts" style="display:none"></div>`;
+    hands = table.querySelector('#nom-hands');
+    alertsBox = table.querySelector('#nom-alerts');
+  }
+  for (const el of [...table.children]) if (el !== hands && el !== alertsBox) el.remove();
+  hands.insertAdjacentHTML('afterend', circlePhaseHtml(players) + circleNominationHtml(liveNom) + seats);
 
   // Only one player can be marked (mid-nomination) at a time, but Mark stays
   // enabled even when someone already has it — picking a new seat just moves
@@ -5531,24 +5684,45 @@ function renderPlayers() {
     });
     // Hover drives the hand preview. On the table rather than the seats, so it
     // survives the innerHTML rewrite every renderPlayers does.
-    table.addEventListener('mouseover', (e) => {
-      const seatEl = e.target.closest('.player-seat[data-seat]');
-      const seat = seatEl ? Number(seatEl.dataset.seat) : null;
+    // Moving from one seat to the next crosses the gap between them. Letting
+    // go of the hover there would drop the preview and alerts for a moment and
+    // bring them back on the next seat — flicker. So a gap only clears the
+    // hover if the cursor stays off the seats for a short while.
+    let hoverClearTimer = null;
+    const setHovered = (seat) => {
+      clearTimeout(hoverClearTimer);
+      hoverClearTimer = null;
       if (seat === hoveredSeat) return;
       hoveredSeat = seat;
       renderNomHands();
       renderNomAlerts();
+    };
+    const clearHoveredSoon = () => {
+      if (hoveredSeat === null || hoverClearTimer) return;
+      hoverClearTimer = setTimeout(() => setHovered(null), 150);
+    };
+    table.addEventListener('mouseover', (e) => {
+      const seatEl = e.target.closest('.player-seat[data-seat]');
+      if (seatEl) setHovered(Number(seatEl.dataset.seat));
+      else clearHoveredSoon();
     });
-    table.addEventListener('mouseleave', () => {
-      if (hoveredSeat === null) return;
-      hoveredSeat = null;
-      renderNomHands();
-      renderNomAlerts();
-    });
+    table.addEventListener('mouseleave', clearHoveredSoon);
   }
   renderNomHands();
   renderNomAlerts();
+  placeVdCore();
   applyHighlights(); applyPinnedHighlights();
+}
+
+// The vote buttons hang just under the nomination card, whose height changes
+// with its alerts.
+function placeVdCore() {
+  const core = document.getElementById('vd-core');
+  const card = document.getElementById('circle-nom');
+  const scroll = document.getElementById('player-table-scroll');
+  if (!core || core.hidden || !card || card.hidden || !scroll) return;
+  const top = card.getBoundingClientRect().bottom - scroll.getBoundingClientRect().top + scroll.scrollTop + 10;
+  core.style.top = `${Math.round(top)}px`;
 }
 
 // Add-seat button "floats" pinned under the cursor after a click, so mashing
@@ -5776,7 +5950,7 @@ const DAY_INFO_REMINDERS = {
   fisherman: 'may visit once for advice',
 };
 
-// stepKey (`${session}|${night}|${roleId}|${holder notes name}`) →
+// stepKey (`${session}@${game start}|${night}|${roleId}|${holder notes name}`) →
 // { inputs: {i0: …}, src: {i0: 'reply'|'manual'|'hint'}, done, askedAt,
 //   passed, used, notified: {idx: true} }
 let nightSteps = {};
@@ -5790,10 +5964,21 @@ function loadNightSteps() {
   } catch { /* ignore */ }
 }
 
-// Only the current session's steps are kept.
+// Steps belong to one game: a botc.app session (the room) hosts game after
+// game, with the same night numbers and often the same players, so the key
+// also carries the game's start time from botc.app's history.
+function gameStartTs() {
+  let ts = null;
+  for (const e of fullTimeline) if (e.type === 'start') ts = e.ts;
+  return ts;
+}
+const stepGameKey = () => `${currentState?.session ?? ''}@${gameStartTs() ?? ''}`;
+
+// Only the current game's steps are kept — pruned once its start is known
+// (the first render after a reload comes before the history does).
 function saveNightSteps() {
-  const prefix = `${currentState?.session ?? ''}|`;
-  for (const k of Object.keys(nightSteps)) if (!k.startsWith(prefix)) delete nightSteps[k];
+  const prefix = `${stepGameKey()}|`;
+  if (gameStartTs() !== null) for (const k of Object.keys(nightSteps)) if (!k.startsWith(prefix)) delete nightSteps[k];
   try { localStorage.setItem(NIGHT_STEPS_KEY, JSON.stringify({ steps: nightSteps })); } catch { /* ignore */ }
 }
 
@@ -5846,7 +6031,7 @@ const playersOfTeam = (team) => (currentState?.players ?? []).filter(p => teamOf
 // Did one of tonight's steps poison / make drunk this player (the Poisoner's,
 // Widow's, … pick)? Returns that character's name, or null.
 function droisonedBySteps(player, night) {
-  const prefix = `${currentState?.session ?? ''}|${night}|`;
+  const prefix = `${stepGameKey()}|${night}|`;
   for (const [k, st] of Object.entries(nightSteps)) {
     if (!k.startsWith(prefix)) continue;
     const id = k.split('|')[2];
@@ -6296,7 +6481,7 @@ function pickProblems(c) {
   }
   if (rules.includes('distinct') && new Set(picks).size < picks.length) out.push('Same player chosen twice — they must choose different players');
   if (rules.includes('notLastNight')) {
-    const prev = nightSteps[`${currentState?.session ?? ''}|${c.night - 1}|${c.bundledId}|${notesNameOf(c.player)}`];
+    const prev = nightSteps[`${stepGameKey()}|${c.night - 1}|${c.bundledId}|${notesNameOf(c.player)}`];
     const last = new Set(pickFields.map(([, i]) => prev?.inputs?.[`i${i}`]).filter(Boolean));
     for (const p of new Set(picks)) if (last.has(notesNameOf(p))) out.push(`${named(p)} was chosen last night — they must choose someone else`);
   }
@@ -6305,7 +6490,7 @@ function pickProblems(c) {
 
 // Was this once-per-game ability used on an earlier night?
 function usedEarlier(c) {
-  const prefix = `${currentState?.session ?? ''}|`;
+  const prefix = `${stepGameKey()}|`;
   return Object.entries(nightSteps).some(([k, s]) => {
     if (!s.used || !k.startsWith(prefix)) return false;
     const [, n, id, ...name] = k.split('|');
@@ -6359,7 +6544,7 @@ function stepCtx(key, step, bundledId, player, night) {
 // pre-filled from the last execution). All editable on those steps.
 // [{ player, bundledId, via, stOnly }]
 function gainedAbilities(night) {
-  const prefix = `${currentState?.session ?? ''}|`;
+  const prefix = `${stepGameKey()}|`;
   const latest = {};
   for (const [k, st] of Object.entries(nightSteps)) {
     if (!k.startsWith(prefix)) continue;
@@ -6383,7 +6568,7 @@ function gainedAbilities(night) {
 // Tonight's steps in wake order, with labels (Dusk, Minion info, …) between.
 // Roles nobody holds are left out, counted for the footer.
 function buildNightSteps(night) {
-  const session = currentState?.session ?? '';
+  const session = stepGameKey();
   const entries = night === 1 ? _nightOrder().firstNight : _nightOrder().otherNight;
   const scriptIds = new Set((currentState?.roles ?? []).map(r => _normalizeId(r.id)));
   const byRole = playersByRoleId();
@@ -7677,3 +7862,25 @@ chrome.runtime.onMessage.addListener((message) => {
     refreshPlayerTimeline();
   }
 });
+
+// Views are rebuilt with innerHTML on every state update, which restarts any
+// looping CSS animation on the new elements (pulses, live dots) — a visible
+// jump every few seconds. Pinning every infinite animation to the start of the
+// document timeline keeps them in phase: a recreated element picks up where
+// the old one was. One-shot animations aren't touched; elements that carry
+// one have to survive the rebuild instead (see renderPlayers).
+(function phaseLockLoopingAnimations() {
+  let queued = false;
+  const sync = () => {
+    queued = false;
+    for (const a of document.getAnimations()) {
+      if (typeof CSSAnimation !== 'undefined' && !(a instanceof CSSAnimation)) continue;
+      if (a.effect?.getTiming().iterations !== Infinity || a.startTime === 0 || a.playState !== 'running') continue;
+      a.startTime = 0;
+    }
+  };
+  new MutationObserver(() => {
+    if (!queued) { queued = true; requestAnimationFrame(sync); }
+  }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+})();
+

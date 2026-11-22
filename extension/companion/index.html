@@ -126,8 +126,8 @@
 						<button id="players-mark-btn" class="btn btn-seg"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a8 8 0 0 0-5 14.2V21h10v-3.8A8 8 0 0 0 12 3z"></path><path d="M9 12h.01M15 12h.01M10 21v-2M14 21v-2"></path></svg> Mark</button>
 						<button id="players-unmark-btn" class="btn btn-seg" disabled><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M15 9l-6 6M9 9l6 6"></path></svg> Remove Mark</button>
 					</div>
-					<div id="vote-target" hidden title="What players see as the votes an execution needs. Set it before or during a nomination; botc.app resets it each phase.">
-						<span class="vt-label">To execute</span>
+					<div id="vote-target" hidden>
+						<span class="vt-label" title="What players see as the votes an execution needs. Set it before or during a nomination; botc.app resets it each phase.">To execute</span>
 						<button id="vt-minus" class="btn btn-sm btn-icon-only" aria-label="One fewer vote needed"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"></path></svg></button>
 						<span id="vt-value" class="vt-value"></span>
 						<button id="vt-plus" class="btn btn-sm btn-icon-only" aria-label="One more vote needed"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
@@ -142,11 +142,13 @@
 						</select>
 					</div>
 					<div id="player-table-scroll">
+						<aside id="day-alerts" hidden aria-label="Today"></aside>
 						<div id="player-table" class="player-circle"></div>
 						<div id="nom-setup" hidden>
 							<span class="ns-title">Next nomination</span>
 							<div class="ns-row"><span class="ns-label">Type</span><span class="ns-slot" data-slot="type"></span></div>
 							<div class="ns-row"><span class="ns-label">Clock</span><span class="ns-slot" data-slot="speed"></span></div>
+							<span id="ns-noexec" hidden></span>
 							<button id="ns-execute" class="btn btn-sm btn-strong"></button>
 						</div>
 						<div id="vd-core" hidden>
@@ -162,33 +164,37 @@
 								<button id="vd-start" class="btn btn-sm btn-strong"><svg class="btn-icon vd-icon-start" viewBox="0 0 24 24" width="12" height="12" fill="currentColor" stroke="none" aria-hidden="true"><path d="M7 4v16l13-8z"></path></svg><svg class="btn-icon vd-icon-restart" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><path d="M3 3v5h5"></path></svg> <span class="vd-start-label">Start</span></button>
 								<button id="vd-pause" class="btn btn-sm"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="currentColor" stroke="none" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"></rect><rect x="14" y="5" width="4" height="14" rx="1"></rect></svg> <span class="vd-pause-label">Pause</span></button>
 								<button id="vd-reset" class="btn btn-sm" title="Stop the clock and put the hand back on the nominee"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><path d="M3 3v5h5"></path></svg> Reset</button>
+							</div>
+							<div class="vd-core-secondary">
 								<button id="vd-mark" class="btn btn-sm" title="Mark the nominee for execution and close the nomination"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a8 8 0 0 0-5 14.2V21h10v-3.8A8 8 0 0 0 12 3z"></path><path d="M9 12h.01M15 12h.01M10 21v-2M14 21v-2"></path></svg> <span class="vd-mark-label">Mark</span></button>
 								<button id="vd-close" class="btn btn-sm" title="Close the nomination"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M15 9l-6 6M9 9l6 6"></path></svg> Close</button>
 							</div>
-							<div id="vote-drive" hidden>
-								<div class="vd-head">
-									<span id="vd-status" class="vd-status"></span>
-								</div>
-								<div class="vd-buttons">
-									<button id="vd-back" class="btn btn-sm btn-icon-only" title="Step the hand back a seat (unlocks it)" aria-label="Step back"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"></path></svg></button>
-									<button id="vd-fwd" class="btn btn-sm btn-icon-only" title="Step the hand forward a seat" aria-label="Step forward"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg></button>
-									<button id="vd-point" class="btn btn-sm" title="Click seats to send the hand there"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><circle cx="12" cy="12" r="2"></circle></svg> Point</button>
-									<button id="vd-finish" class="btn btn-sm" title="End the count now — the result counts as it stands"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4h11l-1.5 4L16 12H5"></path></svg> End count</button>
-									<button id="vd-release" class="btn btn-sm btn-ghost" title="Give the clock back to botc.app's normal steady tick">Hand back</button>
-								</div>
-								<div class="vd-controls">
-									<div id="vd-patterns" class="seg" role="group" aria-label="Clock pattern">
-										<button class="btn btn-seg btn-sm" data-pattern="steady">Steady</button>
-										<button class="btn btn-seg btn-sm" data-pattern="accelerate" title="Each tick 15% faster">Speed up</button>
-										<button class="btn btn-seg btn-sm" data-pattern="decelerate" title="Each tick 18% slower">Slow down</button>
-										<button class="btn btn-seg btn-sm" data-pattern="stutter" title="Random pauses between ticks">Stutter</button>
-										<button class="btn btn-seg btn-sm" data-pattern="wobble" title="Now and then slips back a seat">Wobble</button>
-									</div>
-								</div>
-							</div>
-							<button id="vd-more-btn" class="link-btn link-btn-muted" aria-expanded="false" aria-controls="vote-drive"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"></path><circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg> Clock tools</button>
 						</div>
 					</div>
+					<div id="vote-drive" hidden>
+							<button id="vd-tools-toggle" type="button" class="link-btn link-btn-muted" aria-expanded="false" title="Step, point or pattern the clock hand — just for fun">Clock tools <span class="vd-tools-caret" aria-hidden="true">▸</span></button>
+							<div id="vd-tools-body" hidden>
+							<div class="vd-head">
+								<span id="vd-status" class="vd-status"></span>
+							</div>
+							<div class="vd-buttons">
+								<button id="vd-back" class="btn btn-sm btn-icon-only" title="Step the hand back a seat (unlocks it)" aria-label="Step back"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"></path></svg></button>
+								<button id="vd-fwd" class="btn btn-sm btn-icon-only" title="Step the hand forward a seat" aria-label="Step forward"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg></button>
+								<button id="vd-point" class="btn btn-sm" title="Click seats to send the hand there"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><circle cx="12" cy="12" r="2"></circle></svg> Point</button>
+								<button id="vd-finish" class="btn btn-sm" title="End the count now — the result counts as it stands"><svg class="btn-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4h11l-1.5 4L16 12H5"></path></svg> End count</button>
+								<button id="vd-release" class="btn btn-sm btn-ghost" title="Give the clock back to botc.app's normal steady tick">Hand back</button>
+							</div>
+							<div class="vd-controls">
+								<div id="vd-patterns" class="seg" role="group" aria-label="Clock pattern">
+									<button class="btn btn-seg btn-sm" data-pattern="steady">Steady</button>
+									<button class="btn btn-seg btn-sm" data-pattern="accelerate" title="Each tick 15% faster">Speed up</button>
+									<button class="btn btn-seg btn-sm" data-pattern="decelerate" title="Each tick 18% slower">Slow down</button>
+									<button class="btn btn-seg btn-sm" data-pattern="stutter" title="Random pauses between ticks">Stutter</button>
+									<button class="btn btn-seg btn-sm" data-pattern="wobble" title="Now and then slips back a seat">Wobble</button>
+								</div>
+							</div>
+							</div>
+						</div>
 					<div id="players-seat-actions">
 						<div class="seat-actions-group">
 							<button id="players-swap-btn" class="btn btn-ghost btn-sm" title="Pick two seats to swap their occupants"><svg class="btn-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3 3 7l4 4M3 7h18M17 13l4 4-4 4M21 17H3"></path></svg> Swap</button>

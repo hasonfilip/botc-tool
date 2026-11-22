@@ -476,6 +476,8 @@ section.collapsed h2 { margin-bottom: 0; }
   z-index: 2;
 }
 
+.nom-alert.is-static { animation: none; }
+
 /* Chips, not sentences: read in the half-second before the click lands. */
 .nom-alert {
   display: inline-flex;
@@ -3619,8 +3621,6 @@ tr:hover .pin-hl-btn, .pin-hl-btn:focus-visible { opacity: 0.55; }
   border-radius: 999px;
   background: rgba(12,12,14,0.85);
 }
-#vd-more-btn { font-size: 11px; }
-#vd-more-btn.is-open { color: var(--accent-text); }
 
 /* The live card shifts up a little so the controls below it stay in the dial. */
 #player-table-scroll:has(#vd-core:not([hidden])) #circle-nom { transform: translate(-50%, calc(-50% - 24px)); }
@@ -3667,51 +3667,6 @@ tr:hover .pin-hl-btn, .pin-hl-btn:focus-visible { opacity: 0.55; }
 /* The phase text would sit underneath: let the card own the centre. */
 .player-circle.nom-setup-open #circle-phase { display: none; }
 
-/* "Clock tools" sits over the dial: give it a backing so a passing hand
-   doesn't show through the text. */
-#vd-more-btn {
-  height: 24px;
-  padding: 0 10px;
-  border-radius: 999px;
-  background: rgba(12,12,14,0.9);
-  box-shadow: 0 0 0 1px var(--line), 0 4px 14px rgba(0,0,0,0.45);
-}
-#vd-more-btn:hover { text-decoration: none; color: var(--text); }
-#vd-more-btn.is-open { color: var(--accent-text); box-shadow: 0 0 0 1px rgba(233,180,76,0.45), 0 4px 14px rgba(0,0,0,0.45); }
-
-/* ── Clock tools inside the centre stack ──
-   Same dark backing as the buttons above, compact rows, no panel of its own. */
-#vd-core #vote-drive {
-  margin: 0;
-  padding: 0;
-  border: none;
-  background: none;
-  box-shadow: none;
-  align-items: center;
-  gap: 8px;
-}
-#vd-core #vote-drive[hidden] { display: none; }
-#vd-core #vote-drive.is-driving { box-shadow: none; }
-#vd-core .vd-head { justify-content: center; order: 3; }
-#vd-core .vd-status {
-  padding: 3px 10px;
-  border-radius: 999px;
-  background: rgba(12,12,14,0.9);
-  font-size: 11px;
-}
-#vd-core .vd-buttons { justify-content: center; flex-wrap: nowrap; }
-#vd-core .vd-buttons .btn,
-#vd-core #vd-patterns { box-shadow: 0 4px 14px rgba(0,0,0,0.45); }
-#vd-core .vd-buttons .btn-ghost { background: rgba(12,12,14,0.9); }
-#vd-core .vd-controls { justify-content: center; }
-#vd-core #vd-patterns { background: rgba(12,12,14,0.92); }
-#vd-core #vd-patterns .btn-seg { height: 24px; padding: 0 8px; font-size: 11px; }
-
-/* Opening the tools moves nothing: the card, the main buttons and the "Clock
-   tools" toggle all stay put, and the extra rows drop in underneath. */
-#vd-core #vote-drive { order: 1; }
-/* The card's state line says who's driving; the pattern chip shows how. */
-#vd-core .vd-head { display: none; }
 #vote-target.vt-hide-setup .vd-speed,
 #vote-target.vt-hide-setup .vt-type { display: none; }
 
@@ -3813,3 +3768,93 @@ tr:hover .pin-hl-btn, .pin-hl-btn:focus-visible { opacity: 0.55; }
 }
 .script-lib-search-clear:hover { background: var(--border); color: var(--text); }
 .script-lib-search-clear[hidden] { display: none; }
+
+.nom-alert-dismiss {
+  margin-left: 2px;
+  padding: 0 2px;
+  border: none;
+  background: none;
+  color: inherit;
+  opacity: 0.6;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.nom-alert-dismiss:hover { opacity: 1; }
+
+/* ── Vote buttons: the main ones, then quieter Mark / Close ── */
+.vd-core-secondary { display: flex; justify-content: center; gap: 6px; }
+.vd-core-secondary .btn {
+  height: 24px;
+  padding: 0 10px;
+  font-size: 11px;
+  background: rgba(12,12,14,0.9);
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+/* ── Clock tools: under the circle, in place of the seat actions ── */
+#vote-drive {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 12px;
+  margin: 4px auto 0;
+  padding: 0;
+  border: none;
+  background: none;
+}
+#vote-drive.is-driving { box-shadow: none; }
+#vote-drive .vd-head { order: 0; }
+#vote-drive .vd-status { font-size: 11px; color: var(--muted); }
+/* Folded away by default: a quiet link, opening onto the tools in a row. */
+#vd-tools-toggle { font-size: 11px; opacity: 0.7; }
+#vd-tools-toggle:hover:not(:disabled) { opacity: 1; }
+#vd-tools-toggle:disabled { cursor: default; text-decoration: none; }
+#vd-tools-body { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 12px; flex-basis: 100%; }
+#vd-tools-body[hidden] { display: none; }
+#players-seat-actions[hidden] { display: none; }
+
+/* ── Today panel: beside the circle, up all day ── */
+#player-table-scroll { container-type: inline-size; }
+#day-alerts {
+  position: absolute;
+  left: 0;
+  top: 10px;
+  z-index: 4;
+  width: min(300px, calc((100% - 560px) / 2 - 16px));
+  max-height: calc(100% - 20px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+#day-alerts[hidden] { display: none; }
+/* No room beside the circle: under it instead. */
+@container (max-width: 1000px) {
+  #day-alerts { position: static; width: auto; max-height: none; margin: 0 auto 12px; max-width: 560px; }
+}
+.da-section { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.da-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.da-pair { margin-left: 4px; letter-spacing: 0; text-transform: none; color: var(--text); font-weight: 600; font-size: 13px; }
+.da-nom { padding: 10px 12px; border-radius: 12px; background: rgba(12,12,14,0.6); box-shadow: 0 0 0 1px var(--line); align-self: stretch; }
+.da-nom .nom-alert { font-size: 14px; padding: 5px 12px 5px 5px; white-space: normal; box-shadow: none; }
+.da-nom .nom-alert-icon { width: 28px; height: 28px; }
+.da-sub { margin-top: 4px; font-size: 11px; color: var(--muted); }
+.da-empty { font-size: 12px; color: var(--muted); }
+.da-row { display: flex; align-items: center; gap: 8px; font-size: 13px; line-height: 1.3; color: var(--text2); }
+.da-row b { color: var(--text); font-weight: 600; }
+.da-danger, .da-danger b { color: #ff9d94; }
+.da-icon { width: 24px; height: 24px; flex-shrink: 0; object-fit: contain; }
+.da-note { font-style: italic; font-size: 12px; opacity: 0.8; }
+#ns-noexec { align-self: center; font-size: 12px; font-weight: 600; color: #ff9d94; text-align: center; }
+#ns-noexec[hidden] { display: none; }
