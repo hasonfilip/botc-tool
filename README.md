@@ -28,7 +28,6 @@ The header shows the session, phase, player and alive counts, script, storytelle
 - **Phase and timer** — next phase, gong, voice, a countdown timer with presets, and Good wins / Evil wins.
 - **Night order** — at night it replaces the timer: tonight's wake order as steps, one per role holder, driven by `data/nightActions.js`. Steps prompt the player, read their reply, suggest answers for info roles, and sync with grimoire reminder tokens both ways. They warn when info must or may be false (droisoned holders, Vortox, a Recluse or Spy involved) and flag invalid picks. Nothing is sent or placed without a click.
 - **Script library** — load script JSONs from a folder or file, search, filter, sort by estimated difficulty, and load one into the game.
-- **Clear** — clears the grimoire.
 
 ## Installation
 
