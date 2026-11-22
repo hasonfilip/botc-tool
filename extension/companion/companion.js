@@ -4649,9 +4649,14 @@ function impliedAlignmentGE(p) {
 // mid-day seat swap): each player may nominate once and be nominated once —
 // except nominating a traveller doesn't use up the nominator's own nomination
 // for the day, since travellers are nominated separately from the main pool.
+// A dead Banshee killed by the Demon may nominate twice, the Butcher again once
+// someone has died today (any death, not only an execution: these are only
+// hints, so they err on the side of allowing), and with a Bishop in play only
+// the storyteller nominates, so nobody runs out.
 function nominationLimitsToday() {
   const nominatedNames = new Set();
   const usedNominatorNames = new Set();
+  const nominationsBy = {};
   // "Today" comes from the timeline — the same source the nominations below are
   // bucketed against — rather than from phaseLabel(currentState.phase). Those
   // two disagree whenever a storyteller doesn't work the day/night toggle: the
@@ -4667,7 +4672,18 @@ function nominationLimitsToday() {
     const nomineeName = nomSeatName(nom, nom.nomineeSeat);
     nominatedNames.add(nomineeName);
     const nomineeTeam = currentState?.players?.find(p => displayName(p, p.seat) === nomineeName)?.team;
-    if (nomineeTeam !== 'traveller') usedNominatorNames.add(nominatorName);
+    if (nomineeTeam !== 'traveller') nominationsBy[nominatorName] = (nominationsBy[nominatorName] ?? 0) + 1;
+  }
+  if (!abilityHolder('bishop')) {
+    const players = currentState?.players ?? [];
+    const diedToday = fullTimeline.some(e => e.type === 'death' && phaseForStatusEvent(e) === currentDay);
+    for (const [name, count] of Object.entries(nominationsBy)) {
+      const p = players.find(pl => displayName(pl, pl.seat) === name);
+      const ability = abilityOf(p);
+      const allowed = (ability === 'banshee' && p.isDead && hasReminder(p, 'banshee', 'Has Ability'))
+        || (ability === 'butcher' && !p.isDead && diedToday) ? 2 : 1;
+      if (count >= allowed) usedNominatorNames.add(name);
+    }
   }
   return { nominatedNames, usedNominatorNames };
 }
@@ -4718,8 +4734,8 @@ const _nomAlerts = () => (typeof BOTC_NOM_ALERTS !== 'undefined' ? BOTC_NOM_ALER
 //
 // A flipped token is one the storyteller turned face down to mark the ability as
 // droisoned, so it doesn't count — in either direction. A flipped 'Cursed' means
-// the Witch's curse won't kill; a flipped 'No Ability' on the Virgin means that
-// mark is itself void, so the Virgin's ability reads as live again.
+// the Witch's curse won't kill. (The Virgin's 'No Ability' is backed by the
+// nomination history, so a flipped one doesn't bring her ability back.)
 // Ghost vote already spent. Like death, this is a token in the status array
 // rather than a field of its own.
 const isVoteless = (p) => (p?.status ?? []).includes('voteless');
@@ -4737,22 +4753,60 @@ function nominationAlerts(nominatorSeat, nomineeSeat) {
     const p = players.find(pl => pl.seat === seat);
     return p ? { ...p, label: dn(displayName(p, p.seat)) } : null;
   };
+  const nameOf = (p) => displayName(p, p.seat);
+  const dayMatch = /^Day (\d+)$/.exec(gamePhaseAt(Date.now()));
   const ctx = {
     nominator: bySeat(nominatorSeat),
     nominee: bySeat(nomineeSeat),
     rem: hasReminder,
+    ability: abilityOf,
+    team: teamOfPlayer,
+    good: (p) => { const ge = p ? impliedAlignmentGE(p) : null; return ge === 'g' ? true : ge === 'e' ? false : null; },
+    misreg: (p) => (p ? misregistration(p) : null),
+    holder: (id) => abilityHolder(id),
     alive: players.filter(p => !p.isDead).length,
+    day: dayMatch ? Number(dayMatch[1]) : null,
+    timesNominated: (p) => allNominations.filter(n => nomSeatName(n, n.nomineeSeat) === nameOf(p)).length,
+    timesNominating: (p) => allNominations.filter(n => nomSeatName(n, n.nominatorSeat) === nameOf(p)).length,
   };
   if (!ctx.nominator && !ctx.nominee) return [];
-  return _nomAlerts()
-    .filter(rule => {
-      if (rule.side === 'nominator' && !ctx.nominator) return false;
-      if (rule.side === 'nominee' && !ctx.nominee) return false;
-      if (rule.side === 'pair' && !(ctx.nominator && ctx.nominee)) return false;
-      try { return rule.test(ctx); } catch { return false; }
-    })
-    .map(rule => ({ id: rule.id, level: rule.level, role: rule.role, label: rule.label }));
+  const out = [];
+  for (const rule of _nomAlerts()) {
+    if (rule.side === 'nominator' && !ctx.nominator) continue;
+    if (rule.side === 'nominee' && !ctx.nominee) continue;
+    if (rule.side === 'pair' && !(ctx.nominator && ctx.nominee)) continue;
+    let hit, label, holder;
+    try {
+      hit = rule.test(ctx);
+      if (!hit) continue;
+      label = typeof rule.label === 'function' ? rule.label(ctx) : rule.label;
+      holder = rule.holder?.(ctx) ?? null;
+    } catch { continue; }
+    const notes = typeof hit === 'string' ? [hit] : [];
+    // The ability may not work: say so rather than hide the alert — the
+    // reminder may be stale, and the storyteller has the final say.
+    const droison = droisonReasons(holder);
+    if (droison.length) notes.push('drunk/poisoned?');
+    out.push({
+      id: rule.id, level: rule.level, role: rule.role, label,
+      note: notes.join(' · '),
+      noteTitle: droison.length ? `${dn(nameOf(holder))}: ${droison.join(', ')}` : '',
+    });
+  }
+  return out;
 }
+
+// The role id of the ability a player has: their token, unless the token is
+// what a Drunk / Marionette / Lunatic thinks they are ("Is the Drunk").
+function abilityOf(p) {
+  if (!p) return null;
+  const token = bundledRoleOf(p), truth = trueRoleOf(p);
+  return truth && VIA_IS.has(truth) && truth !== token ? truth : token;
+}
+
+// The living player who has this ability, or null — abilities of the dead
+// don't count, apart from the Banshee's, handled in the nomination limits.
+const abilityHolder = (id) => (currentState?.players ?? []).find(p => !p.isDead && abilityOf(p) === id) ?? null;
 
 // ── Next-nomination setup in the middle of the wheel ──
 // While Nominate is on and nothing is happening yet (no open nomination, no
@@ -4821,7 +4875,9 @@ function renderNomAlerts() {
     const roleName = _roles().find(r => r.id === a.role)?.name ?? a.role;
     return `<div class="nom-alert nom-alert-${a.level}" title="${esc(roleName)}">`
       + (icon ? `<img class="nom-alert-icon" src="${esc(icon)}" alt="${esc(roleName)}" />` : '')
-      + `<span class="nom-alert-label">${esc(a.label)}</span></div>`;
+      + `<span class="nom-alert-label">${esc(a.label)}</span>`
+      + (a.note ? `<span class="nom-alert-note"${a.noteTitle ? ` title="${esc(a.noteTitle)}"` : ''}>${esc(a.note)}</span>` : '')
+      + `</div>`;
   }).join('');
   box.style.display = alerts.length ? '' : 'none';
   // The alerts take over the middle of the circle while they're up.
@@ -6603,12 +6659,13 @@ const tokensHtml = (tokens) => tokens.map(t => `<span class="${signalTokenCls(t)
 
 // Who may register as something else, and as what. Recluse/Spy by
 // character; the Lycanthrope's Faux Paw player and Legion by reminder/role.
+// The as* flags say what they may register as, for checks like the Virgin's.
 function misregistration(p) {
   const id = trueRoleOf(p);
-  if (id === 'recluse') return { text: '(Recluse) may register as evil & as a Minion or Demon', demon: true };
-  if (id === 'spy') return { text: '(Spy) may register as good & as a Townsfolk or Outsider', demon: false };
-  if (id === 'legion') return { text: '(Legion) registers as a Minion too', demon: false };
-  if ((p.reminders ?? []).some(r => isLiveReminder(r, 'lycanthrope', 'Faux Paw'))) return { text: 'registers as evil (Faux Paw)', demon: false };
+  if (id === 'recluse') return { role: 'Recluse', text: '(Recluse) may register as evil & as a Minion or Demon', demon: true, asEvil: true, asMinion: true, asDemon: true };
+  if (id === 'spy') return { role: 'Spy', text: '(Spy) may register as good & as a Townsfolk or Outsider', demon: false, asGood: true, asTownsfolk: true };
+  if (id === 'legion') return { role: 'Legion', text: '(Legion) registers as a Minion too', demon: false, asMinion: true };
+  if ((p.reminders ?? []).some(r => isLiveReminder(r, 'lycanthrope', 'Faux Paw'))) return { role: 'Faux Paw', text: 'registers as evil (Faux Paw)', demon: false, asEvil: true };
   return null;
 }
 
@@ -6645,6 +6702,39 @@ function livingNeighbours(player) {
   return [...new Set([step(-1), step(1)].filter(Boolean))];
 }
 
+const soberReminder = (p) => liveRemindersOn(p).find(r => /sober/i.test(r.name));
+
+// Why this player's ability may not work right now, from the grimoire: drunk /
+// poisoned reminders, abilities taken away, the Minstrel's and Xaan's effects.
+// Empty when they have a sober & healthy reminder. Shared by the night steps
+// and the nomination alerts.
+function droisonReasons(player) {
+  if (!player || soberReminder(player)) return [];
+  const out = [];
+  const rems = liveRemindersOn(player);
+  const everyone = currentState?.players ?? [];
+  // Drunk / poisoned reminders on them in the grimoire, whatever caused them.
+  for (const r of rems.filter(r => /drunk|poison/i.test(r.name) && !/everyone/i.test(r.name))) {
+    out.push(`${r.name} (${reminderSourceName(r)})`);
+  }
+  // Abilities taken away by someone else (the Preacher's "No Ability" on a Minion).
+  for (const r of rems.filter(r => /no ability/i.test(r.name) && ![bundledRoleOf(player), trueRoleOf(player)].includes(_normalizeId(r.role ?? '')))) {
+    out.push(`No ability (${reminderSourceName(r)})`);
+  }
+  // The Minstrel's "everyone is drunk" (Travellers excepted).
+  const minstrel = everyone.flatMap(liveRemindersOn).find(r => /everyone is drunk/i.test(r.name));
+  if (minstrel && teamOfPlayer(player) !== 'traveller' && trueRoleOf(player) !== 'minstrel') out.push(`${reminderSourceName(minstrel)}: everyone is drunk`);
+  // The Xaan's night: all Townsfolk are poisoned.
+  if (teamOfPlayer(player) === 'townsfolk' && everyone.some(p => (p.reminders ?? []).some(r => isLiveReminder(r, 'xaan', 'X')))) {
+    out.push("Xaan's night: Townsfolk are poisoned");
+  }
+  // Might not be who they think they are.
+  for (const r of rems.filter(r => ['drunk', 'marionette', 'lunatic'].includes(_normalizeId(r.role ?? '')) && !/drunk|poison/i.test(r.name))) {
+    out.push(`${reminderSourceName(r)} reminder (${r.name})`);
+  }
+  return out;
+}
+
 // [{ level: 'must' | 'may' | 'note', text }]
 function stepWarnings(c) {
   const { player, night, action, spec, step, bundledId } = c;
@@ -6662,36 +6752,18 @@ function stepWarnings(c) {
   const abilityInfo = tellsInfo && (action.tell ?? [])[0] !== 'you';
   const effect = tellsInfo ? 'info may be false' : 'ability may not work';
   const everyone = currentState?.players ?? [];
-  const isTraveller = teamOfPlayer(player) === 'traveller';
 
-  const rems = liveRemindersOn(player);
-  const sober = rems.find(r => /sober/i.test(r.name));
+  const sober = soberReminder(player);
   if (sober) {
     out.push({ level: 'note', text: `${sober.name} (${reminderSourceName(sober)}) — sober & healthy, gets true info` });
   } else {
     if (abilityInfo && teamOfPlayer(player) === 'townsfolk' && playersOfTeam('demon').some(p => trueRoleOf(p) === 'vortox')) {
       out.push({ level: 'must', text: 'Vortox in play — their info must be false' });
     }
-    // Drunk / poisoned reminders on them in the grimoire, whatever caused them.
-    const sources = rems.filter(r => /drunk|poison/i.test(r.name) && !/everyone/i.test(r.name));
-    for (const r of sources) out.push({ level: 'may', text: `${r.name} (${reminderSourceName(r)}) — ${effect}` });
-    // Abilities taken away by someone else (the Preacher's "No Ability" on a Minion).
-    for (const r of rems.filter(r => /no ability/i.test(r.name) && ![bundledRoleOf(player), trueRoleOf(player)].includes(_normalizeId(r.role ?? '')))) {
-      out.push({ level: 'may', text: `No ability (${reminderSourceName(r)}) — ${effect}` });
-    }
-    // The Minstrel's "everyone is drunk" (Travellers excepted).
-    const minstrel = everyone.flatMap(liveRemindersOn).find(r => /everyone is drunk/i.test(r.name));
-    if (minstrel && !isTraveller && trueRoleOf(player) !== 'minstrel') out.push({ level: 'may', text: `${reminderSourceName(minstrel)}: everyone is drunk — ${effect}` });
-    // The Xaan's night: all Townsfolk are poisoned.
-    if (teamOfPlayer(player) === 'townsfolk' && everyone.some(p => (p.reminders ?? []).some(r => isLiveReminder(r, 'xaan', 'X')))) {
-      out.push({ level: 'may', text: `Xaan's night — Townsfolk are poisoned, ${effect}` });
-    }
-    // Might not be who they think they are.
-    for (const r of rems.filter(r => ['drunk', 'marionette', 'lunatic'].includes(_normalizeId(r.role ?? '')) && !/drunk|poison/i.test(r.name))) {
-      out.push({ level: 'may', text: `${reminderSourceName(r)} reminder (${r.name}) — ${effect}` });
-    }
+    const reasons = droisonReasons(player);
+    for (const why of reasons) out.push({ level: 'may', text: `${why} — ${effect}` });
     // Poisoned / made drunk by one of tonight's steps (not yet in the grimoire).
-    const bySteps = !sources.length && droisonedBySteps(player, night);
+    const bySteps = !reasons.length && droisonedBySteps(player, night);
     if (bySteps) out.push({ level: 'may', text: `Chosen by the ${bySteps} tonight — ${effect}` });
   }
 

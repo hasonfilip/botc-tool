@@ -498,6 +498,13 @@ section.collapsed h2 { margin-bottom: 0; }
   flex-shrink: 0;
 }
 
+.nom-alert-note {
+  font-size: 11px;
+  font-weight: 500;
+  font-style: italic;
+  opacity: 0.8;
+}
+
 .nom-alert-danger {
   background: rgba(58,24,22,0.94);
   border-color: rgba(255,107,97,0.55);
