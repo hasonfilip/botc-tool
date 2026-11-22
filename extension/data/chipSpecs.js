@@ -448,7 +448,9 @@ const BOTC_CHIP_SPECS = {
     confirmedLabel: 'drunk by Sweetheart',
   },
   plaguedoctor: {
-    inputs: [],
+    inputs: [
+      { type: 'role', label: 'Minion ability the Storyteller gained', filter: 'minion' },
+    ],
   },
   klutz: {
     inputs: [
