@@ -191,7 +191,10 @@ const BOTC_NIGHT_ACTIONS = {
 
   // ── Demons ──
   imp:          { wake: 'choice', reminders: { i0: 'Dead' }, fields: { i0: 'pick' } },
-  zombuul:      { wake: 'choice', reminders: { i0: 'Dead' }, when: 'No one died today', fields: { i0: 'pick' } },
+  // Shown dead in the grimoire after surviving its first death, but still
+  // wakes (a real second death ends the game). Its Dead reminder marks that
+  // fake death, on the Zombuul itself, so it isn't tied to the pick.
+  zombuul:      { wake: 'choice', dead: true, when: 'No one died today', fields: { i0: 'pick' } },
   pukka:        { wake: 'choice', fields: { i0: 'pick' } },
   shabaloth:    { wake: 'choice', pick: ['distinct'], fields: { i0: 'pick', i1: 'pick' } },
   po:           { wake: 'ability', reminders: { i0: 'Dead' }, fields: { i0: 'pick' } },

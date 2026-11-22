@@ -6268,7 +6268,11 @@ function buildNightSteps(night) {
     const picks = (c.spec?.inputs ?? []).map((s, i) => [s, i]).filter(([, i]) => fieldUse(c.action, i) === 'pick');
     // Only a reply finishes a step by itself — reminders in the grimoire may be
     // misplaced or stale, so a pick read from them is a suggestion to confirm.
-    const picked = picks.length && picks.every(([s, i]) => !isRequiredInput(s) || step.src[`i${i}`] === 'reply');
+    // At least one pick has to come from a reply: with only optional picks (the
+    // Zombuul's, which may not kill) "every required pick" is true with no
+    // reply at all, and the step would finish the moment it's built.
+    const fromReply = (i) => step.src[`i${i}`] === 'reply';
+    const picked = picks.some(([, i]) => fromReply(i)) && picks.every(([s, i]) => !isRequiredInput(s) || fromReply(i));
     const nothingElse = !stepAnswer(c).tokens.length && !(c.action.notify ?? []).some(n => notifyApplies(n, c));
     if (!step.done && ((picked && nothingElse && !pickProblems(c).length) || step.passed)) {
       step.done = true;
