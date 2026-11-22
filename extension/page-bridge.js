@@ -859,6 +859,31 @@
         debouncedSend();
       } catch { /* page not ready or store unavailable */ }
     }
+    if (event.data?.type === 'SYNC_REMINDER') {
+      // Puts one role's reminder (e.g. the Poisoner's "Poisoned") on exactly
+      // the given seats: added where missing, removed everywhere else — the
+      // same addReminder/removeReminder commits the reminder picker makes, so
+      // botc.app syncs them to everyone itself.
+      try {
+        const store = getStore();
+        if (!store) return;
+        const { role, name, seats } = event.data;
+        const norm = (id) => String(id ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const want = new Set(seats);
+        (store.state.players?.players ?? []).forEach((player, seat) => {
+          const has = (player.reminders ?? []).filter(r => norm(r.role) === norm(role) && r.name === name);
+          if (want.has(seat)) {
+            if (!has.length) {
+              const id = String(Date.now()).substring(6, 10) + Math.round(Math.random() * 1e3);
+              store.commit('players/addReminder', { user: player, reminder: { id, role, name, flags: [] } });
+            }
+          } else {
+            has.forEach(reminder => store.commit('players/removeReminder', { user: player, reminder }));
+          }
+        });
+        debouncedSend();
+      } catch { /* page not ready or store unavailable */ }
+    }
     if (event.data?.type === 'CLEAR_GRIMOIRE') {
       try {
         const store = getStore();
