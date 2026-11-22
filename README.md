@@ -96,8 +96,6 @@ botc.app page
 |---|---|
 | `extension/` | The extension itself — the folder you load |
 | `extension/data/` | Bundled data: roles and icons, ability chip specs, night order, night-sheet instructions, night actions, night step hints, nomination alerts, difficulty ratings |
-| `night-order-*.txt` | Source lists that `extension/data/nightOrder.js` was generated from |
-| `jinxes.json` | Jinx data, not used by the extension yet |
 
 ## Privacy
 

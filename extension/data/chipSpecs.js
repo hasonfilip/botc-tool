@@ -226,12 +226,6 @@ const BOTC_CHIP_SPECS = {
     ],
     confirmedLabel: 'chosen by Huntsman',
   },
-  bounty_hunter: {
-    inputs: [
-      { type: 'player', label: 'Known evil' },
-    ],
-    confirmedLabel: 'known evil',
-  },
   bountyhunter: {
     inputs: [
       { type: 'player', label: 'Known evil' },

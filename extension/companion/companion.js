@@ -13,7 +13,6 @@ if (typeof chrome === 'undefined' || !chrome.runtime) {
 // Full sorted timeline kept locally so we can re-render intervals
 let fullTimeline = [];
 let currentState = null;
-let revealedRoles = {}; // playerId → roleId, populated from end entry
 let allNominations = [];
 // The nomination currently on the floor, before its closing frame lands. Kept
 // apart from allNominations so it can't reach the vote maths half-built — the
@@ -40,15 +39,6 @@ let stMessage = [];
 let stRecipientIds = new Set();
 let viewRole = 'player'; // 'storyteller' | 'player' — snaps to amIStoryteller() whenever it changes; manual toggle overrides until then
 let detectedRole = null; // last amIStoryteller() result seen, null until the first state with a known user id
-
-const PREDEFINED_TAGS = [
-  { id: 'first-night-info',     label: 'first night' },
-  { id: 'no-first-night-info',  label: 'isn\'t first night' },
-  { id: 'wakes',                label: 'wakes at night' },
-  { id: 'no-wake',              label: 'doesn\'t wake' },
-  { id: 'outsider',             label: 'outsider' },
-  { id: 'not-outsider',         label: 'not an outsider' },
-];
 
 // Chips that tint their own cell. Default label is editable per chip.
 const CELL_COLORS = {
@@ -195,11 +185,6 @@ function playerName(playerId) {
   return p?.name ?? playerId;
 }
 
-function roleNameFromId(roleId, state) {
-  const role = state?.roles?.find(r => r.id === roleId);
-  return role?.name ?? roleId;
-}
-
 // Roles arriving via the localStorage fallback may lack name/team — fill
 // them in from the bundled role data by id
 function enrichRoles(roles) {
@@ -216,9 +201,12 @@ function enrichRoles(roles) {
 // table. Synced values are marked (roleAuto/alignAuto) so that clearing them in
 // the grimoire clears them here too — manual assignments (popover, alignment
 // cycle) only stick for players the grimoire says nothing about.
+// A player's key in the notes table and playerMeta.
+const notesNameOf = (p) => p.name ?? `Seat ${p.seat + 1}`;
+
 function syncPlayerMetaFromGrimoire() {
   for (const player of currentState?.players ?? []) {
-    const name = player.name ?? `Seat ${player.seat + 1}`;
+    const name = notesNameOf(player);
     let meta = playerMeta[name];
 
     if (player.roleId) {
@@ -384,10 +372,7 @@ function tlKey(ev) {
 function addTimelineEvents(events) {
   const existing = new Set(fullTimeline.map(tlKey));
   for (const ev of events) {
-    if (ev.type === 'roles_revealed') {
-      for (const p of ev.roles) revealedRoles[p.id] = p.role;
-      continue;
-    }
+    if (ev.type === 'roles_revealed') continue;
     if (!existing.has(tlKey(ev))) {
       fullTimeline.push(ev);
       existing.add(tlKey(ev));
@@ -503,6 +488,11 @@ function isExecutionDeath(ev) {
   return false;
 }
 
+// Did this player spend their ghost vote on this nomination? The ghostvote
+// event isn't tied to a nomination, so it's matched by time (within 2 min).
+const spentGhostVoteOn = (nom, name) =>
+  fullTimeline.some(ev => ev.type === 'ghostvote' && ev.name === name && Math.abs(ev.ts - nom.ts) < 120000);
+
 function renderNominations() {
   const list = document.getElementById('nominations-log');
   const savedTop = list.scrollTop;
@@ -533,8 +523,7 @@ function renderNominations() {
     const yesCount = yesNames.length;
     const needed = nom.highscore ?? '?';
 
-    const isGhostVoter = (name) =>
-      fullTimeline.some(ev => ev.type === 'ghostvote' && ev.name === name && Math.abs(ev.ts - nom.ts) < 120000);
+    const isGhostVoter = (name) => spentGhostVoteOn(nom, name);
 
     const executed = typeof needed === 'number' && yesCount >= needed;
     const li = document.createElement('li');
@@ -573,7 +562,12 @@ function playerTeamByName(name) {
   // players the grimoire says nothing about.
   const p = currentState?.players?.find(p => p.name === name);
   if (p?.team) return p.team;
-  const meta = playerMeta[name] ?? {};
+  return metaTeam(playerMeta[name]);
+}
+
+// The team a notes row is coloured as: a set alignment beats the assigned
+// role's team (evil → demon colours, good → townsfolk).
+function metaTeam(meta = {}) {
   return meta.alignment === 'evil' ? 'demon'
        : meta.alignment === 'good' ? 'townsfolk'
        : meta.roleTeam ?? '';
@@ -806,7 +800,7 @@ function buildPlayerEvents(name) {
     const count = `${nom.yesSeats.length}/${needed}`;
     const raisedHand = yesSeats.has(playerSeat);
     const wasTracked = trackedSeats.has(playerSeat);
-    const usedGhostVote = raisedHand && fullTimeline.some(ev => ev.type === 'ghostvote' && ev.name === name && Math.abs(ev.ts - nom.ts) < 120000);
+    const usedGhostVote = raisedHand && spentGhostVoteOn(nom, name);
     const ghostSuffix = usedGhostVote ? ` ${ICON_SVG.logGhost}` : '';
 
     const isNominator = nominator === name;
@@ -925,7 +919,8 @@ function closePlayerTimeline() {
   document.getElementById('player-timeline-panel').classList.remove('open');
   const overlay = document.getElementById('player-timeline-overlay');
   overlay.classList.remove('visible');
-  overlay.addEventListener('transitionend', () => overlay.classList.remove('open'), { once: true });
+  // Reopened before the fade ended: leave the new one alone.
+  overlay.addEventListener('transitionend', () => { if (openPlayerTimelineName === null) overlay.classList.remove('open'); }, { once: true });
 }
 document.getElementById('ptl-close').addEventListener('click', closePlayerTimeline);
 document.getElementById('player-timeline-overlay').addEventListener('click', closePlayerTimeline);
@@ -1008,39 +1003,67 @@ function assignNoteRowToPlayer(owner, player) {
   saveExtraNoteRows(extraNoteRows().filter(o => o !== owner));
 }
 
-// Small searchable list popover: type to filter, arrows to move, Enter to pick.
-// items: [{ label, cls?, iconUrl?, sub?, value }]
+// Places a popover under its anchor, or above it when it doesn't fit below
+// (and there's more room above), clamped to the viewport edges.
+function placePopover(pop, anchorEl, gap = 2) {
+  const rect = anchorEl.getBoundingClientRect();
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const below = spaceBelow > pop.offsetHeight + 8 || spaceBelow > rect.top;
+  pop.style.top = below
+    ? `${rect.bottom + window.scrollY + gap}px`
+    : `${Math.max(window.scrollY + 4, rect.top + window.scrollY - pop.offsetHeight - gap)}px`;
+  pop.style.left = `${Math.max(8, Math.min(rect.left + window.scrollX, window.innerWidth - pop.offsetWidth - 8))}px`;
+}
+
+// The one searchable list popover behind every picker (notes rows, roles,
+// signal tokens): type to filter, arrows to move, Enter to pick, Escape or an
+// outside click to close. Clicking the anchor again closes it.
+// items: [{ label, value, cls?, iconUrl?, sub?, subCls?, prefix?, search? }]
+//   iconUrl present but empty → a blank icon slot, so names stay aligned;
+//   prefix is trusted HTML before the icon; search is extra filter text.
+// opts: placeholder, allowCustom (typed text can be picked: onPick({ custom })),
+//   activeValue (highlighted), clearLabel + onClear (a button under the list).
 let _listPicker = null;
-// With allowCustom, whatever is typed can also be picked as-is: onPick({ custom: text }).
-function openListPicker(anchorEl, items, onPick, placeholder = 'Search…', allowCustom = false) {
+let _listPickerAnchor = null;
+let _listPickerClosedOnAnchor = false;
+
+function closeListPicker() {
+  if (!_listPicker || _listPicker.style.display === 'none') return;
+  _listPicker.style.display = 'none';
+  _listPickerAnchor?.setAttribute('aria-expanded', 'false');
+}
+
+function openListPicker(anchorEl, items, onPick, opts = {}) {
+  const { placeholder = 'Search…', allowCustom = false, activeValue, clearLabel, onClear } = opts;
   if (!_listPicker) {
     _listPicker = document.createElement('div');
-    _listPicker.id = 'notes-list-picker';
+    _listPicker.id = 'list-picker';
     _listPicker.className = 'mrp-popover';
-    _listPicker.innerHTML = '<input class="mrp-search" type="text" /><div class="mrp-list"></div>';
+    _listPicker.innerHTML = '<input class="mrp-search" type="text" /><div class="mrp-list" role="listbox"></div><button class="mrp-clear"></button>';
     document.body.appendChild(_listPicker);
     const search = _listPicker.querySelector('.mrp-search');
     const list = _listPicker.querySelector('.mrp-list');
-    const close = () => { _listPicker.style.display = 'none'; };
     const pick = (el) => {
       if (el?.dataset.custom) {
         const text = search.value.trim();
-        close();
+        closeListPicker();
         if (text) _listPicker._onPick({ custom: text });
         return;
       }
       const item = _listPicker._items[Number(el?.dataset.i)];
       if (!item) return;
-      close();
+      closeListPicker();
       _listPicker._onPick(item.value);
     };
     _listPicker._render = () => {
       const q = search.value.trim().toLowerCase();
       list.innerHTML = _listPicker._items.map((it, i) => {
-        if (q && !it.label.toLowerCase().includes(q)) return '';
-        const icon = it.iconUrl ? `<img class="tp-role-icon" src="${esc(it.iconUrl)}" />` : '';
-        const sub = it.sub ? `<span class="mrp-sub">${esc(it.sub)}</span>` : '';
-        return `<div class="mrp-item ${it.cls ?? ''}" data-i="${i}" tabindex="-1">${icon}<span class="mrp-name">${esc(it.label)}</span>${sub}</div>`;
+        if (q && !`${it.label} ${it.search ?? ''}`.toLowerCase().includes(q)) return '';
+        const icon = it.iconUrl ? `<img class="tp-role-icon" src="${esc(it.iconUrl)}" alt="" />`
+          : 'iconUrl' in it ? '<span class="mrp-icon-blank"></span>' : '';
+        const sub = it.sub ? `<span class="mrp-sub ${it.subCls ?? ''}">${esc(it.sub)}</span>` : '';
+        const active = it.value === _listPicker._activeValue ? ' active' : '';
+        return `<div class="mrp-item ${it.cls ?? ''}${active}" data-i="${i}" role="option" tabindex="-1">${it.prefix ?? ''}${icon}<span class="mrp-name">${esc(it.label)}</span>${sub}</div>`;
       }).join('');
       // Listed after the matches, so Enter still takes the first role that fits.
       if (_listPicker._allowCustom && q) {
@@ -1049,54 +1072,79 @@ function openListPicker(anchorEl, items, onPick, placeholder = 'Search…', allo
       if (!list.innerHTML) list.innerHTML = '<div class="mrp-empty">Nothing matches.</div>';
     };
     search.addEventListener('input', _listPicker._render);
-    list.addEventListener('click', (e) => pick(e.target.closest('.mrp-item')));
+    // mousedown, not click: picking mustn't blur the search box first.
+    list.addEventListener('mousedown', (e) => {
+      const el = e.target.closest('.mrp-item');
+      if (el) { e.preventDefault(); pick(el); }
+    });
+    _listPicker.querySelector('.mrp-clear').addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const onClearFn = _listPicker._onClear;
+      closeListPicker();
+      onClearFn?.();
+    });
     _listPicker.addEventListener('keydown', (e) => {
       const els = [...list.querySelectorAll('.mrp-item')];
       const idx = els.indexOf(document.activeElement);
       if (e.key === 'ArrowDown') { e.preventDefault(); (els[idx + 1] ?? els[els.length - 1])?.focus(); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); if (idx > 0) els[idx - 1].focus(); else search.focus(); }
       else if (e.key === 'Enter') { e.preventDefault(); pick(idx >= 0 ? els[idx] : els[0]); }
-      else if (e.key === 'Escape') { e.stopPropagation(); close(); }
+      else if (e.key === 'Escape') { e.stopPropagation(); closeListPicker(); }
     });
     document.addEventListener('mousedown', (e) => {
-      if (_listPicker.style.display === 'flex' && !_listPicker.contains(e.target)) close();
+      _listPickerClosedOnAnchor = false;
+      if (_listPicker.style.display === 'flex' && !_listPicker.contains(e.target)) {
+        _listPickerClosedOnAnchor = !!_listPickerAnchor?.contains(e.target);
+        closeListPicker();
+      }
     });
   }
   const pop = _listPicker;
+  // This press already closed the picker on its own anchor: that's the toggle-off.
+  if (_listPickerClosedOnAnchor && anchorEl === _listPickerAnchor) { _listPickerClosedOnAnchor = false; return; }
+  closeListPicker();
+  _listPickerAnchor = anchorEl;
+  anchorEl.setAttribute('aria-expanded', 'true');
   pop._items = items;
   pop._onPick = onPick;
   pop._allowCustom = allowCustom;
+  pop._activeValue = activeValue;
+  pop._onClear = onClear;
+  const clearBtn = pop.querySelector('.mrp-clear');
+  clearBtn.hidden = !clearLabel;
+  clearBtn.textContent = clearLabel ?? '';
   const search = pop.querySelector('.mrp-search');
   search.value = '';
   search.placeholder = placeholder;
   pop._render();
   pop.style.display = 'flex';
-  const rect = anchorEl.getBoundingClientRect();
-  const below = window.innerHeight - rect.bottom > pop.offsetHeight + 8 || window.innerHeight - rect.bottom > rect.top;
-  pop.style.top = below
-    ? `${rect.bottom + window.scrollY + 2}px`
-    : `${Math.max(window.scrollY + 4, rect.top + window.scrollY - pop.offsetHeight - 2)}px`;
-  pop.style.left = `${Math.max(8, Math.min(rect.left + window.scrollX, window.innerWidth - pop.offsetWidth - 8))}px`;
+  placePopover(pop, anchorEl);
+  pop.querySelector('.mrp-item.active')?.scrollIntoView({ block: 'nearest' });
   search.focus();
 }
+
+// Role items for a picker: the script's roles with their icon and team colour.
+const roleListItems = () => (currentState?.roles ?? []).map(r => ({
+  label: r.name ?? r.id, value: r.id, cls: `role-name ${r.team ?? ''}`, iconUrl: _iconUrl(r) ?? '',
+}));
 
 function openAddNoteRowPicker(anchorEl) {
   const have = new Set(extraNoteRows());
   const pool = currentState?.roles?.length ? currentState.roles : _roles();
   const items = pool.filter(r => !have.has(`@role:${r.id}`))
     .map(r => ({ label: r.name ?? r.id, cls: `role-name ${r.team ?? ''}`, iconUrl: _iconUrl(r), value: `@role:${r.id}` }));
-  openListPicker(anchorEl, items, addExtraNoteRow, 'Pick a role or type your own label…', true);
+  openListPicker(anchorEl, items, addExtraNoteRow, { placeholder: 'Pick a role or type your own label…', allowCustom: true });
 }
 
 function openAssignNoteRowPicker(owner, anchorEl) {
   const roleId = rowRoleId(owner);
   const players = (currentState?.players ?? []).map(p => {
-    const name = p.name ?? `Seat ${p.seat + 1}`;
+    const name = notesNameOf(p);
     const meta = playerMeta[name] ?? {};
     return { label: name, sub: meta.roleName ?? '', value: name, match: !!roleId && meta.roleId === roleId };
   });
   players.sort((a, b) => b.match - a.match); // whoever already carries this role comes first
-  openListPicker(anchorEl, players, (name) => assignNoteRowToPlayer(owner, name), 'Who is it?');
+  openListPicker(anchorEl, players, (name) => assignNoteRowToPlayer(owner, name), { placeholder: 'Who is it?' });
 }
 
 function getPhaseColumns() {
@@ -1233,11 +1281,6 @@ function chipBodyHtml(chip, player, phase, idx) {
       return `<span class="token-chip confirmed-chip" title="${esc(chip.label ?? '')}" ${attrs}>${icon}✓</span>`;
     }
     return '';
-}
-
-function chipsHtml(player, phase) {
-  const chips = cellTokens[`${player}|${phase}`] ?? [];
-  return chips.map((chip, idx) => chipHtml(chip, player, phase, idx)).join('');
 }
 
 // Renders all chips for a cell spanning one or more phases (merged rounds), but
@@ -1450,9 +1493,9 @@ function getPopover() {
         <button class="tp-tag-btn" data-tag-id="survived"  data-tag-icon="🛡️" data-tag-name="Survived"          title="Survived execution">${ICON_SVG.logShield}</button>
       </div>
       <div class="tp-color-tags">
-        <button class="tp-color-btn cc-good"      data-color-id="good"      title="Good ping (blue)">${ICON_SVG.thumbUp}</button>
-        <button class="tp-color-btn cc-evil"      data-color-id="evil"      title="Evil ping (red)">${ICON_SVG.thumbDown}</button>
-        <button class="tp-color-btn cc-droisoned" data-color-id="droisoned" title="Drunk or poisoned (sick green)">${ICON_SVG.droplet}</button>
+        <button class="tp-color-btn cc-good"      data-color-id="good"      title="${CELL_COLORS.good.title}">${ICON_SVG.thumbUp}</button>
+        <button class="tp-color-btn cc-evil"      data-color-id="evil"      title="${CELL_COLORS.evil.title}">${ICON_SVG.thumbDown}</button>
+        <button class="tp-color-btn cc-droisoned" data-color-id="droisoned" title="${CELL_COLORS.droisoned.title}">${ICON_SVG.droplet}</button>
       </div>
       <button class="tp-x-btn" type="button" title="Remove / cancel" aria-label="Remove">${ICON_SVG.trash}</button>
     </div>
@@ -1621,8 +1664,14 @@ function getPopover() {
       closePopover();
       // A click elsewhere only dismisses — except on another notes cell, which
       // opens straight away so hopping between cells takes one click, not two.
+      // The swallower lives only until this press ends, so a drag (no click)
+      // can't leave it behind to eat some later, unrelated click.
       if (!e.target.closest?.('.notes-scroll .notes-cell')) {
-        document.addEventListener('click', e => e.stopPropagation(), { capture: true, once: true });
+        const swallow = ev => ev.stopPropagation();
+        document.addEventListener('click', swallow, { capture: true, once: true });
+        document.addEventListener('mouseup', () => {
+          setTimeout(() => document.removeEventListener('click', swallow, { capture: true }), 0);
+        }, { capture: true, once: true });
       }
     }
   });
@@ -2009,13 +2058,7 @@ function positionPopover() {
   const pop = _popover;
   const anchor = _popoverAnchor;
   if (!pop || pop.style.display === 'none' || !anchor?.isConnected) return;
-  const rect = anchor.getBoundingClientRect();
-  const spaceBelow = window.innerHeight - rect.bottom;
-  const fitsBelow = spaceBelow > pop.offsetHeight + 8 || spaceBelow > rect.top;
-  pop.style.top = fitsBelow
-    ? `${rect.bottom + window.scrollY + 2}px`
-    : `${Math.max(window.scrollY + 4, rect.top + window.scrollY - pop.offsetHeight - 2)}px`;
-  pop.style.left = `${Math.max(8, Math.min(rect.left + window.scrollX, window.innerWidth - pop.offsetWidth - 8))}px`;
+  placePopover(pop, anchor);
 }
 
 function openPopover(player, phase, anchorEl, chipIdx = null) {
@@ -2059,21 +2102,16 @@ function savePlayerMeta(name) {
 }
 
 function metaNameColor(name) {
-  const meta = playerMeta[name] ?? {};
-  if (meta.alignment === 'evil') return 'var(--demon)';
-  if (meta.alignment === 'good') return 'var(--townsfolk)';
-  if (meta.roleTeam === 'demon' || meta.roleTeam === 'minion') return 'var(--demon)';
-  if (meta.roleTeam === 'townsfolk') return 'var(--townsfolk)';
-  if (meta.roleTeam === 'outsider') return 'var(--outsider)';
-  if (meta.roleTeam === 'traveller') return 'var(--traveller)';
+  const team = metaTeam(playerMeta[name]);
+  if (team === 'demon' || team === 'minion') return 'var(--demon)';
+  if (team === 'townsfolk') return 'var(--townsfolk)';
+  if (team === 'outsider') return 'var(--outsider)';
+  if (team === 'traveller') return 'var(--traveller)';
   return '';
 }
 
 function metaRowTint(name) {
-  const meta = playerMeta[name] ?? {};
-  const team = meta.alignment === 'evil' ? 'demon'
-             : meta.alignment === 'good' ? 'townsfolk'
-             : meta.roleTeam ?? '';
+  const team = metaTeam(playerMeta[name]);
   if (team === 'demon' || team === 'minion') return 'rgba(220,50,50,0.06)';
   if (team === 'townsfolk') return 'rgba(99,179,237,0.06)';
   if (team === 'outsider') return 'rgba(129,140,248,0.06)';
@@ -2081,350 +2119,58 @@ function metaRowTint(name) {
   return '';
 }
 
-// ── Player meta popover ───────────────────────────────────────────────────
-
-let _rolePop = null;
-let _roleTarget = null;
-
-function getRolePopover() {
-  if (_rolePop) return _rolePop;
-  _rolePop = document.createElement('div');
-  _rolePop.id = 'meta-role-popover';
-  _rolePop.innerHTML = `
-    <input class="mrp-search" type="text" placeholder="Search…" />
-    <div class="mrp-list"></div>
-    <button class="mrp-clear">clear role</button>
-  `;
-  document.body.appendChild(_rolePop);
-
-  const search = _rolePop.querySelector('.mrp-search');
-  const list = _rolePop.querySelector('.mrp-list');
-  const clearBtn = _rolePop.querySelector('.mrp-clear');
-
-  const closePopover = () => {
-    _rolePop.style.display = 'none';
-    _roleTarget = null;
-  };
-
-  const selectRole = (roleId) => {
-    if (!_roleTarget) return;
-    const role = (currentState?.roles ?? []).find(r => r.id === roleId);
-    if (!role) return;
-    playerMeta[_roleTarget] = { ...(playerMeta[_roleTarget] ?? {}), roleId: role.id, roleName: role.name, roleTeam: role.team ?? '', roleIconUrl: _iconUrl(role), roleAuto: false };
-    savePlayerMeta(_roleTarget);
-    refreshMetaCells(_roleTarget, { recolorPage: true });
-    closePopover();
-  };
-
-  const renderList = (filter) => {
-    const roles = (currentState?.roles ?? []).filter(r =>
-      !filter || r.name.toLowerCase().includes(filter.toLowerCase()));
-    list.innerHTML = roles.map(r => {
-      const icon = _iconUrl(r) ? `<img class="tp-role-icon" src="${esc(_iconUrl(r))}" />` : '';
-      const active = playerMeta[_roleTarget]?.roleId === r.id ? ' active' : '';
-      return `<div class="mrp-item role-name ${r.team ?? ''}${active}" data-id="${esc(r.id)}" tabindex="-1">${icon}${esc(r.name)}</div>`;
-    }).join('');
-    list.querySelectorAll('.mrp-item').forEach(item => {
-      item.addEventListener('mousedown', (e) => { e.preventDefault(); selectRole(item.dataset.id); });
-    });
-  };
-
-  _rolePop._renderList = renderList;
-
-  search.addEventListener('input', () => renderList(search.value));
-
-  search.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      list.querySelector('.mrp-item')?.focus();
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      const first = list.querySelector('.mrp-item');
-      if (first) selectRole(first.dataset.id);
-    } else if (e.key === 'Escape') {
-      closePopover();
-    }
-  });
-
-  list.addEventListener('keydown', (e) => {
-    const items = [...list.querySelectorAll('.mrp-item')];
-    const idx = items.indexOf(document.activeElement);
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      items[idx + 1]?.focus();
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      if (idx > 0) items[idx - 1].focus(); else search.focus();
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      if (idx >= 0) selectRole(items[idx].dataset.id);
-    } else if (e.key === 'Escape') {
-      closePopover();
-    }
-  });
-
-  clearBtn.addEventListener('mousedown', (e) => {
-    e.preventDefault();
-    if (!_roleTarget) return;
-    playerMeta[_roleTarget] = { ...(playerMeta[_roleTarget] ?? {}), roleId: '', roleName: '', roleTeam: '', roleIconUrl: null, roleAuto: false };
-    savePlayerMeta(_roleTarget);
-    refreshMetaCells(_roleTarget, { recolorPage: true });
-    closePopover();
-  });
-
-  document.addEventListener('mousedown', (e) => {
-    if (_rolePop.style.display !== 'none' && !_rolePop.contains(e.target) && !e.target.closest('.notes-meta-role')) {
-      closePopover();
-    }
-  });
-  return _rolePop;
-}
+// ── Player meta role picker — sets the Notes meta role, not the game's ──
 
 function openRolePopover(name, anchorEl) {
-  const pop = getRolePopover();
-  _roleTarget = name;
-  const search = pop.querySelector('.mrp-search');
-  const list = pop.querySelector('.mrp-list');
-  search.value = '';
-  pop._renderList('');
-  pop.style.display = 'flex';
-
-  const rect = anchorEl.getBoundingClientRect();
-  const spaceBelow = window.innerHeight - rect.bottom;
-  pop.style.top = spaceBelow > 200
-    ? `${rect.bottom + window.scrollY + 2}px`
-    : `${rect.top + window.scrollY - pop.offsetHeight - 2}px`;
-  pop.style.left = `${Math.max(8, Math.min(rect.left + window.scrollX, window.innerWidth - pop.offsetWidth - 8))}px`;
-
-  list.querySelector('.mrp-item.active')?.scrollIntoView({ block: 'nearest' });
-  search.focus();
+  const setMetaRole = (role) => {
+    playerMeta[name] = { ...(playerMeta[name] ?? {}), roleId: role?.id ?? '', roleName: role?.name ?? '', roleTeam: role?.team ?? '', roleIconUrl: role ? _iconUrl(role) : null, roleAuto: false };
+    savePlayerMeta(name);
+    refreshMetaCells(name, { recolorPage: true });
+  };
+  openListPicker(anchorEl, roleListItems(), (roleId) => {
+    const role = (currentState?.roles ?? []).find(r => r.id === roleId);
+    if (role) setMetaRole(role);
+  }, { activeValue: playerMeta[name]?.roleId, clearLabel: 'clear role', onClear: () => setMetaRole(null) });
 }
 
-// ── Signal role popover — same searchable icon list as the Notes role picker,
-// but selecting a role pushes a {id:'role'} signal token instead of setting
-// a player's meta role. Kept separate from getRolePopover/_roleTarget since
-// that one is tightly coupled to playerMeta semantics.
-// Searchable picker anchored under a "+ role" / "+ player" link: type to
-// filter, arrows to move, Enter to pick, Escape or an outside click to close.
-// getItems(filter) returns [{ key, html, cls? }]; onSelect(key) inserts it.
-function makeSignalPicker({ id, anchorId, placeholder, getItems, onSelect }) {
-  let pop = null;
-  let anchor = null;
+// ── Signal token pickers — add a {id:'role'} / {id:'player'} token ──
 
-  const close = () => {
-    if (!pop) return;
-    pop.style.display = 'none';
-    anchor?.setAttribute('aria-expanded', 'false');
-  };
-
-  const build = () => {
-    pop = document.createElement('div');
-    pop.id = id;
-    pop.className = 'mrp-popover';
-    pop.innerHTML = `<input class="mrp-search" type="text" placeholder="${esc(placeholder)}" /><div class="mrp-list" role="listbox"></div>`;
-    document.body.appendChild(pop);
-    const search = pop.querySelector('.mrp-search');
-    const list = pop.querySelector('.mrp-list');
-
-    const pick = (key) => { onSelect(key); renderSignalPreview(); updateSignalSendBtn(); close(); };
-
-    pop._render = (filter) => {
-      const items = getItems(filter.trim().toLowerCase());
-      list.innerHTML = items.length
-        ? items.map(it => `<div class="mrp-item ${it.cls ?? ''}" data-key="${esc(String(it.key))}" role="option" tabindex="-1">${it.html}</div>`).join('')
-        : '<div class="mrp-empty">No matches</div>';
-      list.querySelectorAll('.mrp-item').forEach(item => {
-        item.addEventListener('mousedown', (e) => { e.preventDefault(); pick(item.dataset.key); });
-      });
-    };
-
-    search.addEventListener('input', () => pop._render(search.value));
-    search.addEventListener('keydown', (e) => {
-      if (e.key === 'ArrowDown') { e.preventDefault(); list.querySelector('.mrp-item')?.focus(); }
-      else if (e.key === 'Enter') { e.preventDefault(); const first = list.querySelector('.mrp-item'); if (first) pick(first.dataset.key); }
-      else if (e.key === 'Escape') close();
-    });
-    list.addEventListener('keydown', (e) => {
-      const items = [...list.querySelectorAll('.mrp-item')];
-      const idx = items.indexOf(document.activeElement);
-      if (e.key === 'ArrowDown') { e.preventDefault(); items[idx + 1]?.focus(); }
-      else if (e.key === 'ArrowUp') { e.preventDefault(); if (idx > 0) items[idx - 1].focus(); else search.focus(); }
-      else if (e.key === 'Enter') { e.preventDefault(); if (idx >= 0) pick(items[idx].dataset.key); }
-      else if (e.key === 'Escape') close();
-    });
-    document.addEventListener('mousedown', (e) => {
-      if (pop.style.display !== 'none' && !pop.contains(e.target) && !e.target.closest(`#${anchorId}`)) close();
-    });
-  };
-
-  return (anchorEl) => {
-    if (!pop) build();
-    if (pop.style.display === 'flex' && anchor === anchorEl) { close(); return; }
-    anchor = anchorEl;
-    anchor.setAttribute('aria-expanded', 'true');
-    const search = pop.querySelector('.mrp-search');
-    search.value = '';
-    pop._render('');
-    pop.style.display = 'flex';
-    const rect = anchorEl.getBoundingClientRect();
-    const spaceBelow = window.innerHeight - rect.bottom;
-    pop.style.top = spaceBelow > 300
-      ? `${rect.bottom + window.scrollY + 6}px`
-      : `${rect.top + window.scrollY - pop.offsetHeight - 6}px`;
-    pop.style.left = `${Math.max(8, Math.min(rect.left + window.scrollX, window.innerWidth - pop.offsetWidth - 8))}px`;
-    search.focus();
-  };
+function pushSignalToken(token) {
+  stMessage.push(token);
+  renderSignalPreview();
+  updateSignalSendBtn();
 }
 
-const openSignalRolePopover = makeSignalPicker({
-  id: 'signal-role-popover',
-  anchorId: 'signal-role-btn',
-  placeholder: 'Search roles…',
-  getItems: (f) => (currentState?.roles ?? [])
-    .filter(r => !f || r.name.toLowerCase().includes(f))
-    .map(r => {
-      const icon = _iconUrl(r) ? `<img class="tp-role-icon" src="${esc(_iconUrl(r))}" alt="" />` : '<span class="mrp-icon-blank"></span>';
-      return { key: r.id, cls: `role-name ${r.team ?? ''}`, html: `${icon}<span class="mrp-name">${esc(r.name)}</span>` };
-    }),
-  onSelect: (roleId) => {
-    if ((currentState?.roles ?? []).some(r => r.id === roleId)) stMessage.push({ id: 'role', data: roleId });
-  },
-});
+function openSignalRolePopover(anchorEl) {
+  openListPicker(anchorEl, roleListItems(), (roleId) => pushSignalToken({ id: 'role', data: roleId }),
+    { placeholder: 'Search roles…' });
+}
 
 // Players in seat order, with their seat number and (for the storyteller) role,
 // so "Seat 4" and a real name are both findable.
-const openSignalPlayerPopover = makeSignalPicker({
-  id: 'signal-player-popover',
-  anchorId: 'signal-player-btn',
-  placeholder: 'Search players…',
-  getItems: (f) => (currentState?.players ?? [])
+function openSignalPlayerPopover(anchorEl) {
+  const items = (currentState?.players ?? [])
     .slice()
     .sort((a, b) => a.seat - b.seat)
-    .map(p => ({ p, name: displayName(p, p.seat), role: playerRoleInfo(p) }))
-    .filter(({ p, name, role }) => !f
-      || name.toLowerCase().includes(f)
-      || String(p.seat + 1) === f
-      || (role?.name ?? '').toLowerCase().includes(f))
-    .map(({ p, name, role }) => {
-      const icon = role?.iconUrl ? `<img class="tp-role-icon" src="${esc(role.iconUrl)}" alt="" />` : '<span class="mrp-icon-blank"></span>';
+    .map(p => {
+      const name = displayName(p, p.seat);
+      const role = playerRoleInfo(p);
       return {
-        key: p.seat,
-        cls: p.isDead ? 'mrp-dead' : '',
-        html: `<span class="mrp-seat">${p.seat + 1}</span>${icon}<span class="mrp-name">${esc(dn(name))}</span>`
-          + (role ? `<span class="mrp-sub role-name ${esc(role.team ?? '')}">${esc(role.name)}</span>` : ''),
+        label: dn(name), value: p.seat, cls: `mrp-player${p.isDead ? ' mrp-dead' : ''}`,
+        prefix: `<span class="mrp-seat">${p.seat + 1}</span>`, iconUrl: role?.iconUrl ?? '',
+        sub: role?.name, subCls: `role-name ${role?.team ?? ''}`,
+        search: `${name} ${p.seat + 1} ${role?.name ?? ''}`,
       };
-    }),
-  onSelect: (seat) => { stMessage.push({ id: 'player', data: Number(seat) }); },
-});
-
-// ── Player grimoire role popover — same searchable icon list, but selecting a
-// role commits it to the live game (players/updatePlayer) via SET_PLAYER_PROPERTY,
-// instead of setting Notes meta or a signal token. Kept separate from those
-// two for the same reason: different target/semantics per selection.
-let _gameRolePop = null;
-let _gameRoleSeat = null;
-
-function getGameRolePopover() {
-  if (_gameRolePop) return _gameRolePop;
-  _gameRolePop = document.createElement('div');
-  _gameRolePop.id = 'game-role-popover';
-  _gameRolePop.className = 'mrp-popover';
-  _gameRolePop.innerHTML = `
-    <input class="mrp-search" type="text" placeholder="Search…" />
-    <div class="mrp-list"></div>
-    <button class="mrp-clear">clear role</button>
-  `;
-  document.body.appendChild(_gameRolePop);
-
-  const search = _gameRolePop.querySelector('.mrp-search');
-  const list = _gameRolePop.querySelector('.mrp-list');
-  const clearBtn = _gameRolePop.querySelector('.mrp-clear');
-
-  const closePopover = () => { _gameRolePop.style.display = 'none'; _gameRoleSeat = null; };
-
-  const selectRole = (roleId) => {
-    if (_gameRoleSeat === null) return;
-    sendBg({ type: 'SET_PLAYER_PROPERTY', seat: _gameRoleSeat, property: 'role', roleId });
-    closePopover();
-  };
-
-  const renderList = (filter) => {
-    const roles = (currentState?.roles ?? []).filter(r =>
-      !filter || r.name.toLowerCase().includes(filter.toLowerCase()));
-    list.innerHTML = roles.map(r => {
-      const icon = _iconUrl(r) ? `<img class="tp-role-icon" src="${esc(_iconUrl(r))}" />` : '';
-      return `<div class="mrp-item role-name ${r.team ?? ''}" data-id="${esc(r.id)}" tabindex="-1">${icon}${esc(r.name)}</div>`;
-    }).join('');
-    list.querySelectorAll('.mrp-item').forEach(item => {
-      item.addEventListener('mousedown', (e) => { e.preventDefault(); selectRole(item.dataset.id); });
     });
-  };
-
-  _gameRolePop._renderList = renderList;
-
-  search.addEventListener('input', () => renderList(search.value));
-
-  search.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      list.querySelector('.mrp-item')?.focus();
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      const first = list.querySelector('.mrp-item');
-      if (first) selectRole(first.dataset.id);
-    } else if (e.key === 'Escape') {
-      closePopover();
-    }
-  });
-
-  list.addEventListener('keydown', (e) => {
-    const items = [...list.querySelectorAll('.mrp-item')];
-    const idx = items.indexOf(document.activeElement);
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      items[idx + 1]?.focus();
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      if (idx > 0) items[idx - 1].focus(); else search.focus();
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      if (idx >= 0) selectRole(items[idx].dataset.id);
-    } else if (e.key === 'Escape') {
-      closePopover();
-    }
-  });
-
-  clearBtn.addEventListener('mousedown', (e) => {
-    e.preventDefault();
-    if (_gameRoleSeat === null) return;
-    sendBg({ type: 'SET_PLAYER_PROPERTY', seat: _gameRoleSeat, property: 'role', roleId: null });
-    closePopover();
-  });
-
-  document.addEventListener('mousedown', (e) => {
-    if (_gameRolePop.style.display !== 'none' && !_gameRolePop.contains(e.target) && !e.target.closest('.player-role-btn')) {
-      closePopover();
-    }
-  });
-  return _gameRolePop;
+  openListPicker(anchorEl, items, (seat) => pushSignalToken({ id: 'player', data: seat }),
+    { placeholder: 'Search players…' });
 }
 
+// ── Player grimoire role picker — commits the role to the live game ──
+
 function openGameRolePopover(seat, anchorEl) {
-  const pop = getGameRolePopover();
-  _gameRoleSeat = seat;
-  const search = pop.querySelector('.mrp-search');
-  search.value = '';
-  pop._renderList('');
-  pop.style.display = 'flex';
-
-  const rect = anchorEl.getBoundingClientRect();
-  const spaceBelow = window.innerHeight - rect.bottom;
-  pop.style.top = spaceBelow > 200
-    ? `${rect.bottom + window.scrollY + 2}px`
-    : `${rect.top + window.scrollY - pop.offsetHeight - 2}px`;
-  pop.style.left = `${Math.max(8, Math.min(rect.left + window.scrollX, window.innerWidth - pop.offsetWidth - 8))}px`;
-
-  search.focus();
+  const setRole = (roleId) => sendBg({ type: 'SET_PLAYER_PROPERTY', seat, property: 'role', roleId });
+  openListPicker(anchorEl, roleListItems(), setRole, { clearLabel: 'clear role', onClear: () => setRole(null) });
 }
 
 function toggleAlignment(name) {
@@ -2456,21 +2202,20 @@ function refreshMetaCells(name, { recolorPage = false } = {}) {
   nameCell.style.backgroundImage = tint ? `linear-gradient(${tint},${tint})` : '';
   if (row) row.style.background = tint;
   const meta = playerMeta[name] ?? {};
-  if (roleCell) {
-    const icon = meta.roleIconUrl ? `<img class="tp-role-icon" src="${esc(meta.roleIconUrl)}" />` : '';
-    const roleColorClass = meta.alignment === 'evil' ? 'demon'
-                         : meta.alignment === 'good' ? 'townsfolk'
-                         : meta.roleTeam ?? '';
-    roleCell.innerHTML = meta.roleName
-      ? `<span class="meta-role-chip role-name ${roleColorClass}">${icon}${esc(meta.roleName)}</span>`
-      : '';
-  }
-  if (alignCell) {
-    const alignLabel = { good: 'G', evil: 'E' };
-    const alignClass = { good: 'meta-good', evil: 'meta-evil' };
-    const a = meta.alignment ?? '';
-    alignCell.innerHTML = a ? `<span class="meta-align-badge ${alignClass[a]}">${alignLabel[a]}</span>` : '';
-  }
+  if (roleCell) roleCell.innerHTML = metaRoleChipHtml(meta);
+  if (alignCell) alignCell.innerHTML = metaAlignBadgeHtml(meta);
+}
+
+function metaRoleChipHtml(meta) {
+  if (!meta.roleName) return '';
+  const icon = meta.roleIconUrl ? `<img class="tp-role-icon" src="${esc(meta.roleIconUrl)}" />` : '';
+  return `<span class="meta-role-chip role-name ${metaTeam(meta)}">${icon}${esc(meta.roleName)}</span>`;
+}
+
+function metaAlignBadgeHtml(meta) {
+  const a = meta.alignment;
+  if (a !== 'good' && a !== 'evil') return '';
+  return `<span class="meta-align-badge meta-${a}">${a === 'good' ? 'G' : 'E'}</span>`;
 }
 
 function measureMaxRoleChipWidth() {
@@ -2507,7 +2252,7 @@ function measureMaxRoleChipWidth() {
 function propagateDroison() {
   const phases = getPhaseColumns();
   if (!phases.length || !currentState?.players?.length) return;
-  const owners = [...currentState.players.map(p => p.name ?? `Seat ${p.seat + 1}`), ...extraNoteRows()];
+  const owners = [...currentState.players.map(notesNameOf), ...extraNoteRows()];
   for (const player of owners) {
     let active = null; // { label, source } carried forward from the latest origin
     for (const phase of phases) {
@@ -2597,7 +2342,7 @@ function renderNotesGrid() {
   html += '</tr></thead><tbody>';
 
   for (const player of players) {
-    const name = player.name ?? `Seat ${player.seat + 1}`;
+    const name = notesNameOf(player);
     const isTraveller = player.team === 'traveller';
 
     const meta = playerMeta[name] ?? {};
@@ -2607,17 +2352,8 @@ function renderNotesGrid() {
     const usedGhostVote = player.isDead && fullTimeline.some(ev => ev.type === 'ghostvote' && ev.name === name);
     const statusIcons = measuring ? `<span class="pn-status-icon">${ICON_SVG.logSkull}</span><span class="pn-status-icon">${ICON_SVG.logGhost}</span>` : ((player.isDead ? `<span class="pn-status-icon pn-dead" title="Dead">${ICON_SVG.logSkull}</span>` : '')
                       + (usedGhostVote ? `<span class="pn-status-icon pn-voteless" title="Used ghost vote">${ICON_SVG.logGhost}</span>` : ''));
-    const icon = meta.roleIconUrl ? `<img class="tp-role-icon" src="${esc(meta.roleIconUrl)}" />` : '';
-    const roleColorClass = meta.alignment === 'evil' ? 'demon'
-                         : meta.alignment === 'good' ? 'townsfolk'
-                         : meta.roleTeam ?? '';
-    const roleHtml = meta.roleName
-      ? `<span class="meta-role-chip role-name ${roleColorClass}">${icon}${esc(meta.roleName)}</span>`
-      : '';
-    const alignLabel = { good: 'G', evil: 'E' };
-    const alignClass = { good: 'meta-good', evil: 'meta-evil' };
-    const a = meta.alignment ?? '';
-    const alignHtml = a ? `<span class="meta-align-badge ${alignClass[a]}">${alignLabel[a]}</span>` : '';
+    const roleHtml = metaRoleChipHtml(meta);
+    const alignHtml = metaAlignBadgeHtml(meta);
     const tintStyle = tint ? `background:${tint}` : '';
     const nameTintStyle = tint ? `background-image:linear-gradient(${tint},${tint})` : '';
     html += `<tr style="${tintStyle}">`;
@@ -2867,10 +2603,6 @@ function expandOwnTokens(message, player) {
 // player report" (This player is X, Demon is Y) — these two sets are rarely
 // mixed in the same signal, so they get their own column each; everything
 // else (yes/no/numbers/prompts) is general-purpose and sits below both.
-// Split into "self report" (You are evil, role X, Bluffs: ...) and "other
-// player report" (This player is X, Demon is Y) — these two sets are rarely
-// mixed in the same signal, so they get their own column each; everything
-// else (yes/no/numbers/prompts) is general-purpose and sits below both.
 const SIGNAL_TOKEN_COLUMNS = {
   left: ['you',  'selected', 'good', 'evil', 'bluffs'],
   right: ['claim', 'demon', 'minions'],
@@ -2945,7 +2677,7 @@ function scriptRoleId(id) {
 // Tonight's night-order steps for one player, as Signal suggestions.
 function nightStepSuggestions(player) {
   const phase = currentState?.phase ?? 0;
-  if (phase % 2 !== 1 || typeof nightSteps === 'undefined') return [];
+  if (phase % 2 !== 1) return [];
   const prefix = `${stepGameKey()}|${Math.ceil(phase / 2)}|`;
   const out = [];
   for (const key of Object.keys(nightSteps)) {
@@ -3058,10 +2790,6 @@ function renderSignalSuggestions() {
   });
 }
 
-// session.signals is keyed by recipient — "storyteller" mirrors outbound-only
-// signals (a convenience subset), while each real user id holds the full
-// two-way conversation with that player. Skip the mirror key to avoid
-// double-counting the same signal.
 // Signals aren't normally sent during the day, but if one is, attribute it to
 // the preceding night (same round) rather than giving Day its own group.
 function signalNightGroup(ts) {
@@ -3106,7 +2834,7 @@ function renderSignalNightGroupsHtml(nightGroups) {
   }).join('');
 }
 
-// ── Signal history popover (used by night order rows + player table) ───────
+// ── Signal history popover (night order rows: one player, one night) ────────
 
 let _sigPop = null;
 
@@ -3127,30 +2855,26 @@ function closeSignalPopover() {
   if (_sigPop) _sigPop.style.display = 'none';
 }
 
-// night: pass a "Night N" label to scope to just that night (night order rows);
-// omit for the player table's "whole history" view.
-function openSignalPopover(userId, anchorEl, night = null) {
+// night: a "Night N" label.
+function openSignalPopover(userId, anchorEl, night) {
   const pop = getSignalPopover();
-  const entries = getPlayerSignalEntries(userId).filter(e => !night || signalNightGroup(e.timestamp) === night);
-  const title = night ? `${dn(resolveParticipant(userId))} — ${night}` : dn(resolveParticipant(userId));
+  const entries = getPlayerSignalEntries(userId).filter(e => signalNightGroup(e.timestamp) === night);
+  const title = `${dn(resolveParticipant(userId))} — ${night}`;
   const body = entries.length
-    ? renderSignalNightGroupsHtml(night ? [{ night, entries }] : groupSignalEntriesByNight(entries))
+    ? renderSignalNightGroupsHtml([{ night, entries }])
     : '<div class="sig-log-empty">No signals</div>';
   pop.innerHTML = `<div class="sig-pop-title">${esc(title)}</div><div class="sig-pop-body">${body}</div>`;
   pop.style.display = 'block';
-
-  const rect = anchorEl.getBoundingClientRect();
-  const spaceBelow = window.innerHeight - rect.bottom;
-  pop.style.top = spaceBelow > 220
-    ? `${rect.bottom + window.scrollY + 4}px`
-    : `${rect.top + window.scrollY - pop.offsetHeight - 4}px`;
-  pop.style.left = `${Math.max(8, Math.min(rect.left + window.scrollX, window.innerWidth - pop.offsetWidth - 8))}px`;
+  placePopover(pop, anchorEl, 4);
 }
 
 // ── Signal history sidebar (whole history — can get long, so it gets the same
-// slide-out side panel treatment as the player event timeline). userId=null
-// means "all players", which is what the Signal panel's history button opens.
+// slide-out side panel treatment as the player event timeline), all players.
 
+// session.signals is keyed by recipient — "storyteller" mirrors outbound-only
+// signals (a convenience subset), while each real user id holds the full
+// two-way conversation with that player. Skip the mirror key to avoid
+// double-counting the same signal.
 function buildAllPlayersSignalHtml() {
   const signals = currentState?.signals ?? {};
   const byPlayer = Object.keys(signals)
@@ -3168,25 +2892,12 @@ function buildAllPlayersSignalHtml() {
 }
 
 let signalHistoryOpen = false;
-let openSignalHistoryUserId = null; // null while open means "all players" mode
-
-function openSignalHistoryPanel(userId = null) {
+function openSignalHistoryPanel() {
   signalHistoryOpen = true;
-  openSignalHistoryUserId = userId;
   const panel = document.getElementById('signal-history-panel');
   const overlay = document.getElementById('signal-history-overlay');
-
-  if (userId) {
-    document.getElementById('sighist-name').textContent = dn(resolveParticipant(userId));
-    const entries = getPlayerSignalEntries(userId);
-    document.getElementById('sighist-body').innerHTML = entries.length
-      ? renderSignalNightGroupsHtml(groupSignalEntriesByNight(entries))
-      : '<div class="sig-log-empty">No signals</div>';
-  } else {
-    document.getElementById('sighist-name').textContent = 'Signal History';
-    document.getElementById('sighist-body').innerHTML = buildAllPlayersSignalHtml();
-  }
-
+  document.getElementById('sighist-name').textContent = 'Signal History';
+  document.getElementById('sighist-body').innerHTML = buildAllPlayersSignalHtml();
   overlay.classList.add('open');
   panel.classList.add('open');
   requestAnimationFrame(() => overlay.classList.add('visible'));
@@ -3194,15 +2905,15 @@ function openSignalHistoryPanel(userId = null) {
 
 function closeSignalHistoryPanel() {
   signalHistoryOpen = false;
-  openSignalHistoryUserId = null;
   document.getElementById('signal-history-panel').classList.remove('open');
   const overlay = document.getElementById('signal-history-overlay');
   overlay.classList.remove('visible');
-  overlay.addEventListener('transitionend', () => overlay.classList.remove('open'), { once: true });
+  // Reopened before the fade ended: leave the new one alone.
+  overlay.addEventListener('transitionend', () => { if (!signalHistoryOpen) overlay.classList.remove('open'); }, { once: true });
 }
 
 function refreshSignalHistoryPanel() {
-  if (signalHistoryOpen) openSignalHistoryPanel(openSignalHistoryUserId);
+  if (signalHistoryOpen) openSignalHistoryPanel();
 }
 
 document.getElementById('sighist-close').addEventListener('click', closeSignalHistoryPanel);
@@ -3239,7 +2950,7 @@ const TIMER_PRESETS = [
   { label: 'Day ends', title: 'Day ends', minutes: 0, seconds: 10, pause: true },
   { label: 'Private conversations', title: 'Private conversations', pause: null, dynamic: 'halfAlive' },
 ];
-let customTimerPresets = []; // [{ label, title, minutes, seconds, pause }] — user-saved, persisted in settings
+let customTimerPresets = []; // [{ id, label, title, minutes, seconds, pause }] — user-saved, persisted in settings
 let customSignalPresets = []; // [{ id, message: [{id, data?}, ...] }] — user-saved, persisted in settings
 
 function renderSignalPresets() {
@@ -3568,8 +3279,8 @@ function initSignalPanel() {
   };
   document.getElementById('players-shuffle-btn')?.addEventListener('click', shuffleSeats);
 
-  // Direction is a best-effort guess (untested against the real clockwise/counterclockwise
-  // labeling) — if a button rotates the wrong way visually, swap these two formulas.
+  // movePlayers takes order[newSeat] = oldSeat, and seats run clockwise from the
+  // top, so clockwise means everyone takes the seat after theirs (checked in a game).
   document.getElementById('players-rotate-cw-btn')?.addEventListener('click', () => {
     const n = (currentState?.players ?? []).length;
     if (n < 2) return;
@@ -3708,8 +3419,8 @@ function sendLoadScript(script) {
 // one-off mappings. Falls back to 'unclassified' rather than guessing wrong.
 function classifyScriptRoleTeam(entry) {
   const id = typeof entry === 'string' ? entry : entry?.id;
-  const explicitName = typeof entry === 'object' ? entry.name : null;
-  const explicitTeam = typeof entry === 'object' ? entry.team : null;
+  const explicitName = typeof entry === 'object' ? entry?.name : null;
+  const explicitTeam = typeof entry === 'object' ? entry?.team : null;
   if (!id) return { team: '', name: explicitName ?? '?', id: null };
 
   // Find the canonical bundled role this entry resolves to, if any — done even
@@ -3742,9 +3453,11 @@ function classifyScriptRoleTeam(entry) {
   }
 
   if (!canonical) {
-    // Fallback: longest canonical id the custom id starts with (fanggucz → fanggu)
+    // Fallback: longest canonical id the custom id starts with (fanggucz → fanggu),
+    // capped like registerRoleAlias so homebrew (hermitcrab) isn't swallowed.
     for (const x of _roles()) {
-      if (cleanId.startsWith(x.id) && (!canonical || x.id.length > canonical.id.length)) canonical = x;
+      if (cleanId.startsWith(x.id) && cleanId.length - x.id.length <= LOCALE_SUFFIX_MAX
+          && (!canonical || x.id.length > canonical.id.length)) canonical = x;
     }
   }
 
@@ -3760,7 +3473,7 @@ function classifyScriptRoleTeam(entry) {
     // Homebrew often borrows an official id prefix or icon (`foolunatic` →
     // Fool) but names its own set here, which is the only tell it isn't the
     // official character. Base-3 detection needs it.
-    declaredEdition: typeof entry === 'object' && entry.edition ? String(entry.edition) : null,
+    declaredEdition: typeof entry === 'object' && entry?.edition ? String(entry.edition) : null,
   };
 }
 
@@ -3914,41 +3627,25 @@ function complexityTagHtml(c) {
     + `<span class="script-lib-cx-bar"><span style="width:${Math.max(Math.round(t * 100), 6)}%;background:hsl(${Math.round(120 - t * 120)},70%,50%)"></span></span></span>`;
 }
 
-// ── Labels ───────────────────────────────────────────────────────────────────
-// User-assigned tags on library scripts. Add a label by adding a row here; the
-// row toggle and the filter button are generated from this list. While the
-// list is empty the whole label UI (row toggles and filter group) is hidden.
-// Keys are what's stored, so keep them stable when renaming a label.
-const SCRIPT_LABELS = [];
-// Stored as { [scriptLabelKey]: [labelKey, …] }. Keyed by name + author rather
-// than file path, so a label survives moving the file between category folders
-// (and the Firefox cache, which never kept paths).
-const SCRIPT_LABELS_KEY = 'botc-companion-script-labels';
+// Library scripts are keyed by name + author rather than file path, so a
+// favourite survives moving the file between category folders (and the
+// Firefox cache, which never kept paths).
 const scriptLabelKey = (s) => `${s.name}\n${s.author ?? ''}`;
-let scriptLabels = (() => {
-  try { return JSON.parse(localStorage.getItem(SCRIPT_LABELS_KEY) || '{}') || {}; } catch { return {}; }
-})();
-const scriptHasLabel = (s, label) => !!scriptLabels[scriptLabelKey(s)]?.includes(label);
-function toggleScriptLabel(s, label) {
-  const key = scriptLabelKey(s);
-  const current = scriptLabels[key] ?? [];
-  const next = current.includes(label) ? current.filter(l => l !== label) : [...current, label];
-  if (next.length) scriptLabels[key] = next; else delete scriptLabels[key];
-  try { localStorage.setItem(SCRIPT_LABELS_KEY, JSON.stringify(scriptLabels)); } catch { /* ignore */ }
-  return next.includes(label);
-}
 
 // ── Favourites ───────────────────────────────────────────────────────────────
-// Separate from labels: a single star per script. Stored as an array of
-// scriptLabelKey()s. Seeded once from the old 'fun' label, which was the
-// favourite before it got its own storage.
+// A single star per script. Stored as an array of scriptLabelKey()s. Seeded
+// once from the old 'fun' label (the retired script-labels store), which was
+// the favourite before it got its own storage.
 const SCRIPT_FAVOURITES_KEY = 'botc-companion-script-favourites';
 let scriptFavourites = (() => {
   try {
     const raw = localStorage.getItem(SCRIPT_FAVOURITES_KEY);
     if (raw != null) return new Set(JSON.parse(raw) || []);
   } catch { /* fall through to migration */ }
-  return new Set(Object.keys(scriptLabels).filter(k => scriptLabels[k].includes('fun')));
+  try {
+    const labels = JSON.parse(localStorage.getItem('botc-companion-script-labels') || '{}') || {};
+    return new Set(Object.keys(labels).filter(k => labels[k]?.includes?.('fun')));
+  } catch { return new Set(); }
 })();
 const isScriptFavourite = (s) => scriptFavourites.has(scriptLabelKey(s));
 function toggleScriptFavourite(s) {
@@ -4021,18 +3718,24 @@ function initScriptLibrary() {
 
   const setStatus = (text) => { statusEl.textContent = text; };
 
-  async function runScan(dirHandle) {
+  // scan() → the parsed library; onDone runs after it's shown.
+  async function runLibraryScan(scan, failMsg, onDone) {
     setStatus('Scanning…');
     try {
-      scriptLibrary = await scanScriptDir(dirHandle);
+      scriptLibrary = await scan();
       filtersEl.style.display = '';
       rescanBtn.style.display = '';
       setStatus(`${scriptLibrary.length} scripts`);
       renderResults();
+      await onDone?.();
     } catch (e) {
-      setStatus('Scan failed — folder may have been moved or access revoked.');
+      setStatus(failMsg);
+      console.error('botc-tool: script folder scan failed', e);
     }
   }
+
+  const runScan = (dirHandle) => runLibraryScan(() => scanScriptDir(dirHandle),
+    'Scan failed — folder may have been moved or access revoked.');
 
   // Chromium: pick a handle we can keep and re-walk later.
   async function pickDirectoryHandle() {
@@ -4066,19 +3769,9 @@ function initScriptLibrary() {
   dirInput?.addEventListener('change', async () => {
     const files = [...(dirInput.files ?? [])];
     if (files.length === 0) return;
-    setStatus('Scanning…');
-    try {
-      scriptLibrary = await scanScriptFileList(files);
-      filtersEl.style.display = '';
-      rescanBtn.style.display = '';
-      setStatus(`${scriptLibrary.length} scripts`);
-      renderResults();
-      // Survives a companion reload; Firefox can't re-read the folder unattended.
-      await CompanionDb.setCached(SCRIPT_LIB_CACHE_KEY, scriptLibrary);
-    } catch (e) {
-      setStatus('Scan failed — could not read that folder.');
-      console.error('botc-tool: script folder scan failed', e);
-    }
+    // Cached so it survives a companion reload; Firefox can't re-read the folder unattended.
+    await runLibraryScan(() => scanScriptFileList(files), 'Scan failed — could not read that folder.',
+      () => CompanionDb.setCached(SCRIPT_LIB_CACHE_KEY, scriptLibrary));
   });
 
   pickBtn?.addEventListener('click', pickDirectory);
@@ -4117,8 +3810,6 @@ function initScriptLibrary() {
         const keys = scriptRoleKeys(s);
         for (const key of roleFilter.keys()) if (!keys.has(key)) return false;
       }
-      // Multiple selected labels narrow: the script must carry all of them.
-      for (const label of labelFilter) if (!scriptHasLabel(s, label)) return false;
       // Unrated scripts can't be placed in a bucket, so any difficulty filter hides them.
       if (difficultyFiltered() && !(s.cx && s.cx.score >= difficultyRange.lo - 1e-9 && s.cx.score <= difficultyRange.hi + 1e-9)) return false;
       if (!q) return true;
@@ -4153,10 +3844,6 @@ function initScriptLibrary() {
             ${s.base3 ? '<span class="script-lib-tag" title="Only Trouble Brewing, Bad Moon Rising and Sects &amp; Violets characters">Base 3</span>' : ''}
             ${s.cx ? complexityTagHtml(s.cx) : ''}
             <span class="script-lib-role-count">${s.roleNames.length} roles</span>
-            ${SCRIPT_LABELS.map(l => {
-              const on = scriptHasLabel(s, l.key);
-              return `<button type="button" class="script-lib-label-btn${on ? ' active' : ''}" data-cat="${esc(cat)}" data-idx="${i}" data-label="${esc(l.key)}" aria-pressed="${on}" title="Label: ${esc(l.name)}">${esc(l.name)}</button>`;
-            }).join('')}
             <button type="button" class="script-lib-apply" data-cat="${esc(cat)}" data-idx="${i}">Apply</button>
             ${(() => {
               const fav = isScriptFavourite(s);
@@ -4189,18 +3876,6 @@ function initScriptLibrary() {
         const open = rolesEl.style.display !== 'none';
         rolesEl.style.display = open ? 'none' : '';
         chevron.textContent = open ? '▸' : '▾';
-      });
-    });
-
-    // Toggled in place rather than re-rendered, so expanded rows stay open and
-    // a script unlabelled while its filter is on doesn't vanish mid-click.
-    resultsEl.querySelectorAll('.script-lib-label-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const script = byCategory[btn.dataset.cat][Number(btn.dataset.idx)];
-        const on = toggleScriptLabel(script, btn.dataset.label);
-        btn.classList.toggle('active', on);
-        btn.setAttribute('aria-pressed', String(on));
       });
     });
 
@@ -4379,8 +4054,8 @@ function initScriptLibrary() {
     }
   });
 
-  // Base 3 is a plain on/off; difficulty buttons are multi-select and none
-  // selected means no difficulty filtering.
+  // Base 3 is a plain on/off; difficulty is a two-thumb range (full range =
+  // no difficulty filtering).
   let base3Only = false;
   let sortMode = 'name';
   const sortBtns = document.querySelectorAll('.script-lib-sort-btn');
@@ -4414,22 +4089,6 @@ function initScriptLibrary() {
     favouritesBtn.classList.toggle('toggle-btn-active', favouritesOnly);
     renderResults();
   });
-  const labelFilter = new Set();
-  const labelGroupEl = document.getElementById('script-lib-label-group');
-  if (labelGroupEl) labelGroupEl.hidden = !SCRIPT_LABELS.length;
-  const labelFiltersEl = document.getElementById('script-lib-label-filters');
-  if (labelFiltersEl) {
-    labelFiltersEl.innerHTML = SCRIPT_LABELS.map(l =>
-      `<button type="button" class="toggle-btn script-lib-label-filter-btn" data-label="${esc(l.key)}">${esc(l.name)}</button>`).join('');
-    labelFiltersEl.querySelectorAll('.script-lib-label-filter-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const label = btn.dataset.label;
-        if (labelFilter.has(label)) labelFilter.delete(label); else labelFilter.add(label);
-        btn.classList.toggle('toggle-btn-active', labelFilter.has(label));
-        renderResults();
-      });
-    });
-  }
   // Two range inputs stacked on one track; each thumb stops at the other.
   const diffRangeEl = document.getElementById('script-lib-diff-range');
   const diffLo = document.getElementById('script-lib-diff-lo');
@@ -4700,7 +4359,6 @@ const seatPos = (idx, n, r) => {
   return { x: 50 + r * Math.cos(a), y: 50 + r * Math.sin(a) };
 };
 
-// One clock hand from the hub out towards a seat, with an arrowhead on the tip.
 // A tapered clock hand pointing along +x from the hub at (50,50), with a short
 // counterweight tail. It's rotated into place with a CSS transform, so moving
 // between seats sweeps the hand around the dial instead of redrawing it.
@@ -4724,9 +4382,11 @@ function nomArrowPath(r) {
     + ` L${tipBase} 53.6 L${tipBase} 50.9 L50 51.3 Z`;
 }
 
-// Redraws the overlay only — cheap enough to run on every hover, unlike a full
-// renderPlayers (which rebuilds all the seat markup and would kill the hover).
 const _nomAlerts = () => (typeof BOTC_NOM_ALERTS !== 'undefined' ? BOTC_NOM_ALERTS : []);
+
+// Ghost vote already spent. Like death, this is a token in the status array
+// rather than a field of its own.
+const isVoteless = (p) => (p?.status ?? []).includes('voteless');
 
 // Reminder tokens are per-seat and come from the live store via page-bridge.
 // Matched on role + name, the pair the grimoire actually uses as an identity —
@@ -4736,13 +4396,9 @@ const _nomAlerts = () => (typeof BOTC_NOM_ALERTS !== 'undefined' ? BOTC_NOM_ALER
 // droisoned, so it doesn't count — in either direction. A flipped 'Cursed' means
 // the Witch's curse won't kill. (The Virgin's 'No Ability' is backed by the
 // nomination history, so a flipped one doesn't bring her ability back.)
-// Ghost vote already spent. Like death, this is a token in the status array
-// rather than a field of its own.
-const isVoteless = (p) => (p?.status ?? []).includes('voteless');
-
-const hasReminder = (p, roleId, name) =>
-  (p?.reminders ?? []).some(r =>
-    r.role === roleId && r.name === name && !(r.flags ?? []).includes('flipped'));
+// isLiveReminder (night steps) does the matching, so aliased and traveller_
+// role ids resolve the same way in both places.
+const hasReminder = (p, roleId, name) => (p?.reminders ?? []).some(r => isLiveReminder(r, roleId, name));
 
 // Alerts for the nomination being assembled. nominee is null until it's picked,
 // so 'nominee'/'pair' rules simply don't fire yet. Every timing comes back
@@ -4879,10 +4535,9 @@ function moveNomSetupControl(key, el, into) {
 function updateNomSetup() {
   const panel = document.getElementById('nom-setup');
   if (!panel) return;
-  const alertsShown = document.getElementById('nom-alerts')?.style.display !== 'none';
   const active = amIStoryteller() && !!voteClock
     && playerActionMode === 'nominate' && !pendingNomination && !awaitingNomination()
-    && playerActionPickedSeat === null && !alertsShown;
+    && playerActionPickedSeat === null;
   panel.hidden = !active;
   document.getElementById('player-table')?.classList.toggle('nom-setup-open', active);
   moveNomSetupControl('type', document.getElementById('vt-type'), active);
@@ -5024,8 +4679,6 @@ function renderNomAlerts() {
   updateNomSetup();
 }
 
-// Phase readout parked in the middle of the circle: what part of the game it
-// is, and how many votes an execution needs right now.
 // The nomination that's open right now, reduced to what the wheel shows:
 // whose hands are up (live while voting, the final snapshot once counted)
 // and how that compares with what an execution needs.
@@ -5083,12 +4736,14 @@ function circleNominationHtml(live) {
     + `</div>`;
 }
 
+// Phase readout parked in the middle of the circle: what part of the game it
+// is, and how many votes an execution needs right now.
 function circlePhaseHtml(players) {
   const phase = currentState?.phase;
   if (!phase) return '';
   const isNight = phase % 2 === 1;
   const alive = players.filter(p => !p.isDead).length;
-  const needed = Math.ceil(alive / 2);
+  const needed = votesToExecute();
   return `<div id="circle-phase" class="${isNight ? 'is-night' : 'is-day'}"${pendingNomination ? ' hidden' : ''}>`
     + `<span class="cp-ordinal">The ${phaseOrdinal(phase)}</span>`
     + `<span class="cp-phase">${isNight ? 'Night' : 'Day'}</span>`
@@ -5572,23 +5227,18 @@ function renderPlayers() {
       ${role ? `<div class="seat-role-label ${tokenColorClass}">${esc(role.name)}</div>` : ''}
     </div>`;
   }).join('');
-  // Hands first so the seats paint over them, alert chips last so they win over
-  // both; pointer-events:none in CSS keeps either out of the way of seat clicks.
-  // Both live inside the circle, absolutely positioned, so showing them can't
-  // shift the layout around them.
-  // The hands and alert chips are created once and never leave the page: a
-  // rebuild only replaces what sits between them. Recreating them — or even
-  // detaching and re-adding them — replays their animations (hand sweep,
-  // fade-in) on every state update: flicker.
+  // Hands first so the seats paint over them; pointer-events:none in CSS keeps
+  // them out of the way of seat clicks. Absolutely positioned inside the circle,
+  // so showing them can't shift the layout around them.
+  // The hands SVG is created once and never leaves the page: a rebuild only
+  // replaces what follows it. Recreating it — or even detaching and re-adding
+  // it — replays the hand sweep on every state update: flicker.
   let hands = table.querySelector(':scope > #nom-hands');
-  let alertsBox = table.querySelector(':scope > #nom-alerts');
-  if (!hands || !alertsBox) {
-    table.innerHTML = `<svg id="nom-hands" viewBox="0 0 100 100" aria-hidden="true"></svg>`
-      + `<div id="nom-alerts" style="display:none"></div>`;
+  if (!hands) {
+    table.innerHTML = `<svg id="nom-hands" viewBox="0 0 100 100" aria-hidden="true"></svg>`;
     hands = table.querySelector('#nom-hands');
-    alertsBox = table.querySelector('#nom-alerts');
   }
-  for (const el of [...table.children]) if (el !== hands && el !== alertsBox) el.remove();
+  for (const el of [...table.children]) if (el !== hands) el.remove();
   hands.insertAdjacentHTML('afterend', circlePhaseHtml(players) + circleNominationHtml(liveNom) + seats);
 
   // Only one player can be marked (mid-nomination) at a time, but Mark stays
@@ -5982,10 +5632,7 @@ function saveNightSteps() {
   try { localStorage.setItem(NIGHT_STEPS_KEY, JSON.stringify({ steps: nightSteps })); } catch { /* ignore */ }
 }
 
-const notesNameOf = (p) => p.name ?? `Seat ${p.seat + 1}`;
 
-// A player's character as a bundled id: grimoire token first (storyteller
-// always sees it), notes-grid role assignment as the fallback.
 // A player's character (their grimoire token) as a bundled id. The night order
 // reads only botc.app's own state — never the notes table.
 function bundledRoleOf(p) {
@@ -6141,6 +5788,11 @@ function messageFits(tokens, tpl, c) {
   return tokens.every(t => tpl.some(x => slotAccepts(x, t, c)));
 }
 
+// The ability counts as used once any of its 'pick' inputs is filled in.
+function stepUsedAbility(c) {
+  return (c.spec?.inputs ?? []).some((_, i) => fieldUse(c.action, i) === 'pick' && (c.step.inputs[`i${i}`] ?? '') !== '');
+}
+
 function answerTemplate(c) {
   return c.action.tell ?? (c.spec?.inputs ?? []).map((_, i) => fieldUse(c.action, i) === 'tell' ? `i${i}` : null).filter(Boolean);
 }
@@ -6177,7 +5829,7 @@ function syncFromApp(c) {
       }
       step.done = true;
       step.answered = true;
-      step.used = (c.spec?.inputs ?? []).some((_, i) => fieldUse(c.action, i) === 'pick' && (step.inputs[`i${i}`] ?? '') !== '');
+      step.used = stepUsedAbility(c);
       changed = true;
     }
   }
@@ -6324,7 +5976,7 @@ function syncStepInputs(c) {
       roleOfName: (n) => { const p = playerByNotesName(n); const id = p && trueRoleOf(p); return id ? scriptRoleFor(id).id : null; },
       teamOf: teamOfPlayer,
       nameOf: notesNameOf,
-      hasReminder: (p, roleId, name) => (p?.reminders ?? []).some(r => isLiveReminder(r, roleId, name)),
+      hasReminder,
       nominationsYesterday: () => nominationsOfDay(night - 1),
       executedYesterday: () => { const p = executedOnDay(night - 1); return p ? notesNameOf(p) : null; },
       lastExecuted: () => { for (let d = night - 1; d >= 1; d--) { const p = executedOnDay(d); if (p) return notesNameOf(p); } return null; },
@@ -6408,7 +6060,7 @@ function resolveTemplate(tpl, c) {
 // time (only when actually sending — the preview stays put).
 function stepAnswer(c, shuffle = false) {
   if (c.action.zeroIf && !playersOfTeam(c.action.zeroIf).length) return { tokens: [{ id: 'zero' }], missing: false };
-  let tpl = c.action.tell ?? (c.spec?.inputs ?? []).map((_, i) => fieldUse(c.action, i) === 'tell' ? `i${i}` : null).filter(Boolean);
+  let tpl = answerTemplate(c);
   const sh = c.action.shuffle;
   if (shuffle && sh?.length === 2 && Math.random() < 0.5) tpl = tpl.map(x => x === sh[0] ? sh[1] : x === sh[1] ? sh[0] : x);
   return resolveTemplate(tpl, c);
@@ -6566,7 +6218,7 @@ function gainedAbilities(night) {
 }
 
 // Tonight's steps in wake order, with labels (Dusk, Minion info, …) between.
-// Roles nobody holds are left out, counted for the footer.
+// Roles nobody holds are left out.
 function buildNightSteps(night) {
   const session = stepGameKey();
   const entries = night === 1 ? _nightOrder().firstNight : _nightOrder().otherNight;
@@ -6574,7 +6226,6 @@ function buildNightSteps(night) {
   const byRole = playersByRoleId();
   const seated = (currentState?.players ?? []).filter(p => teamOfPlayer(p) !== 'traveller').length;
   const items = [];
-  const notInPlay = [];
   let changed = false;
 
   // Things to confirm rather than wake (an action's `confirm`, e.g. whose
@@ -6670,13 +6321,13 @@ function buildNightSteps(night) {
     if (e.id === 'empath') addLateInfo();
     const holders = scriptIds.has(e.id) ? (byRole[e.id] ?? []).filter(h => !h.via).map(h => h.player) : [];
     const extra = viaHolders.filter(g => g.bundledId === e.id);
-    if (!holders.length && !extra.length) { if (scriptIds.has(e.id)) notInPlay.push(e.id); continue; }
+    if (!holders.length && !extra.length) continue;
     for (const player of holders) addStep(e.id, player);
     for (const g of extra) addStep(e.id, g.player, g);
   }
   addLateInfo();
   if (changed) saveNightSteps();
-  return { items, notInPlay, confirms };
+  return { items, confirms };
 }
 
 function nightStepCtx(key) {
@@ -6731,7 +6382,7 @@ function nightStepFinish(key, send) {
   placeStepReminders(c);
   c.step.done = true;
   c.step.doneAt = Date.now();
-  c.step.used = (c.spec?.inputs ?? []).some((_, i) => fieldUse(c.action, i) === 'pick' && (c.step.inputs[`i${i}`] ?? '') !== '');
+  c.step.used = stepUsedAbility(c);
   logNightStep(c);
   if (nightStepExpanded === key) nightStepExpanded = null;
   saveNightSteps();
@@ -7040,7 +6691,7 @@ function nightStepBodyHtml(c) {
 
 function renderNightStepsHtml(night) {
   buildNightSteps(night); // first pass fills the steps (a grant filled now, e.g. the Cannibal's, shows below)
-  const { items, notInPlay, confirms } = buildNightSteps(night);
+  const { items, confirms } = buildNightSteps(night);
   // Once-per-game abilities already used don't wake.
   for (const it of items) if (it.key && it.action.once && !it.step.done && usedEarlier(it)) it.usedUp = true;
   // The active step: the first unfinished one whose holder is alive.
@@ -7134,14 +6785,13 @@ function renderNightStepsHtml(night) {
       ${open && s ? nightStepInputHtml(c.key, s, grantIdx, c.step, 'note') : `<button class="link-btn link-btn-muted nstep-confirm-change" data-key="${esc(c.key)}">change</button>`}</div>`;
   }).join('');
 
-  const footer = '';
   const titleEl = document.getElementById('night-order-title');
   if (titleEl) titleEl.textContent = `Night ${night}`;
   const countEl = document.getElementById('night-order-count');
   if (countEl) countEl.textContent = steps.length ? `${doneCount} / ${steps.length}` : '';
   return (rows.length
     ? `<ol class="norder-list">${rows.join('')}</ol>`
-    : `<div class="nstep-empty">Nobody wakes tonight — assign roles in the circle to fill the order.</div>`) + confirmHtml + footer;
+    : `<div class="nstep-empty">Nobody wakes tonight — assign roles in the circle to fill the order.</div>`) + confirmHtml;
 }
 
 let nightOrderRenderPending = false;
@@ -7666,12 +7316,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   const chip = document.getElementById('token-popover');
   if (chip && chip.style.display !== 'none') closePopover();
-  const role = document.getElementById('meta-role-popover');
-  if (role && role.style.display !== 'none') role.style.display = 'none';
-  const sigRole = document.getElementById('signal-role-popover');
-  if (sigRole && sigRole.style.display !== 'none') sigRole.style.display = 'none';
-  const gameRole = document.getElementById('game-role-popover');
-  if (gameRole && gameRole.style.display !== 'none') gameRole.style.display = 'none';
+  closeListPicker();
   closeSignalPopover();
   if (signalHistoryOpen) closeSignalHistoryPanel();
   if (!closePreviewCheck()) closePreviewPopup(); // overlay first, then the list under it
@@ -7711,7 +7356,6 @@ document.getElementById('clear-notes').addEventListener('click', () => {
   renderNightOrder();
 });
 
-window.__botc = { get state() { return currentState; }, get timeline() { return fullTimeline; }, get roles() { return revealedRoles; } };
 
 
 // ── Name highlight on hover ───────────────────────────────────────────────
@@ -7773,6 +7417,16 @@ function showReloadPrompt() {
   }, 300);
 }
 
+// Unlike the no-data banner this one survives state pushes: the old bridge
+// keeps sending them, it's just running outdated code.
+function showStaleBridgeBanner() {
+  if (document.getElementById('stale-bridge-banner')) return;
+  const el = document.createElement('div');
+  el.id = 'stale-bridge-banner';
+  el.innerHTML = 'The extension was updated while botc.app was open. <strong>Please reload the botc.app tab</strong> to use the new version.';
+  document.body.insertBefore(el, document.querySelector('main'));
+}
+
 sendBg({ type: 'GET_STATE' }, (response) => {
   if (!response) { showReloadPrompt(); return; }
   applyFullRefresh(response);
@@ -7821,7 +7475,7 @@ chrome.runtime.onMessage.addListener((message) => {
     else if (payload.type === 'WS_RECV' || payload.type === 'WS_SEND') { appendWsEvent(payload); }
     else if (payload.type === 'CONN') { applyConn(payload.data); }
     else if (payload.type === 'VOTE_CLOCK') { voteClock = payload.data; updateVoteClock(); updateShutUpButton(); }
-    else if (payload.type === 'NEEDS_RELOAD') { showReloadPrompt(); }
+    else if (payload.type === 'STALE_BRIDGE') { showStaleBridgeBanner(); }
     return;
   }
   if (message.type === 'NEEDS_RELOAD') {

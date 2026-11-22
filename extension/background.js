@@ -7,18 +7,35 @@ let companionTabId = null;
 // tabs open, merging their payloads corrupts state (phantom death diffs,
 // flip-flopping game detection) and fanning commands out executes them once
 // per tab — so one tab is adopted and the rest are ignored until it closes.
+// Mirrored to session storage: a service worker restart would otherwise adopt
+// whichever tab posts first, and route commands to tabs[0] until then.
 let activeBridgeTabId = null;
+const bridgeTabRestored = chrome.storage.session.get('activeBridgeTabId')
+  .then(d => { if (activeBridgeTabId === null) activeBridgeTabId = d.activeBridgeTabId ?? null; })
+  .catch(() => {});
+
+function setActiveBridgeTab(tabId) {
+  activeBridgeTabId = tabId;
+  chrome.storage.session.set({ activeBridgeTabId: tabId }).catch(() => {});
+}
+
+// The adopted tab among `tabs`, else the first of them.
+async function pickBridgeTab(tabs) {
+  await bridgeTabRestored;
+  return tabs.find(t => t.id === activeBridgeTabId) ?? tabs[0];
+}
 
 async function isActiveBridgeTab(tabId) {
+  await bridgeTabRestored;
   if (tabId == null || tabId === activeBridgeTabId) return true;
-  if (activeBridgeTabId === null) { activeBridgeTabId = tabId; return true; }
+  if (activeBridgeTabId === null) { setActiveBridgeTab(tabId); return true; }
   try {
     // A tab that has left /play (back to the lobby, another site) no longer
     // runs a game — holding on to it would shut out the tab that does.
     const active = await chrome.tabs.get(activeBridgeTabId);
     if (isPlayUrl(active.url)) return false;
   } catch { /* closed */ }
-  activeBridgeTabId = tabId;
+  setActiveBridgeTab(tabId);
   return true;
 }
 
@@ -118,7 +135,7 @@ const within = (ms, promise) => Promise.race([promise, new Promise(r => setTimeo
 async function checkConnection() {
   const tabs = await chrome.tabs.query({ url: 'https://botc.app/play*' });
   if (tabs.length === 0) return 'no-tab';
-  const tab = tabs.find(t => t.id === activeBridgeTabId) ?? tabs[0];
+  const tab = await pickBridgeTab(tabs);
   if (tab.discarded || tab.frozen) return 'asleep';
   try {
     const res = await within(3500, chrome.tabs.sendMessage(tab.id, { type: 'PING' }));
@@ -172,7 +189,7 @@ function setCameraFeeds(show, restore) {
 // brought forward for the capture and the previously active tab restored.
 async function takeEndScreenshot() {
   const tabs = await chrome.tabs.query({ url: 'https://botc.app/play*' });
-  const tab = tabs.find(t => t.id === activeBridgeTabId) ?? tabs[0];
+  const tab = await pickBridgeTab(tabs);
   if (!tab) throw new Error('No botc.app game tab is open.');
 
   const [previous] = await chrome.tabs.query({ windowId: tab.windowId, active: true });
@@ -238,6 +255,21 @@ function votesNeeded(players, nomineeSeat, highscore) {
 // nomination: it's kept out of the history when it closes.
 const isShutUpNomination = (n) => !!n && n.nominatorSeat === n.nomineeSeat && n.seatNames?.[n.nomineeSeat] == null;
 
+// Snapshot seat→name when a nomination opens: seats get shuffled/rotated later,
+// so resolving them against the then-current player list would rewrite history.
+function seatNameSnapshot(state) {
+  const seatNames = {};
+  for (const p of state?.players ?? []) {
+    if (p.name != null) seatNames[p.seat] = p.name;
+  }
+  return seatNames;
+}
+
+// Archives a nomination that closed (or was replaced). closedTs lets
+// handleVoteClock tell a store resync from a genuinely new nomination.
+const archiveNomination = (nominations, n) =>
+  isShutUpNomination(n) ? nominations : [...nominations, { ...n, closedTs: Date.now() }];
+
 async function handleNominationFrame(eventName, eventData, ts) {
   if (isDup(_nomDedupMap, eventName + JSON.stringify(eventData))) return;
 
@@ -248,26 +280,21 @@ async function handleNominationFrame(eventName, eventData, ts) {
       const [nominatorSeat, nomineeSeat] = eventData.nomination;
       // `highscore` on the entry is the votes needed, not the app's raw value.
       const highscore = votesNeeded(latestState?.players ?? [], nomineeSeat, eventData.highscore);
-      // Snapshot seat→name now: seats get shuffled/rotated later, so resolving
-      // them against the then-current player list would rewrite history.
-      const seatNames = {};
-      for (const p of latestState?.players ?? []) {
-        if (p.name != null) seatNames[p.seat] = p.name;
-      }
+      const seatNames = seatNameSnapshot(latestState);
       // The store's vote clock may have opened this one already (it sees the
       // same nomination, and can beat the frame here).
       if (pendingNomination && pendingNomination.nominatorSeat === nominatorSeat && pendingNomination.nomineeSeat === nomineeSeat) return;
+      // A different one still open means its close was missed: archive it.
+      const archived = pendingNomination ? archiveNomination(nominations, pendingNomination) : nominations;
       const entry = { ts, nominatorSeat, nomineeSeat, seatNames, highscore, handState: {}, yesSeats: [] };
-      await store.set({ pendingNomination: entry });
+      await store.set({ nominations: archived, pendingNomination: entry });
       // The companion needs the open nomination too, not just closed ones: it
       // counts toward the per-day nominate-once limits the moment it's made.
-      await sendToCompanion({ type: 'NOMINATIONS_UPDATE', nominations, pendingNomination: entry });
-    } else if (eventData.nomination === false && isShutUpNomination(pendingNomination)) {
-      await store.set({ pendingNomination: null });
-      await sendToCompanion({ type: 'NOMINATIONS_UPDATE', nominations, pendingNomination: null });
+      await sendToCompanion({ type: 'NOMINATIONS_UPDATE', nominations: archived, pendingNomination: entry });
     } else if (eventData.nomination === false && pendingNomination) {
-      await store.set({ nominations: [...nominations, pendingNomination], pendingNomination: null });
-      await sendToCompanion({ type: 'NOMINATIONS_UPDATE', nominations: [...nominations, pendingNomination], pendingNomination: null });
+      const archived = archiveNomination(nominations, pendingNomination);
+      await store.set({ nominations: archived, pendingNomination: null });
+      await sendToCompanion({ type: 'NOMINATIONS_UPDATE', nominations: archived, pendingNomination: null });
     }
     return;
   }
@@ -354,7 +381,7 @@ async function handleVoteClock(clock) {
   // Closed, or replaced by another nomination. An empty store before the
   // session is live (page load, reconnect) is not a close.
   if (pendingNomination && !isOpen(pendingNomination) && (open || clock.connected)) {
-    if (!isShutUpNomination(pendingNomination)) nominations = [...nominations, { ...pendingNomination, closedTs: Date.now() }];
+    nominations = archiveNomination(nominations, pendingNomination);
     pendingNomination = null;
   }
 
@@ -368,10 +395,7 @@ async function handleVoteClock(clock) {
       pendingNomination = entry;
     } else {
       const [nominatorSeat, nomineeSeat] = open;
-      const seatNames = {};
-      for (const p of latestState?.players ?? []) {
-        if (p.name != null) seatNames[p.seat] = p.name;
-      }
+      const seatNames = seatNameSnapshot(latestState);
       pendingNomination = {
         ts: Date.now(), nominatorSeat, nomineeSeat, seatNames,
         highscore: votesNeeded(latestState?.players ?? [], nomineeSeat, clock.highscore),
@@ -703,15 +727,14 @@ async function handleWsPayload(payload) {
 }
 
 chrome.action.onClicked.addListener(async () => {
-  if (companionTabId !== null) {
-    try {
-      await chrome.tabs.get(companionTabId);
-      chrome.tabs.update(companionTabId, { active: true });
-      await pushStateToCompanion();
-      return;
-    } catch {
-      companionTabId = null;
-    }
+  // resolveCompanionTabId also finds the tab by URL, so a service worker restart
+  // (which wipes companionTabId) doesn't open a second companion.
+  const tabId = await resolveCompanionTabId();
+  if (tabId !== null) {
+    const tab = await chrome.tabs.update(tabId, { active: true });
+    if (tab?.windowId !== undefined) chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+    await pushStateToCompanion();
+    return;
   }
   const companion = await chrome.tabs.create({ url: chrome.runtime.getURL('companion/index.html') });
   companionTabId = companion.id;
@@ -719,7 +742,7 @@ chrome.action.onClicked.addListener(async () => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (tabId === companionTabId) companionTabId = null;
-  if (tabId === activeBridgeTabId) activeBridgeTabId = null;
+  if (tabId === activeBridgeTabId) setActiveBridgeTab(null);
 });
 
 // Pick up botc.app tabs that were already open when the extension was
@@ -790,7 +813,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       // the command independently, so fanning out duplicates it (two signals,
       // two added seats, two shuffles).
       const tabs = await chrome.tabs.query({ url: 'https://botc.app/play*' });
-      const target = tabs.find(t => t.id === activeBridgeTabId) ?? tabs[0];
+      const target = await pickBridgeTab(tabs);
       if (target) chrome.tabs.sendMessage(target.id, message).catch(() => {});
       sendResponse({ ok: true });
     })();
@@ -803,7 +826,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       const url = `https://botc.app/join/${encodeURIComponent(String(message.session ?? ''))}`;
       const tabs = await chrome.tabs.query({ url: 'https://botc.app/*' });
-      const target = tabs.find(t => t.id === activeBridgeTabId) ?? tabs[0];
+      const target = await pickBridgeTab(tabs);
       if (target) {
         await chrome.tabs.update(target.id, { url, active: true });
         if (target.windowId != null) chrome.windows?.update(target.windowId, { focused: true }).catch(() => {});

@@ -1,6 +1,7 @@
 // Night wake order for the storyteller sheet. Role entries reference bundled
 // role ids from roles.js; label entries are fixed markers (Dusk, Dawn, info
-// steps). Generated from night-order-first-night.txt / night-order-other-night.txt.
+// steps). Matches the official nightsheet (ThePandemoniumInstitute/botc-release,
+// resources/data/nightsheet.json).
 const BOTC_NIGHT_ORDER = {
   firstNight: [
   { label: "Dusk" },
@@ -21,6 +22,7 @@ const BOTC_NIGHT_ORDER = {
   { id: 'poppygrower' },
   { id: 'yaggababble' },
   { id: 'magician' },
+  { id: 'tor' },
   { label: "Minion Info" },
   { id: 'snitch' },
   { id: 'lunatic' },
@@ -88,11 +90,12 @@ const BOTC_NIGHT_ORDER = {
   { id: 'duchess' },
   { id: 'toymaker' },
   { id: 'wraith' },
+  { id: 'cacklejack' },
   { id: 'barista' },
-  { id: 'bonecollector' },
   { id: 'bureaucrat' },
-  { id: 'harlot' },
   { id: 'thief' },
+  { id: 'harlot' },
+  { id: 'bonecollector' },
   { id: 'philosopher' },
   { id: 'poppygrower' },
   { id: 'sailor' },
@@ -120,6 +123,7 @@ const BOTC_NIGHT_ORDER = {
   { id: 'lunatic' },
   { id: 'exorcist' },
   { id: 'lycanthrope' },
+  { id: 'princess' },
   { id: 'legion' },
   { id: 'imp' },
   { id: 'zombuul' },
@@ -178,6 +182,7 @@ const BOTC_NIGHT_ORDER = {
   { id: 'general' },
   { id: 'chambermaid' },
   { id: 'mathematician' },
+  { id: 'riot' },
   { label: "Dawn" },
   { id: 'leviathan' },
   ],

@@ -12,7 +12,14 @@
 (function () {
   'use strict';
 
-  if (window.__botcBridgeActive) return;
+  // A bridge from before an extension reload/update is still running here (MAIN
+  // world outlives the extension) and keeps the WebSocket hook, which can't be
+  // re-installed on a live socket — so this copy steps aside and asks for a tab
+  // reload. Delayed because ensureBridge injects the new injector right after us.
+  if (window.__botcBridgeActive) {
+    setTimeout(() => window.postMessage({ source: 'botc-bridge', payload: { type: 'STALE_BRIDGE' } }, '*'), 1000);
+    return;
+  }
   window.__botcBridgeActive = true;
 
   // ── Helpers ───────────────────────────────────────────────────────────────
@@ -621,16 +628,6 @@
     debounceTimer = setTimeout(sendState, 150);
   };
 
-  // ── Watch the store for signal history ──────────────────────────────────
-  // session.signals lives only in memory (never written to localStorage), so
-  // the localStorage/DOM watchers above never see it change — subscribe to the
-  // specific mutations directly so new sent/received signals show up promptly.
-  const VOTE_CLOCK_MUTATIONS = new Set([
-    'vote/lockVote', 'vote/toggleVoteInProgress', 'vote/setVoteTimer',
-    'vote/setVotingSpeed', 'vote/nomination', 'vote/setNomination',
-    'vote/setHighscore', 'vote/setNominationType', 'vote/setSelectedPlayer',
-    'vote/toggleIsHidden',
-  ]);
   // ── Connection status ─────────────────────────────────────────────────────
   // botc.app's own view of its session socket, straight from the store — the
   // companion's connection indicator. Counting WebSocket frames instead says
@@ -664,7 +661,7 @@
       if (CONN_MUTATIONS.has(mutation.type)) postConn();
       // Vote clock ticks go out on their own, undebounced — a full state
       // rebuild per tick would be wasted work and lag the hand.
-      if (VOTE_CLOCK_MUTATIONS.has(mutation.type) || mutation.type.startsWith('vote/')) post({ type: 'VOTE_CLOCK', data: voteClockOf() });
+      if (mutation.type.startsWith('vote/')) post({ type: 'VOTE_CLOCK', data: voteClockOf() });
       // Voice channels and text messages, as the app itself applied them. Same
       // events the WebSocket hook reads off the wire, but these don't depend on
       // the hook having caught the socket (or on the socket being a WebSocket at

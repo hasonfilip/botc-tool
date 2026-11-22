@@ -94,7 +94,7 @@
 					</div>
 					<div class="sig-group">
 						<div class="sig-label">Phrases</div>
-						<div id="signal-token-grid" class="sig-phrases">
+						<div class="sig-phrases">
 							<div id="sig-col-left" class="sig-token-col"></div>
 							<div id="sig-col-right" class="sig-token-col"></div>
 							<button type="button" id="signal-role-btn" class="sig-insert-link" aria-haspopup="listbox" aria-expanded="false">+ role</button>
@@ -251,7 +251,7 @@
 						</div>
 						<div class="timer-status-bar"><span></span></div>
 					</div>
-					<div id="st-timer-block-2" class="st-timer-block">
+					<div class="st-timer-block">
 					<div id="timer-duration-row">
 						<div id="timer-duration-inputs">
 							<input id="timer-minutes" type="number" min="0" max="99" value="1" class="tp-num" title="minutes" aria-label="Minutes" />
@@ -285,7 +285,7 @@
 
 			<section id="chats-section">
 				<h2><span class="chevron">▾</span> Conversations <button id="toggle-night"
-						class="toggle-btn">show nights</button> <button id="toggle-chat-filter"
+						class="toggle-btn">show night</button> <button id="toggle-chat-filter"
 						class="toggle-btn">filter</button> <button id="clear-chat-filter"
 						class="player-filter-clear" style="display:none"></button></h2>
 				<div id="chats-filter" class="player-filter player-filter-hidden"></div>
@@ -309,7 +309,7 @@
 	</main>
 
 	<div id="player-timeline-panel" class="side-panel">
-		<div id="ptl-header" class="side-panel-header">
+		<div class="side-panel-header">
 			<span id="ptl-name" class="side-panel-title"></span>
 			<button id="ptl-close" class="side-panel-close">✕</button>
 		</div>
@@ -360,11 +360,6 @@
 						<button id="script-lib-base3-btn" type="button" class="toggle-btn" title="Only Trouble Brewing, Bad Moon Rising and Sects &amp; Violets characters">Base 3</button>
 						<button id="script-lib-one-demon-btn" type="button" class="toggle-btn" title="Scripts with exactly one Demon">Mono Demon</button>
 						<button id="script-lib-fav-filter-btn" type="button" class="toggle-btn script-lib-fav-filter-btn" aria-label="Only favourites" title="Only favourites">★</button>
-						<span id="script-lib-label-group" class="script-lib-label-group">
-							<span class="script-lib-filter-sep"></span>
-							<span class="script-lib-filter-label">Label</span>
-							<span id="script-lib-label-filters" class="script-lib-label-filters"></span>
-						</span>
 						<span id="script-lib-diff-range" class="script-lib-diff-range" title="Difficulty — drag or click to set the range, double-click to reset">
 							<span class="script-lib-diff-track"></span>
 							<input id="script-lib-diff-lo" type="range" min="1" max="5" step="0.1" value="1" aria-label="Minimum difficulty" />
