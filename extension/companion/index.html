@@ -208,7 +208,10 @@
 				<div id="st-tab-timer" class="st-tab-panel">
 					<div class="st-tab-panel-head">
 						<div class="st-tab-panel-title">Phase</div>
-						<button id="night-view-switch" class="link-btn link-btn-muted" hidden></button>
+						<div id="night-view-switch" class="seg" role="group" aria-label="Show at night" hidden>
+							<button type="button" class="btn btn-seg" data-view="order">Night order</button>
+							<button type="button" class="btn btn-seg" data-view="timer">Timer</button>
+						</div>
 					</div>
 					<button id="next-phase-btn" class="btn btn-primary btn-block"><svg class="btn-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4l10 8-10 8z"></path><path d="M19 5v14"></path></svg> Next Phase</button>
 					<div class="st-btn-pair">

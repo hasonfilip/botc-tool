@@ -6976,9 +6976,17 @@ function renderNightOrder() {
   const showOrder = isNight && !nightShowTimer;
   document.getElementById('night-order-section').hidden = !showOrder;
   document.querySelectorAll('.st-timer-block').forEach(el => { el.hidden = showOrder; });
-  // One switch in the Phase header, only at night.
+  // Night order | Timer switch in the Phase header — only at night; by day
+  // the Timer is all there is.
   const sw = document.getElementById('night-view-switch');
-  if (sw) { sw.hidden = !isNight; sw.textContent = nightShowTimer ? 'Night order' : 'Timer'; }
+  if (sw) {
+    sw.hidden = !isNight;
+    sw.querySelectorAll('[data-view]').forEach(btn => {
+      const on = (btn.dataset.view === 'timer') === nightShowTimer;
+      btn.classList.toggle('toggle-btn-active', on);
+      btn.setAttribute('aria-pressed', String(on));
+    });
+  }
   if (!showOrder) { listEl.innerHTML = ''; return; }
 
   // Don't rebuild under a focused dropdown or input: state updates arrive
@@ -7034,8 +7042,10 @@ document.getElementById('night-order-columns').addEventListener('mouseover', (e)
 });
 document.getElementById('night-order-columns').addEventListener('mouseleave', () => { nightTipEl.hidden = true; });
 
-document.getElementById('night-view-switch').addEventListener('click', () => {
-  nightShowTimer = !nightShowTimer;
+document.getElementById('night-view-switch').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-view]');
+  if (!btn) return;
+  nightShowTimer = btn.dataset.view === 'timer';
   nightShowTimerPhase = currentState?.phase ?? 0;
   renderNightOrder();
 });
