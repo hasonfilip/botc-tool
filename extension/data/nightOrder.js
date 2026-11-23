@@ -87,10 +87,10 @@ const BOTC_NIGHT_ORDER = {
   ],
   otherNight: [
   { label: "Dusk" },
+  { id: 'cacklejack' }, // moved first: the change can happen anywhere in the night
   { id: 'duchess' },
   { id: 'toymaker' },
   { id: 'wraith' },
-  { id: 'cacklejack' },
   { id: 'barista' },
   { id: 'bureaucrat' },
   { id: 'thief' },

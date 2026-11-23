@@ -8,7 +8,9 @@
 //           'none'    — the holder isn't woken (an announcement, bookkeeping,
 //                       or only other players are woken — see notify)
 //   ask:    tokens of the opening message, when not the default for `wake`
-//           (e.g. the Widow is shown the grimoire with her "Make a choice!")
+//           (e.g. the Widow is shown the grimoire with her "Make a choice!");
+//           on a 'none' step, an optional prompt (the Cacklejack's, if they
+//           didn't choose by day)
 //   once:   once-per-game ability — the step shows "used" after a night it was used
 //   when:   the condition for waking at all, shown on the step (not checked)
 //   fields: { i<n>: 'pick' | 'tell' | 'note' } per chip input
@@ -36,7 +38,9 @@
 //           isn't always first)
 //   pick:   rules the player's picks must follow, from the ability's wording:
 //           'alive', 'dead', 'notSelf', 'notTraveller', 'distinct' (all
-//           different players), 'notLastNight' (not who they chose last night).
+//           different players), 'notLastNight' (not who they chose last night),
+//           'threeAfterNone' (3 picks only if their last choice was no-one — the Po).
+//           A pick field marked 'hide' isn't shown that night.
 //           A reply that breaks one is flagged, with a "No + Make a choice!" reply.
 //   dead:   the holder acts even though dead (Ravenkeeper, Sage, Farmer, …) —
 //           otherwise dead holders are skipped when picking the active step
@@ -140,6 +144,9 @@ const BOTC_NIGHT_ACTIONS = {
   stormcatcher: { wake: 'none' },
   amnesiac:     { wake: 'info', fields: { i0: 'note' } },
   engineer:     { wake: 'ability', once: true, fields: { i0: 'pick' } },
+  // Chooses by day (or now, if they didn't); the change is the storyteller's,
+  // any time this night. The player who changes is shown YOU ARE + new token.
+  cacklejack:   { wake: 'none', ask: ['choice'], reminders: { i0: 'Not Me' }, fields: { i0: 'note', i1: 'note', i2: 'note' }, notify: [{ to: 'i1', tokens: ['you', 'i2'] }] },
   bonecollector:{ wake: 'ability', pick: ['dead'], once: true, fields: { i0: 'pick' } },
   apprentice:   { wake: 'info', fields: { i0: 'tell' }, tell: ['you', 'i0'], grants: { from: 'i0' } },
   barista:      { wake: 'none', fields: { i0: 'note', i1: 'note' }, optionTokens: { i1: { 'true info': 'one', 'sober/double': 'two' } }, notify: [{ to: 'i0', tokens: ['selected', 'self', 'i1'] }] },
@@ -197,7 +204,7 @@ const BOTC_NIGHT_ACTIONS = {
   zombuul:      { wake: 'choice', dead: true, when: 'No one died today', fields: { i0: 'pick' } },
   pukka:        { wake: 'choice', fields: { i0: 'pick' } },
   shabaloth:    { wake: 'choice', pick: ['distinct'], fields: { i0: 'pick', i1: 'pick' } },
-  po:           { wake: 'ability', reminders: { i0: 'Dead' }, fields: { i0: 'pick' } },
+  po:           { wake: 'ability', pick: ['distinct', 'threeAfterNone'], reminders: { i0: 'Dead', i1: 'Dead', i2: 'Dead' }, fields: { i0: 'pick', i1: 'pick', i2: 'pick' } },
   fanggu:       { wake: 'choice', reminders: { i0: 'Dead' }, fields: { i0: 'pick' }, notify: [{ to: 'i0', if: ['i0:outsider', 'noReminder:Once'], tokens: ['you', 'self', 'evil'] }] },
   nodashii:     { wake: 'choice', reminders: { i0: 'Dead' }, fields: { i0: 'pick' } },
   vortox:       { wake: 'choice', reminders: { i0: 'Dead' }, fields: { i0: 'pick' } },
@@ -210,7 +217,9 @@ const BOTC_NIGHT_ACTIONS = {
   leviathan:    { wake: 'none' },
   gossip:       { wake: 'none' },
   yaggababble:  { wake: 'info', fields: { i0: 'tell' }, other: { wake: 'none', fields: { i0: 'note' } } },
-  kazali:       { wake: 'info', notify: [{ to: 'minions', tokens: ['you', 'recipientRole', 'evil'] }], other: { wake: 'choice', reminders: { i0: 'Dead' }, fields: { i0: 'pick' }, notify: [] } },
+  // Night 1: they choose which players are which Minions; you swap the tokens,
+  // then the new Minions are shown who they are.
+  kazali:       { wake: 'choice', fields: { i0: 'hide' }, notify: [{ to: 'minions', tokens: ['you', 'recipientRole', 'evil'] }], other: { wake: 'choice', reminders: { i0: 'Dead' }, fields: { i0: 'pick' }, notify: [] } },
   lordoftyphon: { wake: 'none', notify: [{ to: 'neighbours', tokens: ['you', 'recipientRole', 'evil'] }], other: { wake: 'choice', reminders: { i0: 'Dead' }, fields: { i0: 'pick' }, notify: [] } },
   wraith:       { wake: 'none' },
   magician:     { wake: 'none' },

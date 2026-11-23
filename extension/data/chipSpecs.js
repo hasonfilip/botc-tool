@@ -640,6 +640,8 @@ const BOTC_CHIP_SPECS = {
   po: {
     inputs: [
       { type: 'player', label: 'Kill target' },
+      { type: 'player?', label: 'Kill 2' }, // only after choosing no-one
+      { type: 'player?', label: 'Kill 3' },
     ],
     confirmedLabel: 'po-killed',
   },
@@ -760,6 +762,8 @@ const BOTC_CHIP_SPECS = {
   cacklejack: {
     inputs: [
       { type: 'player', label: 'Chosen' },
+      { type: 'player', label: 'Changes' },
+      { type: 'role', label: 'Becomes' },
     ],
   },
   gunslinger: {

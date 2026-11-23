@@ -2685,7 +2685,7 @@ function nightStepSuggestions(player) {
     const c = nightStepCtx(key);
     if (!c || c.player.seat !== player.seat || c.step.stOnly) continue;
     const hint = NIGHT_INFO_NAMES[c.bundledId] ?? scriptRoleFor(c.bundledId).name;
-    if (c.action.wake === 'choice' || c.action.wake === 'ability') {
+    if (c.action.wake === 'choice' || c.action.wake === 'ability' || c.action.ask) {
       const ask = c.action.ask ? resolveTemplate(c.action.ask, c).tokens : [{ id: c.action.wake }];
       out.push({ label: ask.map(signalTokenLabel).join(' + '), hint, cls: 'night', tokens: ask });
     }
@@ -5560,9 +5560,15 @@ const NIGHT_MARKER_REMINDERS = {
   'Dawn': 'Wait a few seconds, then call for eyes open.',
 };
 
+// Our own wording where the official sheet's doesn't fit how the step is used.
+const NIGHT_REMINDER_OVERRIDES = {
+  // Listed at the start of the night, though the change may happen anywhere in it.
+  cacklejack: { other: "If the Cacklejack didn't choose a player today, wake them to choose now. Any other player may change character at any point this night: wake them & show the *YOU ARE* info token & their new character token." },
+};
+
 // The night sheet instruction for a role (or marker) tonight, as raw text.
 function nightReminderText(bundledId, night) {
-  const r = _nightReminders()[bundledId];
+  const r = NIGHT_REMINDER_OVERRIDES[bundledId] ?? _nightReminders()[bundledId];
   return (night === 1 ? r?.first : r?.other) ?? '';
 }
 
@@ -5672,6 +5678,12 @@ function scriptRoleFor(bundledId) {
 function teamOfPlayer(p) {
   const id = trueRoleOf(p);
   return (id && scriptRoleFor(id).team) || p.team || '';
+}
+// The script's role ids plus seated Travellers' (they aren't on the script sheet).
+function inPlayRoleIds() {
+  const ids = new Set((currentState?.roles ?? []).map(r => _normalizeId(r.id)));
+  for (const p of currentState?.players ?? []) if (teamOfPlayer(p) === 'traveller' && p.roleId) ids.add(bundledRoleOf(p));
+  return ids;
 }
 const playersOfTeam = (team) => (currentState?.players ?? []).filter(p => teamOfPlayer(p) === team);
 
@@ -6115,6 +6127,15 @@ function newReplies(c) {
     .filter(tokens => tokens.length);
 }
 
+// The Po's charge: did their last finished step (an earlier night) choose no-one?
+function lastChoiceWasNone(c) {
+  for (let n = c.night - 1; n >= 1; n--) {
+    const prev = nightSteps[`${stepGameKey()}|${n}|${c.bundledId}|${notesNameOf(c.player)}`];
+    if (prev?.done) return !!prev.passed || prev.used === false;
+  }
+  return false;
+}
+
 // Picks that break the role's rules (`pick` in nightActions.js) — players do
 // pick a player who died tonight, or themselves, or the same one twice.
 function pickProblems(c) {
@@ -6132,6 +6153,11 @@ function pickProblems(c) {
     if (rules.includes('notTraveller') && teamOfPlayer(p) === 'traveller') out.push(`${named(p)} is a Traveller — not allowed`);
   }
   if (rules.includes('distinct') && new Set(picks).size < picks.length) out.push('Same player chosen twice — they must choose different players');
+  if (rules.includes('threeAfterNone')) {
+    const three = lastChoiceWasNone(c);
+    if (three && picks.length && picks.length < 3) out.push('Their last choice was no-one — they must choose 3 players');
+    if (!three && picks.length > 1) out.push('They may only choose 1 player (3 only after choosing no-one)');
+  }
   if (rules.includes('notLastNight')) {
     const prev = nightSteps[`${stepGameKey()}|${c.night - 1}|${c.bundledId}|${notesNameOf(c.player)}`];
     const last = new Set(pickFields.map(([, i]) => prev?.inputs?.[`i${i}`]).filter(Boolean));
@@ -6222,7 +6248,7 @@ function gainedAbilities(night) {
 function buildNightSteps(night) {
   const session = stepGameKey();
   const entries = night === 1 ? _nightOrder().firstNight : _nightOrder().otherNight;
-  const scriptIds = new Set((currentState?.roles ?? []).map(r => _normalizeId(r.id)));
+  const scriptIds = inPlayRoleIds();
   const byRole = playersByRoleId();
   const seated = (currentState?.players ?? []).filter(p => teamOfPlayer(p) !== 'traveller').length;
   const items = [];
@@ -6580,6 +6606,7 @@ function stepWarnings(c) {
   const { player, night, action, spec, step, bundledId } = c;
   if (step.stOnly) return [];
   const out = pickProblems(c).map(text => ({ level: 'must', text }));
+  if ((action.pick ?? []).includes('threeAfterNone') && lastChoiceWasNone(c)) out.push({ level: 'note', text: 'Their last choice was no-one — they choose 3 players tonight' });
   if (step.changed) {
     const show = (k, v) => { const s = spec?.inputs?.[k.slice(1)]; return s?.type === 'role' ? (scriptRoleFor(_normalizeId(v)).name ?? v) : dn(String(v)); };
     const was = Object.entries(step.changed.was).map(([k, v]) => show(k, v)).join(' & ');
@@ -6644,8 +6671,8 @@ function nightStepBodyHtml(c) {
   const when = action.when ? `<div class="nstep-when">Only if: ${esc(action.when)}</div>` : '';
   const warn = stepWarnings(c).map(w =>
     `<div class="nstep-warn nstep-warn-${w.level}">${w.level === 'note' ? '' : ICON_SVG.logWarn} ${esc(w.text)}</div>`).join('');
-  const inputs = spec?.inputs?.length
-    ? `<div class="nstep-inputs">${spec.inputs.map((s, i) => `<div class="nstep-field nstep-use-${fieldUse(action, i)}">${nightStepInputHtml(key, s, i, step, fieldUse(action, i))}</div>`).join('')}</div>` : '';
+  const inputs = spec?.inputs?.some((s, i) => fieldUse(action, i) !== 'hide')
+    ? `<div class="nstep-inputs">${spec.inputs.map((s, i) => fieldUse(action, i) === 'hide' ? '' : `<div class="nstep-field nstep-use-${fieldUse(action, i)}">${nightStepInputHtml(key, s, i, step, fieldUse(action, i))}</div>`).join('')}</div>` : '';
 
   // What they replied, as sent — even when it doesn't fit the inputs.
   const askedAt = stepAskedAt(c);
@@ -6668,10 +6695,11 @@ function nightStepBodyHtml(c) {
   }).join('');
 
   const answer = stepAnswer(c);
-  const asks = canSignal && (action.wake === 'choice' || action.wake === 'ability')
+  const asks = canSignal && (action.wake === 'choice' || action.wake === 'ability' || action.ask)
     ? [btn('ask', esc(action.ask ? resolveTemplate(action.ask, c).tokens.map(signalTokenLabel).join(' + ') : ASK_LABELS[action.wake]), { idx: 'primary', title: askedAt ? 'Send again' : 'Send to them' }),
-       // Players answer however they like — the other prompt is a click away.
-       `<button class="nstep-btn nstep-btn-alt" data-act="ask" data-idx="${action.wake === 'ability' ? 'choice' : 'ability'}" data-key="${esc(key)}" title="Send this prompt instead">${ASK_LABELS[action.wake === 'ability' ? 'choice' : 'ability']}</button>`]
+       // A "may" ability: after a yes they may still need "Make a choice!".
+       // (A "choose a player" role never gets "Use your ability?".)
+       action.wake === 'ability' ? `<button class="nstep-btn nstep-btn-alt" data-act="ask" data-idx="choice" data-key="${esc(key)}" title="After a yes: ask for their pick">${ASK_LABELS.choice}</button>` : '']
     : [];
   // A pick that breaks the rules: tell them no and ask again.
   const reject = canSignal && !step.done && pickProblems(c).length
@@ -6756,7 +6784,7 @@ function renderNightStepsHtml(night) {
   });
 
   // Day-info reminders (Savant, Fisherman) for whoever holds them.
-  const scriptIds = new Set((currentState?.roles ?? []).map(r => _normalizeId(r.id)));
+  const scriptIds = inPlayRoleIds();
   const byRole = playersByRoleId();
   const reminders = Object.entries(DAY_INFO_REMINDERS).filter(([id]) => scriptIds.has(id)).flatMap(([id, note]) =>
     (byRole[id] ?? []).map(h => h.player).filter(p => !p.isDead).map(player => {
