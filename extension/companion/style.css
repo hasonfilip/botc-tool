@@ -3737,3 +3737,103 @@ tr:hover .pin-hl-btn, .pin-hl-btn:focus-visible { opacity: 0.55; }
 .da-note { font-style: italic; font-size: 12px; opacity: 0.8; }
 #ns-noexec { align-self: center; font-size: 12px; font-weight: 600; color: #ff9d94; text-align: center; }
 #ns-noexec[hidden] { display: none; }
+
+/* ── Interactions panel ── */
+
+#interactions-panel { width: 480px; }
+#ix-pickers {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+}
+.ix-slot {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 10px;
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.ix-slot:hover { border-color: var(--muted); }
+.ix-placeholder { color: var(--muted); }
+.ix-role .tp-role-icon { width: 24px; height: 24px; object-fit: contain; flex-shrink: 0; }
+.ix-slot .ix-role { overflow: hidden; }
+#ix-swap {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+#ix-swap:hover { color: var(--text); background: var(--border); }
+.ix-role {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+#ix-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ix-empty, .ix-count { color: var(--muted); font-size: 13px; line-height: 1.5; }
+.ix-ability { color: var(--text2); font-size: 12px; line-height: 1.45; }
+.ix-ability b { color: var(--text); font-weight: 600; }
+.ix-group { display: flex; flex-direction: column; gap: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
+.ix-partner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 2px 4px 2px 0;
+  font-size: 14px;
+  cursor: pointer;
+}
+.ix-partner:hover .ix-role { text-decoration: underline; }
+.ix-jinx-dot, .ix-official {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.ix-entry {
+  background: var(--sunken);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.ix-entry.ix-jinx { border-left-color: var(--accent); }
+.ix-entry.ix-notes { border-left-color: var(--night); }
+.ix-entry.ix-web { border-left-color: var(--townsfolk); }
+.ix-entry-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font-size: 11px; }
+.ix-kind { font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text2); }
+.ix-source { margin-left: auto; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 60%; }
+.ix-source a { color: var(--muted); }
+.ix-source a:hover { color: var(--text); }
+.ix-text { font-size: 13px; line-height: 1.5; color: var(--text); }
+#ix-footnote { padding: 8px 20px 12px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); }
+.ix-author { color: var(--text2); font-weight: 500; }

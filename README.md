@@ -15,6 +15,7 @@ The header shows the session, phase, player and alive counts, script, storytelle
 - **Notes grid** — a cell per player per phase for role chips: ability inputs, tags and claims. Notes about a role whose player you don't know yet go in a role-notes table and move over once you assign it. Deaths, executions and revivals are added automatically. Click a player for their full history.
 - **Nominations** — who nominated whom, the votes and the voters, tracked live.
 - **Conversations** and **Messages** — channel visits and direct messages, filterable by player.
+- **Interactions** — pick two characters to see how they interact: official jinxes, how-to-run notes and rulings from the official wiki and community archives, each with its source. Pick one to list everything recorded for it.
 - **Sessions** — look up other sessions without joining them, save a list, and join one.
 - **Logs** — the raw WebSocket stream, for debugging.
 

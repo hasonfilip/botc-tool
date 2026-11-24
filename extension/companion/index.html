@@ -30,6 +30,7 @@
 		<div id="script-wrap" style="display:none">
 			<button id="script-btn" class="header-icon-btn" title="Script Library" aria-label="Script Library"><svg class="btn-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12a3 3 0 0 1 3 3v13H7a3 3 0 0 1-3-3z"></path><path d="M8 9h7M8 13h7"></path></svg> Script</button>
 		</div>
+		<button id="interactions-btn" class="header-icon-btn" title="How two characters interact: jinxes and rulings"><svg class="btn-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8.5" cy="12" r="5.5"></circle><circle cx="15.5" cy="12" r="5.5"></circle></svg> Interactions</button>
 		<div id="preview-wrap">
 			<button id="preview-btn" class="header-icon-btn" title="See who is in other sessions" aria-haspopup="dialog" aria-expanded="false"><svg class="btn-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"></path><circle cx="12" cy="12" r="3"></circle></svg> Sessions</button>
 			<div id="preview-popup" role="dialog" aria-label="Session preview">
@@ -326,6 +327,21 @@
 	</div>
 	<div id="signal-history-overlay" class="side-panel-overlay"></div>
 
+	<div id="interactions-panel" class="side-panel">
+		<div class="side-panel-header">
+			<span class="side-panel-title">Interactions</span>
+			<button id="ix-close" class="side-panel-close">✕</button>
+		</div>
+		<div id="ix-pickers">
+			<button type="button" class="ix-slot" data-slot="0" aria-haspopup="listbox"></button>
+			<button type="button" id="ix-swap" title="Swap">⇄</button>
+			<button type="button" class="ix-slot" data-slot="1" aria-haspopup="listbox"></button>
+		</div>
+		<div id="ix-body"></div>
+		<div id="ix-footnote">Collected from the linked sources, not definitive rulings. The Storyteller has the final say.</div>
+	</div>
+	<div id="interactions-overlay" class="side-panel-overlay"></div>
+
 	<div id="preview-overlay" style="display:none">
 		<div id="preview-overlay-backdrop"></div>
 		<div id="preview-check" role="dialog" aria-label="Session"></div>
@@ -389,6 +405,7 @@
 	<script src="../data/nightActions.js"></script>
 	<script src="../data/nightStepHints.js"></script>
 	<script src="../data/nominationAlerts.js"></script>
+	<script src="../data/interactions.js"></script>
 	<script src="companion.js"></script>
 </body>
 

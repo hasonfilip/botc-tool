@@ -2919,6 +2919,151 @@ function refreshSignalHistoryPanel() {
 document.getElementById('sighist-close').addEventListener('click', closeSignalHistoryPanel);
 document.getElementById('signal-history-overlay').addEventListener('click', closeSignalHistoryPanel);
 
+// ── Interactions ──
+// Pick one or two characters and read how they interact: official jinxes,
+// how-to-run notes and researched rulings, all bundled in data/interactions.js.
+// One character picked lists everything recorded for it, grouped by partner.
+const _interactions = () => (typeof BOTC_INTERACTIONS !== 'undefined' ? BOTC_INTERACTIONS : []);
+const IX_KIND_ORDER = { jinx: 0, notes: 1, web: 2 };
+const IX_KIND_LABEL = { jinx: 'Jinx', notes: 'How to run', web: 'Ruling' };
+const IX_SOURCE_LABELS = [
+  [/wiki\.bloodontheclocktower\.com\/Djinn/, 'Djinn jinx list'],
+  [/wiki\.bloodontheclocktower\.com/, 'Official wiki'],
+  [/docs\.google\.com\/document\/d\/17hcUxGqjGP0nlxNdPS9eM696lu0GUI84TENcT15Tr6U/, 'TPI how-to-run archive'],
+  [/bakerybytheclocktower/, 'Bakery by the Clocktower'],
+  [/bloodontheclocktower\.com\/blogs/, 'TPI blog'],
+  [/reddit\.com/, 'Reddit'],
+  [/discord\.com\/channels\/569683781800296501\/806885179389640757/, '#experimental-how-to-run'],
+  [/discord\.com/, 'Discord'],
+  [/boardgamegeek\.com/, 'BoardGameGeek'],
+];
+const ixPicked = [null, null];
+let interactionsOpen = false;
+
+const ixRole = (id) => _roles().find(r => r.id === id);
+const ixRoleName = (id) => ixRole(id)?.name ?? id;
+
+function ixEntriesFor(a, b) {
+  return _interactions()
+    .filter(e => (e.a === a && (!b || e.b === b)) || (e.b === a && (!b || e.a === b)))
+    .sort((x, y) => (IX_KIND_ORDER[x.kind] ?? 9) - (IX_KIND_ORDER[y.kind] ?? 9));
+}
+
+function ixSourceHtml(e) {
+  const src = e.source ?? '';
+  if (/^https?:\/\//.test(src)) {
+    const label = IX_SOURCE_LABELS.find(([re]) => re.test(src))?.[1]
+      ?? src.replace(/^https?:\/\/(www\.)?([^/]+).*/, '$2');
+    return `<a href="${esc(src)}" target="_blank" rel="noopener noreferrer" title="${esc(src)}">${esc(label)}</a>`;
+  }
+  return esc(src);
+}
+
+function ixEntryHtml(e) {
+  const official = e.official ? '<span class="ix-official">official</span>' : '';
+  const year = e.date ? ` · ${esc(String(e.date).slice(0, 4))}` : '';
+  const author = e.author ? `<span class="ix-author">${esc(e.author)}${e.staff ? ' (TPI)' : ''}${year}</span>` : '';
+  return `<div class="ix-entry ix-${esc(e.kind)}">
+    <div class="ix-entry-head"><span class="ix-kind">${esc(IX_KIND_LABEL[e.kind] ?? e.kind)}</span>${official}${author}<span class="ix-source">${ixSourceHtml(e)}</span></div>
+    <div class="ix-text">${esc(e.text)}</div>
+  </div>`;
+}
+
+function ixRoleHeadHtml(id) {
+  const r = ixRole(id);
+  const icon = _iconUrl(r);
+  return `<span class="ix-role role-name ${esc(r?.team ?? '')}">${icon ? `<img class="tp-role-icon" src="${esc(icon)}" alt="" />` : ''}${esc(ixRoleName(id))}</span>`;
+}
+
+function renderInteractions() {
+  document.querySelectorAll('#ix-pickers .ix-slot').forEach(btn => {
+    const id = ixPicked[Number(btn.dataset.slot)];
+    btn.innerHTML = id ? ixRoleHeadHtml(id) : '<span class="ix-placeholder">Pick a character</span>';
+  });
+  const body = document.getElementById('ix-body');
+  const [a, b] = ixPicked.filter(Boolean).length === 1 ? [ixPicked.find(Boolean), null] : ixPicked;
+  if (!a) {
+    body.innerHTML = `<div class="ix-empty">Pick two characters to see how they interact, or one to list everything recorded for it.</div>`;
+    return;
+  }
+  const abilities = [a, b].filter(Boolean).map(id => {
+    const r = ixRole(id);
+    return r?.ability ? `<div class="ix-ability"><b>${esc(r.name)}:</b> ${esc(r.ability)}</div>` : '';
+  }).join('');
+  if (b) {
+    const entries = ixEntriesFor(a, b);
+    body.innerHTML = abilities + (entries.length
+      ? entries.map(ixEntryHtml).join('')
+      : `<div class="ix-empty">Nothing recorded between ${esc(ixRoleName(a))} and ${esc(ixRoleName(b))}. Their abilities work as written.</div>`);
+    return;
+  }
+  // One character: everything recorded for it, grouped by partner.
+  const byPartner = new Map();
+  for (const e of ixEntriesFor(a)) {
+    const other = e.a === a ? e.b : e.a;
+    if (!byPartner.has(other)) byPartner.set(other, []);
+    byPartner.get(other).push(e);
+  }
+  const groups = [...byPartner.entries()].sort((x, y) => {
+    const jx = x[1].some(e => e.kind === 'jinx'), jy = y[1].some(e => e.kind === 'jinx');
+    return (jy - jx) || ixRoleName(x[0]).localeCompare(ixRoleName(y[0]));
+  });
+  body.innerHTML = abilities + (groups.length
+    ? `<div class="ix-count">${groups.length} character${groups.length === 1 ? '' : 's'} with recorded interactions</div>` +
+      groups.map(([other, list]) => `<div class="ix-group">
+        <button type="button" class="ix-partner" data-id="${esc(other)}" title="Show only this pair">${ixRoleHeadHtml(other)}${list.some(e => e.kind === 'jinx') ? '<span class="ix-jinx-dot">jinx</span>' : ''}</button>
+        ${list.map(ixEntryHtml).join('')}
+      </div>`).join('')
+    : `<div class="ix-empty">Nothing recorded for ${esc(ixRoleName(a))}.</div>`);
+}
+
+function openInteractionsPicker(slot, anchorEl) {
+  const counts = {};
+  for (const e of _interactions()) { counts[e.a] = (counts[e.a] ?? 0) + 1; counts[e.b] = (counts[e.b] ?? 0) + 1; }
+  const items = _roles().map(r => ({
+    label: r.name, value: r.id, cls: `role-name ${r.team ?? ''}`, iconUrl: _iconUrl(r) ?? '',
+    sub: counts[r.id] ? String(counts[r.id]) : '',
+  }));
+  openListPicker(anchorEl, items, (id) => { ixPicked[slot] = id; renderInteractions(); }, {
+    placeholder: 'Search characters…',
+    activeValue: ixPicked[slot],
+    clearLabel: ixPicked[slot] ? 'Clear' : undefined,
+    onClear: () => { ixPicked[slot] = null; renderInteractions(); },
+  });
+}
+
+function openInteractionsPanel() {
+  interactionsOpen = true;
+  const overlay = document.getElementById('interactions-overlay');
+  renderInteractions();
+  overlay.classList.add('open');
+  document.getElementById('interactions-panel').classList.add('open');
+  requestAnimationFrame(() => overlay.classList.add('visible'));
+}
+
+function closeInteractionsPanel() {
+  interactionsOpen = false;
+  closeListPicker();
+  document.getElementById('interactions-panel').classList.remove('open');
+  const overlay = document.getElementById('interactions-overlay');
+  overlay.classList.remove('visible');
+  overlay.addEventListener('transitionend', () => { if (!interactionsOpen) overlay.classList.remove('open'); }, { once: true });
+}
+
+document.getElementById('interactions-btn').addEventListener('click', openInteractionsPanel);
+document.getElementById('ix-close').addEventListener('click', closeInteractionsPanel);
+document.getElementById('interactions-overlay').addEventListener('click', closeInteractionsPanel);
+document.querySelectorAll('#ix-pickers .ix-slot').forEach(btn =>
+  btn.addEventListener('click', () => openInteractionsPicker(Number(btn.dataset.slot), btn)));
+document.getElementById('ix-swap').addEventListener('click', () => { ixPicked.reverse(); renderInteractions(); });
+document.getElementById('ix-body').addEventListener('click', (e) => {
+  const partner = e.target.closest('.ix-partner');
+  if (!partner) return;
+  const a = ixPicked.find(Boolean);
+  ixPicked[0] = a; ixPicked[1] = partner.dataset.id;
+  renderInteractions();
+});
+
 function renderSignalPlayers() {
   const list = document.getElementById('signal-player-list');
   if (!list || !currentState) return;
@@ -7351,6 +7496,7 @@ document.addEventListener('keydown', (e) => {
   closeListPicker();
   closeSignalPopover();
   if (signalHistoryOpen) closeSignalHistoryPanel();
+  else if (interactionsOpen && !document.getElementById('list-picker')?.contains(e.target)) closeInteractionsPanel();
   if (!closePreviewCheck()) closePreviewPopup(); // overlay first, then the list under it
   const settings = document.getElementById('settings-popup');
   if (settings?.classList.contains('open')) {
