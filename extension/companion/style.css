@@ -83,24 +83,6 @@ header h1 {
   gap: 8px;
 }
 
-/* ── Settings popup (gear) ── */
-#settings-wrap { position: relative; display: flex; align-items: center; }
-#settings-btn {
-  width: 32px;
-  height: 32px;
-  display: grid;
-  place-items: center;
-  background: none;
-  border: none;
-  border-radius: 8px;
-  color: var(--text2);
-  padding: 0;
-  cursor: pointer;
-  transition: background 0.1s, color 0.1s;
-}
-#settings-btn:hover { background: var(--surface-2); color: var(--text); }
-#settings-btn.open { background: var(--surface-2); color: var(--accent-text); }
-
 .header-icon-btn {
   display: inline-flex;
   align-items: center;
@@ -122,23 +104,6 @@ header h1 {
 .header-icon-btn:hover { background: var(--surface-2); color: var(--text); }
 .header-icon-btn.header-btn-danger { color: var(--minion); }
 .header-icon-btn .btn-icon { margin: 0; }
-
-#settings-popup {
-  display: none;
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.55);
-  padding: 14px 16px;
-  flex-direction: column;
-  gap: 14px;
-  z-index: 1002;
-  min-width: 210px;
-}
-#settings-popup.open { display: flex; }
 
 /* ── Session preview (who is in other sessions) ── */
 #preview-wrap { display: flex; align-items: center; }
@@ -203,10 +168,7 @@ header h1 {
 /* ── Script library button (scroll icon) ── */
 #script-wrap { position: relative; display: flex; align-items: center; }
 
-.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
-.settings-row .ct-title { margin: 0; }
-
-/* Standalone on/off switch (e.g. merge day/night) */
+/* On state for .ct-switch */
 .ct-switch.on { background: var(--accent); }
 .ct-switch.on::after { transform: translateX(16px); }
 

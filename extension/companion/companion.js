@@ -7109,14 +7109,17 @@ function syncStatusHighlight() {
   document.getElementById('toggle-status-hl').classList.toggle('toggle-btn-active', highlightStatus);
 }
 
-document.getElementById('merge-switch').addEventListener('click', (e) => {
+document.getElementById('toggle-merge').addEventListener('click', () => {
   mergePhases = !mergePhases;
-  e.currentTarget.classList.toggle('on', mergePhases);
-  e.currentTarget.setAttribute('aria-checked', String(mergePhases));
   saveSettings();
+  syncMergeToggle();
   lastNotesKey = null;
   renderNotesGrid();
 });
+
+function syncMergeToggle() {
+  document.getElementById('toggle-merge').classList.toggle('toggle-btn-active', mergePhases);
+}
 
 // ── Persisted UI settings (survive reloads) ─────────────────────────────────
 const SETTINGS_KEY = 'botc-companion-settings';
@@ -7138,9 +7141,7 @@ function saveSettings() {
 }
 
 function applySettingsToUI() {
-  const ms = document.getElementById('merge-switch');
-  ms.classList.toggle('on', mergePhases);
-  ms.setAttribute('aria-checked', String(mergePhases));
+  syncMergeToggle();
   syncStatusHighlight();
   syncRoleSwitch();
   applyViewRole();
@@ -7188,23 +7189,6 @@ updateStRoleBtn();
 renderTimerPresets();
 renderSignalPresets();
 initScriptLibrary();
-
-// Settings popup (gear): toggle on click, close on outside click
-(() => {
-  const btn = document.getElementById('settings-btn');
-  const popup = document.getElementById('settings-popup');
-  btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const open = popup.classList.toggle('open');
-    btn.classList.toggle('open', open);
-  });
-  document.addEventListener('click', (e) => {
-    if (!popup.classList.contains('open')) return;
-    if (popup.contains(e.target) || e.target === btn) return;
-    popup.classList.remove('open');
-    btn.classList.remove('open');
-  });
-})();
 
 // ── Session preview ─────────────────────────────────────────────────────────
 // Shows who is in other botc.app sessions without joining them. botc.app puts a
@@ -7498,11 +7482,6 @@ document.addEventListener('keydown', (e) => {
   if (signalHistoryOpen) closeSignalHistoryPanel();
   else if (interactionsOpen && !document.getElementById('list-picker')?.contains(e.target)) closeInteractionsPanel();
   if (!closePreviewCheck()) closePreviewPopup(); // overlay first, then the list under it
-  const settings = document.getElementById('settings-popup');
-  if (settings?.classList.contains('open')) {
-    settings.classList.remove('open');
-    document.getElementById('settings-btn').classList.remove('open');
-  }
 });
 
 document.getElementById('ws-toggle').addEventListener('click', (e) => {
