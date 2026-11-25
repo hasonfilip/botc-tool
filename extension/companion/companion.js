@@ -2964,7 +2964,7 @@ function ixEntryHtml(e) {
   const year = e.date ? ` · ${esc(String(e.date).slice(0, 4))}` : '';
   const author = e.author ? `<span class="ix-author">${esc(e.author)}${e.staff ? ' (TPI)' : ''}${year}</span>` : '';
   return `<div class="ix-entry ix-${esc(e.kind)}">
-    <div class="ix-entry-head"><span class="ix-kind">${esc(IX_KIND_LABEL[e.kind] ?? e.kind)}</span>${official}${author}<span class="ix-source">${ixSourceHtml(e)}</span></div>
+    <div class="ix-entry-head"><span class="ix-kind">${esc(e.derived ? 'Derived' : IX_KIND_LABEL[e.kind] ?? e.kind)}</span>${official}${author}<span class="ix-source">${ixSourceHtml(e)}</span></div>
     <div class="ix-text">${esc(e.text)}</div>
   </div>`;
 }
