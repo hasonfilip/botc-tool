@@ -6773,10 +6773,10 @@ function stepWarnings(c) {
       out.push({ level: 'must', text: 'Vortox in play — their info must be false' });
     }
     const reasons = droisonReasons(player);
-    for (const why of reasons) out.push({ level: 'may', text: `${why} — ${effect}` });
+    for (const why of reasons) out.push({ level: 'may', droison: true, text: `${why} — ${effect}` });
     // Poisoned / made drunk by one of tonight's steps (not yet in the grimoire).
     const bySteps = !reasons.length && droisonedBySteps(player, night);
-    if (bySteps) out.push({ level: 'may', text: `Chosen by the ${bySteps} tonight — ${effect}` });
+    if (bySteps) out.push({ level: 'may', droison: true, text: `Chosen by the ${bySteps} tonight — ${effect}` });
   }
 
   // Players the info follows from who may register as something else — not
@@ -6815,7 +6815,7 @@ function nightStepBodyHtml(c) {
 
   const when = action.when ? `<div class="nstep-when">Only if: ${esc(action.when)}</div>` : '';
   const warn = stepWarnings(c).map(w =>
-    `<div class="nstep-warn nstep-warn-${w.level}">${w.level === 'note' ? '' : ICON_SVG.logWarn} ${esc(w.text)}</div>`).join('');
+    `<div class="nstep-warn nstep-warn-${w.level}${w.droison ? ' nstep-warn-droison' : ''}">${w.level === 'note' ? '' : ICON_SVG.logWarn} ${esc(w.text)}</div>`).join('');
   const inputs = spec?.inputs?.some((s, i) => fieldUse(action, i) !== 'hide')
     ? `<div class="nstep-inputs">${spec.inputs.map((s, i) => fieldUse(action, i) === 'hide' ? '' : `<div class="nstep-field nstep-use-${fieldUse(action, i)}">${nightStepInputHtml(key, s, i, step, fieldUse(action, i))}</div>`).join('')}</div>` : '';
 
@@ -6896,6 +6896,8 @@ function renderNightStepsHtml(night) {
     const icon = url ? `<img class="tp-role-icon" src="${esc(url)}" />` : '';
     const name = displayName(player, player.seat);
     const warnings = stepWarnings(it).filter(w => w.level !== 'note');
+    // Drunk / poisoned: the whole row goes sickly green, as in the notes.
+    const isDroisoned = warnings.some(w => w.droison);
     const droisoned = warnings.length
       ? `<span class="nstep-droisoned${warnings.some(w => w.level === 'must') ? ' nstep-must' : ''}" title="${esc(warnings.map(w => w.text).join('\n'))}">${ICON_SVG.logWarn}</span>` : '';
     const holderAttrs = player.id ? ` data-uid="${esc(String(player.id))}" data-night="Night ${night}" title="Signals this night"` : '';
@@ -6917,7 +6919,7 @@ function renderNightStepsHtml(night) {
     const replyLine = remarks.length ? `<span class="nstep-new-text">“${esc(msgText(remarks[remarks.length - 1]).slice(0, 80))}”</span>` : '';
     const reminder = infoName ? (NIGHT_MARKER_REMINDERS[Object.keys(NIGHT_INFO_STEPS).find(l => NIGHT_INFO_STEPS[l] === bundledId)] ?? '') : nightReminderText(bundledId, night);
     const title = infoName ?? role.name ?? bundledId;
-    rows.push(`<li class="nstep nstep-${state}${action.wake === 'none' ? ' nstep-nowake' : ''}${isOpen ? ' nstep-open' : ''}${remarks.length ? ' nstep-has-new' : ''}">
+    rows.push(`<li class="nstep nstep-${state}${action.wake === 'none' ? ' nstep-nowake' : ''}${isOpen ? ' nstep-open' : ''}${remarks.length ? ' nstep-has-new' : ''}${isDroisoned ? ' nstep-is-droisoned' : ''}">
         <div class="nstep-head" data-key="${esc(key)}">
           <span class="nstep-mark">${mark}</span>
           <span class="norder-role role-name ${infoName ? '' : role.team ?? ''}"${reminder ? ` data-tip="${esc(reminder)}"` : ''}>${icon}${esc(title)}${reminder ? '<span class="nstep-info" aria-hidden="true">i</span>' : ''}${step.via ? `<span class="nstep-via">${VIA_IS.has(step.via) ? 'is the' : 'via'} ${esc(scriptRoleFor(step.via).name ?? step.via)}</span>` : ''}</span>

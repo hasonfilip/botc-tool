@@ -3799,3 +3799,13 @@ tr:hover .pin-hl-btn, .pin-hl-btn:focus-visible { opacity: 0.55; }
 .ix-text { font-size: 13px; line-height: 1.5; color: var(--text); }
 #ix-footnote { padding: 8px 20px 12px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); }
 .ix-author { color: var(--text2); font-weight: 500; }
+
+/* Drunk / poisoned holder: the whole step goes sickly green, like the
+   droisoned cells in the notes, so it can't be missed. */
+.nstep.nstep-is-droisoned {
+  background: rgba(154,205,50,0.14);
+  box-shadow: inset 3px 0 0 #9acd32;
+}
+.nstep.nstep-is-droisoned .nstep-head:hover { background: rgba(154,205,50,0.2); }
+.nstep-is-droisoned .nstep-droisoned:not(.nstep-must) { color: #c6e87a; }
+.nstep-warn-droison { color: #c6e87a; font-weight: 600; }
